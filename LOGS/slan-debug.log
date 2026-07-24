@@ -1,0 +1,1294 @@
+1784854681491 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784854682699 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784854687649 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784854688890 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784854688890 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784854690120 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784854693121 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784854694663 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784854695686 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784854696587 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784854696588 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784854698074 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784854698074 verify_adapter_ip: OK
+1784854699478 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784854700554 configure_routes: ifIndex=44
+1784854700554 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784854700598 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784854700598 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784854700639 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784854701318 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784854702379 configure_routes: ifIndex=44
+1784854702379 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784854702423 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784854702423 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784854702464 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784854702464 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784854702503 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784854702504 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784854702546 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784854702546 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784854702590 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784854702591 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784854702634 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784854703718 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784854703760 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855018932 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855020092 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855020092 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855021242 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855024242 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855025778 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855026797 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855027681 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855027681 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855029115 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855029115 verify_adapter_ip: OK
+1784855030445 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855031479 configure_routes: ifIndex=44
+1784855031479 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855031517 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855031517 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855031552 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855031552 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855032574 configure_routes: ifIndex=44
+1784855032574 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855032609 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855032610 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855032645 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855032645 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855032679 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855032679 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855032713 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855032713 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855032747 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855032747 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855032781 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855033792 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855033826 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855102139 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855103290 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855103291 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855104450 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855107451 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855108960 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855109980 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855110864 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855110864 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855112255 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855112256 verify_adapter_ip: OK
+1784855113616 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855114653 configure_routes: ifIndex=44
+1784855114653 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855114689 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855114689 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855114723 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855114724 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855115745 configure_routes: ifIndex=44
+1784855115745 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855115780 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855115780 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855115815 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855115815 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855115849 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855115849 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855115883 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855115883 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855115917 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855115918 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855115952 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855116975 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855117010 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855185821 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855186966 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855186967 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855188124 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855191125 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855192661 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855193681 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855194587 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855194587 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855196018 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855196018 verify_adapter_ip: OK
+1784855197357 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855198411 configure_routes: ifIndex=44
+1784855198411 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855198448 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855198449 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855198483 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855198484 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855199520 configure_routes: ifIndex=44
+1784855199521 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855199557 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855199557 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855199591 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855199591 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855199627 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855199627 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855199663 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855199663 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855199697 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855199697 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855199733 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855200751 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855200786 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855269272 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855270433 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855270434 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855271587 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855274587 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855276132 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855277151 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855278035 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855278036 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855279459 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855279459 verify_adapter_ip: OK
+1784855280793 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855281832 configure_routes: ifIndex=44
+1784855281832 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855281867 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855281868 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855281903 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855281904 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855282933 configure_routes: ifIndex=44
+1784855282933 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855282968 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855282968 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855283002 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855283002 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855283036 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855283036 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855283070 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855283070 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855283105 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855283105 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855283139 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855284155 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855284191 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855352772 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855353928 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855353929 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855355081 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855358082 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855359622 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855360641 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855361536 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855361537 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855362965 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855362965 verify_adapter_ip: OK
+1784855364304 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855365350 configure_routes: ifIndex=44
+1784855365351 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855365387 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855365387 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855365421 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855365421 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855366441 configure_routes: ifIndex=44
+1784855366442 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855366476 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855366477 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855366510 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855366511 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855366544 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855366544 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855366578 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855366578 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855366612 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855366612 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855366646 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855367664 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855367699 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855436360 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855437509 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855437510 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855438678 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855441678 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855443206 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855444224 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855445114 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855445115 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855446544 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855446544 verify_adapter_ip: OK
+1784855447877 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855448916 configure_routes: ifIndex=44
+1784855448916 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855448952 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855448953 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855448987 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855448988 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855450045 configure_routes: ifIndex=44
+1784855450046 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855450081 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855450081 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855450115 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855450115 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855450151 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855450151 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855450186 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855450186 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855450220 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855450220 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855450253 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855451278 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855451314 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855474801 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855475951 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855475952 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784855477096 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784855480097 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784855481619 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784855482637 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784855483521 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784855483522 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784855484960 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784855484960 verify_adapter_ip: OK
+1784855486300 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784855487333 configure_routes: ifIndex=44
+1784855487334 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784855487369 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855487369 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784855487403 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855487404 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784855488427 configure_routes: ifIndex=44
+1784855488427 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784855488462 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855488462 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784855488496 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855488496 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784855488530 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855488530 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784855488564 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855488564 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784855488599 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855488600 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784855488635 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784855489663 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784855489698 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856114771 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856115481 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856119754 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856120944 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856125801 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856126982 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856126983 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856128161 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856131162 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784856132703 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784856133725 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784856134637 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784856134637 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784856136102 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784856136102 verify_adapter_ip: OK
+1784856137468 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784856138510 configure_routes: ifIndex=44
+1784856138510 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784856138552 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784856138553 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784856138591 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856139270 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784856140302 configure_routes: ifIndex=44
+1784856140303 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784856140342 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784856140342 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784856140381 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856140381 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784856140419 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784856140420 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784856140458 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856140458 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784856140499 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784856140500 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784856140538 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856141573 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784856141613 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856143198 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856144359 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856144360 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856145514 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856148515 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784856150065 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784856151085 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784856151979 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784856151979 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784856153416 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784856153417 verify_adapter_ip: OK
+1784856154753 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784856155794 configure_routes: ifIndex=44
+1784856155794 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784856155832 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856155832 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784856155868 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856155869 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784856156889 configure_routes: ifIndex=44
+1784856156889 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784856156927 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856156927 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784856156963 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856156964 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784856157000 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856157001 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784856157037 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856157037 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784856157073 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856157073 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784856157109 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856158135 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784856158174 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856270383 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856271574 ensure_installed_adapter_ready: result=Ok("before=Down after=Up")
+1784856271574 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856272757 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856275758 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784856277260 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784856278280 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784856279192 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784856279192 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784856280620 verify_adapter_ip: admin=Up status=Disconnected ips=[169.254.253.138,10.0.1.114]
+1784856280621 verify_adapter_ip: OK
+1784856281998 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784856283042 configure_routes: ifIndex=44
+1784856283043 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784856283079 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856283079 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784856283113 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856283774 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784856284783 configure_routes: ifIndex=44
+1784856284783 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784856284818 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856284818 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784856284855 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856284855 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784856284889 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856284889 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784856284930 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856284930 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784856284966 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856284966 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784856285000 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856286018 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784856286053 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856307237 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856308398 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856308399 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856309558 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856312559 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784856314092 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784856315111 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784856316004 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784856316004 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784856317397 verify_adapter_ip: admin=Up status=Disconnected ips=[10.0.1.114]
+1784856317397 verify_adapter_ip: OK
+1784856318724 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784856319761 configure_routes: ifIndex=44
+1784856319762 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784856319797 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856319797 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784856319831 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856319832 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784856320877 configure_routes: ifIndex=44
+1784856320878 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784856320913 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856320913 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784856320947 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856320947 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784856320983 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856320984 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784856321018 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856321018 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784856321052 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856321052 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784856321085 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856322117 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784856322152 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856395885 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856397045 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856397046 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856398885 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856401885 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784856403425 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784856404445 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784856405324 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784856405325 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784856406730 verify_adapter_ip: admin=Up status=Disconnected ips=[10.0.1.114]
+1784856406730 verify_adapter_ip: OK
+1784856408088 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784856409141 configure_routes: ifIndex=44
+1784856409141 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784856409176 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856409177 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784856409211 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856409211 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784856410301 configure_routes: ifIndex=44
+1784856410301 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784856410336 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856410336 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784856410369 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856410369 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784856410404 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856410405 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784856410439 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856410440 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784856410474 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856410474 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784856410508 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856411544 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784856411578 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856433712 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856434876 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856434877 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784856436027 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784856439028 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784856440565 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784856441584 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784856442476 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784856442476 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784856443859 verify_adapter_ip: admin=Up status=Disconnected ips=[10.0.1.114]
+1784856443859 verify_adapter_ip: OK
+1784856445202 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784856446238 configure_routes: ifIndex=44
+1784856446239 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784856446275 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856446275 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784856446309 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856446309 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784856447344 configure_routes: ifIndex=44
+1784856447344 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784856447379 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856447379 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784856447413 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856447413 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784856447447 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856447448 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784856447481 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856447481 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784856447514 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856447515 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784856447548 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784856448587 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784856448622 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857075741 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857076455 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857080758 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857081967 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857089005 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857090215 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857090215 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857091410 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857094411 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784857095973 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784857096996 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784857097934 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784857097935 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784857099402 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784857099402 verify_adapter_ip: OK
+1784857100790 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784857101854 configure_routes: ifIndex=44
+1784857101854 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784857101896 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784857101897 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784857101936 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857102618 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784857103661 configure_routes: ifIndex=44
+1784857103662 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784857103702 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784857103703 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784857103743 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857103743 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784857103784 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784857103784 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784857103824 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857103824 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784857103864 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784857103864 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784857103904 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857104939 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784857104979 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857106560 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857107713 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857107713 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857108881 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857111882 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784857113433 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784857114452 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784857115353 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784857115353 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784857116775 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784857116776 verify_adapter_ip: OK
+1784857118131 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784857119173 configure_routes: ifIndex=44
+1784857119173 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784857119211 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857119211 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784857119247 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857119247 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784857120274 configure_routes: ifIndex=44
+1784857120274 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784857120312 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857120312 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784857120348 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857120349 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784857120385 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857120385 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784857120420 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857120420 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784857120456 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857120456 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784857120492 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857121519 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784857121556 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857420652 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857421864 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857421864 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857423065 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857426066 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784857427652 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784857428670 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784857429613 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784857429613 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784857431099 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784857431099 verify_adapter_ip: OK
+1784857432484 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784857433552 configure_routes: ifIndex=44
+1784857433552 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784857433592 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857433592 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784857433628 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857433629 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784857434694 configure_routes: ifIndex=44
+1784857434694 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784857434731 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857434731 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784857434766 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857434766 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784857434801 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857434801 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784857434837 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857434837 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784857434874 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857434874 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784857434910 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857435972 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784857436009 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857459700 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857460911 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857460912 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784857462126 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784857465127 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784857466702 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784857467720 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784857468629 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784857468629 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784857470119 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784857470119 verify_adapter_ip: OK
+1784857471509 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784857472586 configure_routes: ifIndex=44
+1784857472587 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784857472623 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857472623 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784857472658 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857472659 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784857473716 configure_routes: ifIndex=44
+1784857473716 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784857473755 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857473755 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784857473791 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857473791 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784857473828 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857473829 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784857473867 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857473867 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784857473904 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857473904 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784857473942 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784857475002 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784857475039 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859191578 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859192744 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859197720 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859198897 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859198898 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859200150 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859203151 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784859204711 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784859205731 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784859206622 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784859206622 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784859208095 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784859208095 verify_adapter_ip: OK
+1784859209482 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784859210532 configure_routes: ifIndex=43
+1784859210532 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 43 0.0.0.0
+1784859210575 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859210576 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 43 0.0.0.0
+1784859210618 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859211317 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859212371 configure_routes: ifIndex=43
+1784859212371 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859212412 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859212412 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859212452 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859212452 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859212492 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859212492 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859212533 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859212533 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859212573 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859212573 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859212612 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859213702 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859213743 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859499076 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859499786 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859504067 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859505221 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859510064 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859511225 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859511226 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784859512415 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784859515415 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784859516936 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784859517958 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784859518863 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784859518863 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784859520296 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784859520296 verify_adapter_ip: OK
+1784859521643 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784859522685 configure_routes: ifIndex=43
+1784859522685 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 43 0.0.0.0
+1784859522727 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859522727 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 43 0.0.0.0
+1784859522766 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859523427 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859524460 configure_routes: ifIndex=43
+1784859524460 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859524500 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859524500 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859524540 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859524540 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859524579 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859524579 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859524618 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859524618 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859524657 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784859524657 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859524695 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859525717 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859525756 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859604478 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859605531 configure_routes: ifIndex=43
+1784859605531 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859605567 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859605567 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859605601 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859605601 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859605635 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859605635 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859605670 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859605670 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859605704 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859605704 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859605739 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859606768 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859606803 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859618489 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859619532 configure_routes: ifIndex=43
+1784859619532 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859619568 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859619568 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859619602 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859619602 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859619635 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859619636 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859619670 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859619670 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859619704 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859619704 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859619738 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859620763 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859620797 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859632561 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859633584 configure_routes: ifIndex=43
+1784859633585 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859633620 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859633620 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859633654 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859633654 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859633688 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859633688 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859633721 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859633722 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859633755 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859633755 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859633789 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859634792 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859634829 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859704966 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859706008 configure_routes: ifIndex=43
+1784859706008 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859706044 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859706044 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859706078 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859706078 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859706113 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859706113 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859706146 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859706146 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859706180 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859706180 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859706214 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859707229 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859707264 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859778430 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859779484 configure_routes: ifIndex=43
+1784859779484 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859779520 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859779520 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859779553 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859779554 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859779588 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859779588 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859779621 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859779622 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859779655 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859779656 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859779690 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859780720 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859780755 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859809822 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859810866 configure_routes: ifIndex=43
+1784859810867 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859810902 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859810902 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859810936 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859810936 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859810969 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859810969 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859811003 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859811003 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859811037 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859811037 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859811070 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859812077 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859812111 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859838975 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859840015 configure_routes: ifIndex=43
+1784859840015 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859840051 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859840052 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859840086 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859840086 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859840120 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859840121 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859840154 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859840154 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859840189 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859840189 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859840223 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859841234 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859841268 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859851919 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859852960 configure_routes: ifIndex=43
+1784859852960 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859852994 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859852995 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859853029 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859853029 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859853062 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859853063 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859853096 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859853096 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859853130 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859853130 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859853163 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859854188 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859854223 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859855049 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784859856095 configure_routes: ifIndex=43
+1784859856095 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784859856131 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859856131 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784859856165 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859856165 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784859856199 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859856199 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784859856234 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859856234 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784859856268 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859856269 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784859856302 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784859857319 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784859857354 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860948647 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784860949361 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784860953732 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784860954947 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784860959817 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784860961001 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784860961001 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784860962208 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784860965209 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784860966746 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784860967768 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784860968672 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784860968672 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784860970129 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784860970130 verify_adapter_ip: OK
+1784860971510 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784860972562 configure_routes: ifIndex=43
+1784860972562 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 43 0.0.0.0
+1784860972605 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784860972605 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 43 0.0.0.0
+1784860972645 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860973317 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784860974361 configure_routes: ifIndex=43
+1784860974361 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784860974401 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784860974401 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784860974440 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860974440 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784860974481 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784860974481 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784860974520 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860974521 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784860974561 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784860974561 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784860974600 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860975647 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784860975686 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860976210 configure_routes: fast path — routes unchanged, skipping
+1784860977252 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784860977289 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784860993506 configure_routes: fast path — routes unchanged, skipping
+1784860994546 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784860994583 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861038771 configure_routes: fast path — routes unchanged, skipping
+1784861039828 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861039863 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861051863 configure_routes: fast path — routes unchanged, skipping
+1784861052913 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861052948 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861055154 configure_routes: fast path — routes unchanged, skipping
+1784861056199 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861056234 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861073941 configure_routes: fast path — routes unchanged, skipping
+1784861074982 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861075017 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861126091 configure_routes: fast path — routes unchanged, skipping
+1784861127196 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861127231 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861151529 configure_routes: fast path — routes unchanged, skipping
+1784861152564 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861152599 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861166658 configure_routes: fast path — routes unchanged, skipping
+1784861167703 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784861167738 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861633505 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861634689 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861639669 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861640886 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861640886 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861642147 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861645148 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784861646704 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784861647724 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784861648625 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784861648625 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784861650087 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784861650088 verify_adapter_ip: OK
+1784861651511 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784861652580 configure_routes: ifIndex=44
+1784861652580 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784861652623 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861652623 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784861652664 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861653341 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784861654383 configure_routes: ifIndex=44
+1784861654383 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784861654423 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861654424 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784861654464 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861654464 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784861654504 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861654504 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784861654544 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861654544 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784861654583 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861654583 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784861654623 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861655673 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784861655713 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861662407 configure_routes: fast path — routes unchanged, skipping
+1784861663458 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784861663497 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861685784 configure_routes: fast path — routes unchanged, skipping
+1784861686857 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784861686898 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861714168 configure_routes: fast path — routes unchanged, skipping
+1784861715248 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784861715288 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861892996 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861893710 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861898000 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861899185 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861904581 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861905794 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861905795 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784861906997 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784861909998 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784861911547 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784861912570 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784861913474 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784861913474 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784861914925 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784861914925 verify_adapter_ip: OK
+1784861916307 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784861917359 configure_routes: ifIndex=44
+1784861917359 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784861917401 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861917401 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784861917441 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861918111 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784861919141 configure_routes: ifIndex=44
+1784861919142 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784861919183 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861919183 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784861919223 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861919223 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784861919263 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861919263 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784861919303 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861919303 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784861919342 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784861919343 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784861919382 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861920421 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784861920461 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784861920999 configure_routes: fast path — routes unchanged, skipping
+1784861920999 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784861937208 configure_routes: fast path — routes unchanged, skipping
+1784861937209 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784861994345 configure_routes: fast path — routes unchanged, skipping
+1784861994345 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862061765 configure_routes: fast path — routes unchanged, skipping
+1784862061765 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862074085 configure_routes: fast path — routes unchanged, skipping
+1784862074085 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862212561 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862213743 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862218649 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862219827 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862219827 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862221119 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862224119 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784862225660 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784862226681 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784862227595 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784862227595 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784862229088 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784862229088 verify_adapter_ip: OK
+1784862230501 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784862231592 configure_routes: ifIndex=43
+1784862231592 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 43 0.0.0.0
+1784862231639 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862231640 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 43 0.0.0.0
+1784862231684 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862232382 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784862233439 configure_routes: ifIndex=43
+1784862233440 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784862233480 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862233480 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784862233520 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862233520 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784862233560 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862233561 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784862233601 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862233601 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784862233641 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862233641 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784862233683 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862234737 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784862234778 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862548921 configure_routes: fast path — routes unchanged, skipping
+1784862548921 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862570938 configure_routes: fast path — routes unchanged, skipping
+1784862570939 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862589106 configure_routes: fast path — routes unchanged, skipping
+1784862589106 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862616986 configure_routes: fast path — routes unchanged, skipping
+1784862616986 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862684433 configure_routes: fast path — routes unchanged, skipping
+1784862684433 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862751854 configure_routes: fast path — routes unchanged, skipping
+1784862751854 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862819375 configure_routes: fast path — routes unchanged, skipping
+1784862819375 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862886870 configure_routes: fast path — routes unchanged, skipping
+1784862886870 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784862948052 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862948773 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862953094 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862954313 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862959214 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862960396 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862960397 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784862961612 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784862964613 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784862966159 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784862967180 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784862968068 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784862968069 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784862969521 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784862969521 verify_adapter_ip: OK
+1784862970887 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784862971933 configure_routes: ifIndex=43
+1784862971933 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 43 0.0.0.0
+1784862971975 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862971975 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 43 0.0.0.0
+1784862972014 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862972693 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784862973728 configure_routes: ifIndex=43
+1784862973728 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784862973768 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862973768 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784862973807 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862973807 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784862973846 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862973846 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784862973886 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862973886 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784862973926 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784862973926 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784862973966 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862974999 netsh exec: netsh interface ipv4 set subinterface 43 mtu=1280 store=active
+1784862975039 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784862975562 configure_routes: fast path — routes unchanged, skipping
+1784862975562 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784863289509 configure_routes: fast path — routes unchanged, skipping
+1784863289509 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784863317061 configure_routes: fast path — routes unchanged, skipping
+1784863317061 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784863360494 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784863361689 ensure_installed_adapter_ready: result=Ok("before=Down after=Up")
+1784863361690 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784863362855 ensure_installed_adapter_ready: result=Ok("before=Up after=Up")
+1784863365856 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784863367374 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784863368394 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784863369288 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784863369288 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784863370718 verify_adapter_ip: admin=Up status=Disconnected ips=[169.254.205.129,10.0.1.114]
+1784863370718 verify_adapter_ip: OK
+1784863372063 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784863373105 configure_routes: ifIndex=43
+1784863373105 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 43 0.0.0.0
+1784863373143 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863373143 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 43 0.0.0.0
+1784863373178 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863373838 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784863374867 configure_routes: ifIndex=43
+1784863374867 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 43 0.0.0.0
+1784863374906 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863374906 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 43 0.0.0.0
+1784863374941 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863374941 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 43 0.0.0.0
+1784863374975 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863374975 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 43 0.0.0.0
+1784863375008 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863375008 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 43 0.0.0.0
+1784863375042 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863375042 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 43 0.0.0.0
+1784863375076 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863375076 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784863387069 configure_routes: fast path — routes unchanged, skipping
+1784863387069 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784863400221 configure_routes: fast path — routes unchanged, skipping
+1784863400221 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784863727657 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784863733582 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784863734634 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784863737635 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784863739163 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784863740184 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784863741181 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784863741181 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784863742647 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784863742647 verify_adapter_ip: OK
+1784863744008 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784863745056 configure_routes: ifIndex=44
+1784863745057 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784863745098 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784863745098 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784863745138 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863745828 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784863746877 configure_routes: ifIndex=44
+1784863746878 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784863746917 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784863746917 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784863746955 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863746956 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784863746995 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784863746995 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784863747033 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863747034 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784863747072 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784863747072 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784863747109 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784863748141 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784863748186 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864062925 configure_routes: fast path — routes unchanged, skipping
+1784864062925 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864130403 configure_routes: fast path — routes unchanged, skipping
+1784864130403 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864149730 configure_routes: fast path — routes unchanged, skipping
+1784864149730 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864197824 configure_routes: fast path — routes unchanged, skipping
+1784864197824 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864265293 configure_routes: fast path — routes unchanged, skipping
+1784864265294 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864332649 configure_routes: fast path — routes unchanged, skipping
+1784864332649 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864349708 configure_routes: fast path — routes unchanged, skipping
+1784864349708 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864358096 configure_routes: fast path — routes unchanged, skipping
+1784864358096 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864394244 configure_routes: fast path — routes unchanged, skipping
+1784864394244 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864408342 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784864409539 ensure_installed_adapter_ready: result=Ok("before=Down after=Up")
+1784864410647 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784864413648 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784864415136 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784864416155 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784864417057 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784864417058 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784864418466 verify_adapter_ip: admin=Up status=Disconnected ips=[169.254.20.133,10.0.1.114]
+1784864418467 verify_adapter_ip: OK
+1784864419801 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784864420830 configure_routes: ifIndex=44
+1784864420830 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784864420868 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864420868 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784864420904 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864421550 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784864422572 configure_routes: ifIndex=44
+1784864422572 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784864422608 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864422608 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784864422641 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864422642 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784864422675 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864422675 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784864422708 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864422709 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784864422742 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864422742 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784864422775 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784864422775 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864489758 configure_routes: fast path — routes unchanged, skipping
+1784864489758 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864514436 configure_routes: fast path — routes unchanged, skipping
+1784864514437 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864563508 configure_routes: fast path — routes unchanged, skipping
+1784864563508 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864633992 configure_routes: fast path — routes unchanged, skipping
+1784864633992 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784864657417 configure_routes: fast path — routes unchanged, skipping
+1784864657417 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784866885604 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784866890963 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784866896911 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784866897980 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784866900981 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784866902528 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784866903551 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784866904461 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784866904462 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784866905915 verify_adapter_ip: admin=Up status=Up ips=[10.0.1.114]
+1784866905916 verify_adapter_ip: OK
+1784866907284 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784866908349 configure_routes: ifIndex=44
+1784866908349 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784866908392 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784866908392 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784866908431 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784866909099 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784866910137 configure_routes: ifIndex=44
+1784866910137 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784866910177 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784866910177 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784866910217 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784866910217 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784866910257 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784866910257 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784866910295 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784866910295 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784866910334 netsh result: status=exit code: 1 stdout=[找不到元素。] stderr=[]
+1784866910335 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784866910373 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784866911411 netsh exec: netsh interface ipv4 set subinterface 44 mtu=1280 store=active
+1784866911450 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784866911983 configure_routes: fast path — routes unchanged, skipping
+1784866911983 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784866927459 configure_routes: fast path — routes unchanged, skipping
+1784866927459 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784866969835 configure_routes: fast path — routes unchanged, skipping
+1784866969835 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784866981814 configure_routes: fast path — routes unchanged, skipping
+1784866981814 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784866990612 ensure_installed_adapter_ready: enabling 'SLAN LAN Adapter'
+1784866991780 ensure_installed_adapter_ready: result=Ok("before=Down after=Up")
+1784866992816 ensure_installed_adapter_ready: fast path — adapter already Up, skipping
+1784866995817 configure_adapter_ip: setting 10.0.1.114/32 on 'SLAN LAN Adapter'
+1784866997294 configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s
+1784866998314 configure_adapter_ip: ipconfig does not contain 10.0.1.114, trying Get-NetIPAddress
+1784866999202 configure_adapter_ip: OK (Get-NetIPAddress verified)
+1784866999202 verify_adapter_ip: checking 'SLAN LAN Adapter' for 10.0.1.114
+1784867000592 verify_adapter_ip: admin=Up status=Disconnected ips=[169.254.19.174,10.0.1.114]
+1784867000592 verify_adapter_ip: OK
+1784867001926 configure_routes: 1 routes for 'SLAN LAN Adapter'
+1784867002947 configure_routes: ifIndex=44
+1784867002947 netsh exec: netsh interface ipv4 delete route 10.0.0.53/32 44 0.0.0.0
+1784867002983 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867002983 netsh exec: netsh interface ipv4 add route 10.0.0.53/32 44 0.0.0.0
+1784867003017 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867003677 configure_routes: 3 routes for 'SLAN LAN Adapter'
+1784867004684 configure_routes: ifIndex=44
+1784867004684 netsh exec: netsh interface ipv4 delete route 10.0.1.41/32 44 0.0.0.0
+1784867004719 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867004719 netsh exec: netsh interface ipv4 add route 10.0.1.41/32 44 0.0.0.0
+1784867004752 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867004752 netsh exec: netsh interface ipv4 delete route 10.0.1.17/32 44 0.0.0.0
+1784867004786 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867004786 netsh exec: netsh interface ipv4 add route 10.0.1.17/32 44 0.0.0.0
+1784867004821 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867004821 netsh exec: netsh interface ipv4 delete route 10.0.1.18/32 44 0.0.0.0
+1784867004855 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867004855 netsh exec: netsh interface ipv4 add route 10.0.1.18/32 44 0.0.0.0
+1784867004891 netsh result: status=exit code: 0 stdout=[确定。] stderr=[]
+1784867004892 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867072125 configure_routes: fast path — routes unchanged, skipping
+1784867072125 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867112739 configure_routes: fast path — routes unchanged, skipping
+1784867112739 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867141930 configure_routes: fast path — routes unchanged, skipping
+1784867141930 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867210015 configure_routes: fast path — routes unchanged, skipping
+1784867210015 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867279527 configure_routes: fast path — routes unchanged, skipping
+1784867279527 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867296763 configure_routes: fast path — routes unchanged, skipping
+1784867296763 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867306931 configure_routes: fast path — routes unchanged, skipping
+1784867306931 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867315863 configure_routes: fast path — routes unchanged, skipping
+1784867315863 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867350954 configure_routes: fast path — routes unchanged, skipping
+1784867350954 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867418344 configure_routes: fast path — routes unchanged, skipping
+1784867418344 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867429645 configure_routes: fast path — routes unchanged, skipping
+1784867429645 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867459882 configure_routes: fast path — routes unchanged, skipping
+1784867459883 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
+1784867474030 configure_routes: fast path — routes unchanged, skipping
+1784867474030 configure_adapter_mtu: fast path — mtu=1280 unchanged, skipping
