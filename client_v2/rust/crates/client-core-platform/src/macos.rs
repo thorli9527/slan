@@ -402,6 +402,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
             eprintln!("macos configure_relay skipped unchanged config");
             return Ok(());
         }
+        let previous_relay_config = runtime.relay_config.clone();
         runtime.relay_config = relay_config.cloned();
         eprintln!(
             "macos configure_relay enabled={} sessions={} transport={}",
@@ -434,7 +435,23 @@ impl PlatformNetwork for MacosPlatformNetwork {
             }
             Err(error) => {
                 eprintln!("SLAN_MACOS_CONFIGURE_RELAY_ERROR error={error:#}");
-                Err(error)
+                runtime.relay_config = previous_relay_config;
+                match restart_data_plane(&mut runtime) {
+                    Ok(()) => {
+                        eprintln!("SLAN_MACOS_CONFIGURE_RELAY_RESTORED_PREVIOUS");
+                        Err(error.context(
+                            "configure new relay data plane; previous data plane restored",
+                        ))
+                    }
+                    Err(restore_error) => {
+                        eprintln!(
+                            "SLAN_MACOS_CONFIGURE_RELAY_RESTORE_ERROR original_error={error:#} restore_error={restore_error:#}"
+                        );
+                        Err(anyhow!(
+                            "configure new relay data plane failed: {error:#}; restore previous data plane failed: {restore_error:#}"
+                        ))
+                    }
+                }
             }
         }
     }

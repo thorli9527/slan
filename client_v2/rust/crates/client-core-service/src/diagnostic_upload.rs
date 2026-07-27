@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
+    sync::OnceLock,
     thread,
     time::Duration,
 };
@@ -15,11 +16,16 @@ use crate::{
     session_store::{app_data_dir, current_timestamp_ms, load_session, session_device_api_token},
 };
 
-const INITIAL_UPLOAD_DELAY: Duration = Duration::from_secs(90);
-const UPLOAD_INTERVAL: Duration = Duration::from_secs(15 * 60);
-const MAX_FILE_TAIL_BYTES: u64 = 96 * 1024;
+const INITIAL_UPLOAD_DELAY: Duration = Duration::from_secs(15);
+const UPLOAD_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const MAX_FILE_TAIL_BYTES: u64 = 64 * 1024;
+const MAX_UPLOAD_CONTENT_BYTES: usize = 512 * 1024;
 
 pub(crate) fn spawn_worker() {
+    static WORKER_STARTED: OnceLock<()> = OnceLock::new();
+    if WORKER_STARTED.set(()).is_err() {
+        return;
+    }
     thread::spawn(|| {
         thread::sleep(INITIAL_UPLOAD_DELAY);
         loop {
@@ -47,8 +53,14 @@ fn collect_and_upload() -> Result<()> {
     }
 
     let mut files = BTreeMap::new();
+    let mut remaining_bytes = MAX_UPLOAD_CONTENT_BYTES;
     for (name, path) in diagnostic_files() {
-        if let Some(content) = read_redacted_tail(&path)? {
+        if remaining_bytes == 0 {
+            break;
+        }
+        let tail_bytes = MAX_FILE_TAIL_BYTES.min(remaining_bytes as u64);
+        if let Some(content) = read_redacted_tail(&path, tail_bytes)? {
+            remaining_bytes = remaining_bytes.saturating_sub(content.len());
             files.insert(name, content);
         }
     }
@@ -83,6 +95,10 @@ fn diagnostic_files() -> Vec<(String, PathBuf)> {
             state_dir.join("slan-debug.log"),
         ),
         (
+            "client-platform-error.log".to_string(),
+            state_dir.join("client-platform-error.log"),
+        ),
+        (
             "relay-stats.json".to_string(),
             state_dir.join("client-v2-relay-stats.json"),
         ),
@@ -95,24 +111,62 @@ fn diagnostic_files() -> Vec<(String, PathBuf)> {
             state_dir.join("client-v2-direct-udp-endpoint.json"),
         ),
     ];
-    let ui_log = std::env::temp_dir().join("slan").join("client-v2-ui.log");
-    files.push(("client-v2-ui.log".to_string(), ui_log));
+    for index in 1..=3 {
+        files.push((
+            format!("client-core-service.log.{index}"),
+            state_dir.join(format!("client-core-service.log.{index}")),
+        ));
+    }
+    files.push(("client-v2-ui.log".to_string(), ui_log_path()));
+    files.push((
+        "client-v2-native.log".to_string(),
+        std::env::temp_dir()
+            .join("slan")
+            .join("client-v2-native.log"),
+    ));
+    #[cfg(target_os = "macos")]
+    {
+        let log_dir = PathBuf::from("/Library/Logs/SLAN");
+        files.push((
+            "client-core-service.stderr.log".to_string(),
+            log_dir.join("client-core-service.stderr.log"),
+        ));
+        files.push((
+            "client-core-service.stdout.log".to_string(),
+            log_dir.join("client-core-service.stdout.log"),
+        ));
+    }
     files
 }
 
-fn read_redacted_tail(path: &Path) -> Result<Option<String>> {
+fn ui_log_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        return std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+            .join("SLAN")
+            .join("client-v2-ui.log");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::temp_dir().join("slan").join("client-v2-ui.log")
+    }
+}
+
+fn read_redacted_tail(path: &Path, max_tail_bytes: u64) -> Result<Option<String>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).with_context(|| format!("open {}", path.display())),
     };
     let length = file.metadata()?.len();
-    if length > MAX_FILE_TAIL_BYTES {
-        file.seek(SeekFrom::End(-(MAX_FILE_TAIL_BYTES as i64)))?;
+    if length > max_tail_bytes {
+        file.seek(SeekFrom::End(-(max_tail_bytes as i64)))?;
     }
     let mut content = String::new();
     file.read_to_string(&mut content)?;
-    if length > MAX_FILE_TAIL_BYTES {
+    if length > max_tail_bytes {
         if let Some(first_newline) = content.find('\n') {
             content.drain(..=first_newline);
         }
@@ -161,5 +215,18 @@ mod tests {
         assert!(!result.contains("refresh-secret"));
         assert!(!result.contains("\"pass\""));
         assert_eq!(result.matches("[REDACTED]").count(), 3);
+    }
+
+    #[test]
+    fn diagnostic_files_include_rotated_and_native_logs() {
+        let names = diagnostic_files()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"client-core-service.log.1".to_string()));
+        assert!(names.contains(&"client-core-service.log.3".to_string()));
+        assert!(names.contains(&"client-v2-ui.log".to_string()));
+        assert!(names.contains(&"client-v2-native.log".to_string()));
+        assert!(names.contains(&"client-platform-error.log".to_string()));
     }
 }

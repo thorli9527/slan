@@ -37,6 +37,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, ErrorKind, Write},
     net::{TcpListener, TcpStream},
+    path::Path,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
@@ -44,6 +45,10 @@ use std::{
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
 };
+
+const SERVICE_LOG_MAX_BYTES: u64 = 20 * 1024 * 1024;
+const SERVICE_LOG_BACKUP_COUNT: usize = 3;
+static SERVICE_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 use std::{
@@ -1417,6 +1422,21 @@ fn apply_prepared_runtime_refresh<P>(
 where
     P: client_core::PlatformNetwork,
 {
+    let current = runtime.state();
+    let preserve_enabled_network = current.signed_in
+        && current.network_enabled
+        && prepared
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .is_none_or(|state| !state.network_enabled);
+    if preserve_enabled_network {
+        log_service_error(format!(
+            "client-core-service ignored transient disabled platform runtime snapshot: current_ip={:?}",
+            current.virtual_ip
+        ));
+        return current.clone();
+    }
     match prepared {
         Ok(Some(state)) => runtime
             .dispatch(ClientCommand::ApplyPlatformRuntimeState(state))
@@ -3389,7 +3409,12 @@ pub(crate) fn drain_pending_control_tasks(
                 .expect("control task queue mutex poisoned");
             match task_queue.take_next_pending() {
                 Ok(task) => task,
-                Err(error) => return state_with_error(&last_state, error.to_string()),
+                Err(error) => {
+                    log_service_error(format!(
+                        "CONTROL_TASK_DEQUEUE_ERROR error={error:#}"
+                    ));
+                    return state_with_error(&last_state, error.to_string());
+                }
             }
         };
         let Some(task) = task else {
@@ -3422,6 +3447,11 @@ fn execute_control_task(
             .lock()
             .expect("control task queue mutex poisoned");
         if let Some(error) = state.error.clone() {
+            log_service_error(format!(
+                "CONTROL_TASK_EXECUTION_ERROR taskId={} action={} error={error}",
+                task.id,
+                task.action.as_str()
+            ));
             let actor_error = error.clone();
             let correlation_id = Some(task.id.clone());
             let _ = runtime.call_named(
@@ -3429,9 +3459,19 @@ fn execute_control_task(
                 correlation_id,
                 move |runtime| Ok(runtime.set_error(actor_error)),
             );
-            let _ = task_queue.mark_failed(&task.id, error);
+            if let Err(persist_error) = task_queue.mark_failed(&task.id, error) {
+                log_service_error(format!(
+                    "CONTROL_TASK_STATUS_PERSIST_ERROR taskId={} status=failed error={persist_error:#}",
+                    task.id
+                ));
+            }
         } else {
-            let _ = task_queue.mark_succeeded(&task.id);
+            if let Err(error) = task_queue.mark_succeeded(&task.id) {
+                log_service_error(format!(
+                    "CONTROL_TASK_STATUS_PERSIST_ERROR taskId={} status=succeeded error={error:#}",
+                    task.id
+                ));
+            }
         }
         return state;
     }
@@ -3466,6 +3506,11 @@ fn execute_control_task(
         .lock()
         .expect("control task queue mutex poisoned");
     if let Some(error) = state.error.clone() {
+        log_service_error(format!(
+            "CONTROL_TASK_EXECUTION_ERROR taskId={} action={} error={error}",
+            task.id,
+            task.action.as_str()
+        ));
         let actor_error = error.clone();
         let correlation_id = Some(task.id.clone());
         let _ = runtime.call_named(
@@ -3473,9 +3518,19 @@ fn execute_control_task(
             correlation_id,
             move |runtime| Ok(runtime.set_error(actor_error)),
         );
-        let _ = task_queue.mark_failed(&task.id, error);
+        if let Err(persist_error) = task_queue.mark_failed(&task.id, error) {
+            log_service_error(format!(
+                "CONTROL_TASK_STATUS_PERSIST_ERROR taskId={} status=failed error={persist_error:#}",
+                task.id
+            ));
+        }
     } else {
-        let _ = task_queue.mark_succeeded(&task.id);
+        if let Err(error) = task_queue.mark_succeeded(&task.id) {
+            log_service_error(format!(
+                "CONTROL_TASK_STATUS_PERSIST_ERROR taskId={} status=succeeded error={error:#}",
+                task.id
+            ));
+        }
     }
     state
 }
@@ -3513,13 +3568,40 @@ where
 }
 
 pub(crate) fn log_service_error(message: impl AsRef<str>) {
+    let _guard = SERVICE_LOG_LOCK.get_or_init(|| Mutex::new(())).lock().ok();
     let dir = app_data_dir().join("SLAN");
     let _ = fs::create_dir_all(&dir);
     let path = dir.join("client-core-service.log");
+    let _ = rotate_log_file(&path, SERVICE_LOG_MAX_BYTES, SERVICE_LOG_BACKUP_COUNT);
     let timestamp = current_timestamp_ms();
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{timestamp} {}", message.as_ref());
     }
+}
+
+fn rotate_log_file(path: &Path, max_bytes: u64, backup_count: usize) -> Result<()> {
+    if backup_count == 0
+        || fs::metadata(path)
+            .map(|metadata| metadata.len() < max_bytes)
+            .unwrap_or(true)
+    {
+        return Ok(());
+    }
+    for index in (1..backup_count).rev() {
+        let source = path.with_extension(format!("log.{index}"));
+        let destination = path.with_extension(format!("log.{}", index + 1));
+        if source.exists() {
+            if destination.exists() {
+                fs::remove_file(&destination)?;
+            }
+            fs::rename(source, destination)?;
+        }
+    }
+    let first_backup = path.with_extension("log.1");
+    if first_backup.exists() {
+        fs::remove_file(&first_backup)?;
+    }
+    fs::rename(path, first_backup).context("rotate client service log")
 }
 
 struct PreparedMobilePlatformNetworkConfig {
@@ -5259,16 +5341,32 @@ pub(crate) fn persist_connect_plan_from_value(value: &Value) -> Result<bool> {
         })
         .collect();
     plan.paths.sort_by_key(|path| path.priority);
-    plan.updated_at_ms = current_timestamp_ms();
-
     let mut store = load_connect_plan_store();
+    let changed = store
+        .plans
+        .iter()
+        .find(|item| item.peer_node_id == plan.peer_node_id)
+        .is_none_or(|item| !connect_plan_content_matches(item, &plan));
+    plan.updated_at_ms = current_timestamp_ms();
     let cutoff = plan.updated_at_ms.saturating_sub(CONNECT_PLAN_TTL_MS);
     store
         .plans
         .retain(|item| item.peer_node_id != plan.peer_node_id && item.updated_at_ms >= cutoff);
     store.plans.push(plan);
     persist_connect_plan_store(&store)?;
-    Ok(true)
+    Ok(changed)
+}
+
+fn connect_plan_content_matches(left: &PersistedConnectPlan, right: &PersistedConnectPlan) -> bool {
+    left.peer_node_id == right.peer_node_id
+        && left.prefer_direct == right.prefer_direct
+        && left.paths.len() == right.paths.len()
+        && left.paths.iter().zip(&right.paths).all(|(left, right)| {
+            left.path_type == right.path_type
+                && left.endpoint == right.endpoint
+                && left.priority == right.priority
+        })
+        && left.relay_ticket == right.relay_ticket
 }
 
 fn load_recent_connect_plans(now_ms: u64) -> Vec<PersistedConnectPlan> {
@@ -5567,7 +5665,6 @@ fn spawn_runtime_sync_worker(runtime: RuntimeActorHandle, state_notifier: Arc<Ru
                 "client-core-service platform runtime refresh failed: {error:#}"
             ));
         }
-        let before_sync = runtime.snapshot().state;
         sync_control_assignment(&runtime);
         let before = runtime.snapshot().state;
         // Guard: a periodic platform read is observational and must never
@@ -5577,10 +5674,7 @@ fn spawn_runtime_sync_worker(runtime: RuntimeActorHandle, state_notifier: Arc<Ru
         // network. Explicit disable flows (logout, deactivation) handle
         // network teardown through their own dedicated paths.
         let platform_snapshot = platform_transition::snapshot();
-        if before.network_enabled
-            && before_sync.network_enabled
-            && !platform_snapshot.runtime_state.network_enabled
-        {
+        if before.network_enabled && !platform_snapshot.runtime_state.network_enabled {
             log_service_error(format!(
                 "client-core-service periodic refresh guard: skipping network disable — before_ip={:?} platform_ip={:?} platform_enabled={}",
                 before.virtual_ip,

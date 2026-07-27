@@ -7,6 +7,8 @@ use std::{
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+const MAX_COMPLETED_TASK_HISTORY: usize = 200;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlTaskDirection {
     Upstream,
@@ -122,10 +124,11 @@ pub struct ControlTaskQueue {
 impl ControlTaskQueue {
     pub fn load_default() -> Self {
         let path = task_file_path();
-        let tasks = fs::read_to_string(&path)
+        let mut tasks = fs::read_to_string(&path)
             .ok()
             .map(|payload| parse_tasks(&payload))
             .unwrap_or_default();
+        prune_completed_task_history(&mut tasks);
         Self { path, tasks }
     }
 
@@ -181,6 +184,7 @@ impl ControlTaskQueue {
             error: None,
         };
         self.tasks.push(task.clone());
+        prune_completed_task_history(&mut self.tasks);
         self.persist()?;
         Ok(task)
     }
@@ -267,6 +271,7 @@ impl ControlTaskQueue {
             task.acknowledged_at_ms = Some(current_timestamp_ms());
             task.updated_at_ms = current_timestamp_ms();
         }
+        prune_completed_task_history(&mut self.tasks);
         self.persist()
     }
 
@@ -281,6 +286,7 @@ impl ControlTaskQueue {
             task.error = error;
             task.updated_at_ms = current_timestamp_ms();
         }
+        prune_completed_task_history(&mut self.tasks);
         self.persist()
     }
 
@@ -288,9 +294,45 @@ impl ControlTaskQueue {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
-        fs::write(&self.path, render_tasks(&self.tasks))
-            .with_context(|| format!("write {}", self.path.display()))
+        let temporary_path = self
+            .path
+            .with_extension(format!("xml.tmp-{}", std::process::id()));
+        fs::write(&temporary_path, render_tasks(&self.tasks))
+            .with_context(|| format!("write {}", temporary_path.display()))?;
+        #[cfg(target_os = "windows")]
+        if self.path.exists() {
+            fs::remove_file(&self.path)
+                .with_context(|| format!("replace {}", self.path.display()))?;
+        }
+        fs::rename(&temporary_path, &self.path)
+            .with_context(|| format!("replace {}", self.path.display()))
     }
+}
+
+fn prune_completed_task_history(tasks: &mut Vec<ControlTask>) {
+    let removable = tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.status,
+                ControlTaskStatus::Succeeded | ControlTaskStatus::Failed
+            ) && (task.delivery_id.is_none() || task.acknowledged_at_ms.is_some())
+        })
+        .count()
+        .saturating_sub(MAX_COMPLETED_TASK_HISTORY);
+    let mut removed = 0;
+    tasks.retain(|task| {
+        let can_remove = matches!(
+            task.status,
+            ControlTaskStatus::Succeeded | ControlTaskStatus::Failed
+        ) && (task.delivery_id.is_none() || task.acknowledged_at_ms.is_some());
+        if can_remove && removed < removable {
+            removed += 1;
+            false
+        } else {
+            true
+        }
+    });
 }
 
 fn task_file_path() -> PathBuf {
@@ -575,5 +617,44 @@ mod tests {
         assert_eq!(acks[0].id, task.id);
         assert_eq!(acks[0].delivery_id.as_deref(), Some("delivery-restore"));
         assert_eq!(acks[0].status, ControlTaskStatus::Succeeded);
+    }
+
+    #[test]
+    fn pruning_keeps_recent_history_and_unacknowledged_tasks() {
+        let mut tasks = (0..(MAX_COMPLETED_TASK_HISTORY + 25))
+            .map(|index| ControlTask {
+                id: format!("completed-{index}"),
+                delivery_id: None,
+                direction: ControlTaskDirection::Downstream,
+                action: ControlTaskAction::ReconcileNetworkState,
+                status: ControlTaskStatus::Succeeded,
+                require_ui_refresh: false,
+                created_at_ms: index as u64,
+                updated_at_ms: index as u64,
+                acknowledged_at_ms: None,
+                error: None,
+            })
+            .collect::<Vec<_>>();
+        tasks.push(ControlTask {
+            id: "waiting-ack".to_string(),
+            delivery_id: Some("delivery-1".to_string()),
+            direction: ControlTaskDirection::Downstream,
+            action: ControlTaskAction::EnableNetwork,
+            status: ControlTaskStatus::Succeeded,
+            require_ui_refresh: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            acknowledged_at_ms: None,
+            error: None,
+        });
+
+        prune_completed_task_history(&mut tasks);
+
+        assert_eq!(tasks.len(), MAX_COMPLETED_TASK_HISTORY + 1);
+        assert!(tasks.iter().any(|task| task.id == "waiting-ack"));
+        assert!(!tasks.iter().any(|task| task.id == "completed-0"));
+        assert!(tasks
+            .iter()
+            .any(|task| task.id == format!("completed-{}", MAX_COMPLETED_TASK_HISTORY + 24)));
     }
 }

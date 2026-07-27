@@ -377,6 +377,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
             eprintln!("linux configure_relay skipped unchanged config");
             return Ok(());
         }
+        let previous_relay_config = runtime.relay_config.clone();
         runtime.relay_config = relay_config.cloned();
         if runtime.mock_enabled {
             return Ok(());
@@ -392,8 +393,42 @@ impl PlatformNetwork for LinuxPlatformNetwork {
             &mtu.to_string(),
         ])
         .with_context(|| format!("set Linux TUN MTU on {interface_name} to {mtu}"))?;
-        restart_data_plane(&mut runtime)?;
-        Ok(())
+        match restart_data_plane(&mut runtime) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                eprintln!("SLAN_LINUX_CONFIGURE_RELAY_ERROR error={error:#}");
+                runtime.relay_config = previous_relay_config;
+                let previous_mtu = tunnel_mtu_for_relay(runtime.relay_config.as_ref());
+                if let Err(mtu_error) = run_ip(&[
+                    "link",
+                    "set",
+                    "dev",
+                    &interface_name,
+                    "mtu",
+                    &previous_mtu.to_string(),
+                ]) {
+                    eprintln!(
+                        "SLAN_LINUX_CONFIGURE_RELAY_RESTORE_MTU_ERROR interface={interface_name} mtu={previous_mtu} error={mtu_error:#}"
+                    );
+                }
+                match restart_data_plane(&mut runtime) {
+                    Ok(()) => {
+                        eprintln!("SLAN_LINUX_CONFIGURE_RELAY_RESTORED_PREVIOUS");
+                        Err(error.context(
+                            "configure new Linux relay data plane; previous data plane restored",
+                        ))
+                    }
+                    Err(restore_error) => {
+                        eprintln!(
+                            "SLAN_LINUX_CONFIGURE_RELAY_RESTORE_ERROR original_error={error:#} restore_error={restore_error:#}"
+                        );
+                        Err(anyhow::anyhow!(
+                            "configure new Linux relay data plane failed: {error:#}; restore previous data plane failed: {restore_error:#}"
+                        ))
+                    }
+                }
+            }
+        }
     }
 
     fn diagnostics(&self) -> Result<PlatformNetworkDiagnostics> {

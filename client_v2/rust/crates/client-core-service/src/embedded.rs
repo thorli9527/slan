@@ -17,7 +17,9 @@ use client_core::{
     PeerPathConfig, PlatformAclPolicy, PlatformResolverConfig, RelayDataPlaneConfig,
     RelayPeerSession, RouteSpec, SLAN_DNS_SERVICE_IP,
 };
-use client_core_platform::{direct_udp::configured_direct_udp_port, PlatformNetworkImpl};
+use client_core_platform::{
+    direct_udp::configured_direct_udp_port, set_platform_log_dir, PlatformNetworkImpl,
+};
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 use serde_json::Value;
 
@@ -125,6 +127,7 @@ fn clear_embedded_mqtt_connection() {
 
 fn runtime() -> &'static RuntimeActorHandle {
     RUNTIME.get_or_init(|| {
+        crate::diagnostic_upload::spawn_worker();
         let mut runtime = ClientRuntime::new(PlatformNetworkImpl);
         if let Some(session) = load_valid_registered_session() {
             let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
@@ -579,6 +582,7 @@ fn apply_embedded_request_overrides(args: &Value) {
         .filter(|value| !value.is_empty())
     {
         set_app_data_dir_override(state_dir);
+        set_platform_log_dir(state_dir);
     }
     if let Some(device_id) = args
         .get("deviceIdOverride")

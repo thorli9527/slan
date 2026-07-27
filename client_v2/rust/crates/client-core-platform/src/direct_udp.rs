@@ -14,6 +14,8 @@ use client_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::log_platform_error;
+
 /// 兼容旧版直连 UDP 探测包。
 pub const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
 /// 兼容旧版直连 UDP 探测响应包。
@@ -123,7 +125,10 @@ impl DirectUdpTransport {
         let socket = match socket_factory() {
             Ok(socket) => socket,
             Err(error) => {
-                eprintln!("client-core-platform direct udp attach skipped error={error:#}");
+                let message =
+                    format!("client-core-platform direct udp attach skipped error={error:#}");
+                eprintln!("{message}");
+                log_platform_error(message);
                 clear_direct_udp_endpoint_report();
                 return None;
             }
@@ -153,10 +158,12 @@ impl DirectUdpTransport {
                     ready: false,
                 }),
                 Err(error) => {
-                    eprintln!(
+                    let message = format!(
                         "client-core-platform direct udp attach skipped peer={} error={error:#}",
                         path.peer_node_id
                     );
+                    eprintln!("{message}");
+                    log_platform_error(message);
                     peers.push(DirectUdpPeer {
                         peer_node_id: path.peer_node_id.clone(),
                         peer_virtual_ips: path.peer_virtual_ips.clone(),
@@ -169,7 +176,11 @@ impl DirectUdpTransport {
                 }
             }
         }
-        if socket.set_nonblocking(true).is_err() {
+        if let Err(error) = socket.set_nonblocking(true) {
+            let message =
+                format!("client-core-platform direct udp nonblocking setup failed error={error:#}");
+            eprintln!("{message}");
+            log_platform_error(message);
             clear_direct_udp_endpoint_report();
             return None;
         }
@@ -289,19 +300,25 @@ impl DirectUdpTransport {
             let address = match resolve_direct_udp_peer_address(&node.address) {
                 Ok(address) => address,
                 Err(error) => {
-                    eprintln!(
+                    let message = format!(
                         "direct udp punch address rejected node={} address={} error={error:#}",
                         node.node_id, node.address
                     );
+                    eprintln!("{message}");
+                    log_platform_error(message);
                     continue;
                 }
             };
             match self.socket.send_to(payload.as_bytes(), address) {
                 Ok(_) => sent += 1,
-                Err(error) => eprintln!(
-                    "direct udp punch probe failed network={} node={} address={} error={error}",
-                    network_id, node.node_id, address
-                ),
+                Err(error) => {
+                    let message = format!(
+                        "direct udp punch probe failed network={} node={} address={} error={error}",
+                        network_id, node.node_id, address
+                    );
+                    eprintln!("{message}");
+                    log_platform_error(message);
+                }
             }
         }
         sent

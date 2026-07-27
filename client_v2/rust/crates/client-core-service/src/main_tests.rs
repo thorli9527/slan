@@ -1,8 +1,8 @@
 use super::{
     android_data_plane_relay_candidate, apply_prepared_runtime_refresh,
-    browser_login_requires_preparation,
-    commit_control_network_activation, commit_logout, commit_network_deactivation,
-    commit_prepared_login, data_plane_relay_candidate, diagnostic_connect_plan_summaries,
+    browser_login_requires_preparation, commit_control_network_activation, commit_logout,
+    commit_network_deactivation, commit_prepared_login, connect_plan_content_matches,
+    data_plane_relay_candidate, diagnostic_connect_plan_summaries,
     filter_relay_sessions_for_transport, invalidate_runtime_session, local_status_active_path,
     method_business_event_type, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
     path_diagnose_health, path_diagnose_resolver, peer_network_id, peer_path_configs,
@@ -11,7 +11,7 @@ use super::{
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
     relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
-    request_is_watch, routes_with_peer_virtual_ips, status_is_managed_disabled,
+    request_is_watch, rotate_log_file, routes_with_peer_virtual_ips, status_is_managed_disabled,
     valid_direct_candidate_address, ControlPeer, LocalRequestMetrics, PersistedConnectPlan,
     PersistedConnectPlanPath, PersistedConnectPlanStore, PreparedControlNetworkActivation,
     RelayMaintenanceState, LOCAL_REQUEST_CONCURRENCY_LIMIT, LOCAL_WATCH_CONCURRENCY_LIMIT,
@@ -106,6 +106,34 @@ fn local_request_watch_classification_only_matches_long_polls() {
         r#"{"method":"localNetworkActivate","args":{}}"#
     ));
     assert!(!request_is_watch("not-json"));
+}
+
+#[test]
+fn service_log_rotation_keeps_bounded_backups() {
+    let directory = std::env::temp_dir().join(format!(
+        "slan-log-rotation-{}-{}",
+        std::process::id(),
+        crate::session_store::current_timestamp_ms()
+    ));
+    fs::create_dir_all(&directory).expect("create log rotation directory");
+    let log = directory.join("client-core-service.log");
+
+    for generation in 0..4 {
+        fs::write(&log, format!("generation-{generation}")).expect("write service log generation");
+        rotate_log_file(&log, 1, 3).expect("rotate service log");
+    }
+
+    assert!(!log.exists());
+    assert_eq!(
+        fs::read_to_string(log.with_extension("log.1")).expect("read newest backup"),
+        "generation-3"
+    );
+    assert_eq!(
+        fs::read_to_string(log.with_extension("log.3")).expect("read oldest backup"),
+        "generation-1"
+    );
+    assert!(!log.with_extension("log.4").exists());
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -410,6 +438,43 @@ fn prepared_runtime_refresh_applies_platform_snapshot_without_platform_read() {
 
     assert!(state.network_enabled);
     assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.8"));
+}
+
+#[test]
+fn prepared_runtime_refresh_preserves_enabled_network_on_transient_disabled_snapshot() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime
+        .dispatch(ClientCommand::ApplyDeviceUserLogin(
+            client_core::AuthPayload {
+                access_token: "token".to_string(),
+                refresh_token: None,
+                user_id: "user".to_string(),
+                user_label: "user@example.test".to_string(),
+                device_id: Some("device-1".to_string()),
+                active_network_id: Some("network-1".to_string()),
+                virtual_ip: Some("10.0.0.8".to_string()),
+                expires_in: None,
+            },
+        ))
+        .expect("apply login");
+    runtime.apply_network_enabled_state("10.0.0.8".to_string());
+
+    let state =
+        apply_prepared_runtime_refresh(&mut runtime, Ok(Some(NetworkRuntimeState::default())));
+
+    assert!(state.network_enabled);
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.8"));
+}
+
+#[test]
+fn prepared_runtime_refresh_can_keep_disabled_network_disabled() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+
+    let state =
+        apply_prepared_runtime_refresh(&mut runtime, Ok(Some(NetworkRuntimeState::default())));
+
+    assert!(!state.network_enabled);
+    assert!(state.virtual_ip.is_none());
 }
 
 #[test]
@@ -770,6 +835,27 @@ fn relay_session_filter_keeps_ticket_for_requested_transport() {
         filter_relay_sessions_for_transport(&sessions, "derp_tcp_tls_443").len(),
         1
     );
+}
+
+#[test]
+fn connect_plan_content_ignores_refresh_timestamp() {
+    let first = PersistedConnectPlan {
+        peer_node_id: "node-peer".to_string(),
+        prefer_direct: true,
+        paths: vec![PersistedConnectPlanPath {
+            path_type: "relay_udp".to_string(),
+            endpoint: "udp://relay.example:3478".to_string(),
+            priority: 10,
+        }],
+        relay_ticket: Some(test_relay_ticket("net-1", "node-local", "node-peer")),
+        updated_at_ms: 1,
+    };
+    let mut refreshed = first.clone();
+    refreshed.updated_at_ms = 2;
+
+    assert!(connect_plan_content_matches(&first, &refreshed));
+    refreshed.paths[0].priority = 20;
+    assert!(!connect_plan_content_matches(&first, &refreshed));
 }
 
 #[test]

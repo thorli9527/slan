@@ -45,6 +45,13 @@ use crate::{
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
 const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 
+fn network_event_requires_data_plane_reconfigure(event_type: &NetworkEventType) -> bool {
+    !matches!(
+        event_type,
+        NetworkEventType::MemberOnline | NetworkEventType::MemberOffline
+    )
+}
+
 #[derive(Debug, Default)]
 pub struct ControlTransportWorkerState {
     running: bool,
@@ -822,6 +829,7 @@ fn try_ingest_network_event(
     let current_state = runtime.snapshot().state;
     let reconfigure_required = current_state.signed_in
         && current_state.network_enabled
+        && network_event_requires_data_plane_reconfigure(&envelope.event_type)
         && matches!(
             apply_result,
             ApplyResult::Applied | ApplyResult::NeedsSnapshot
@@ -1131,7 +1139,9 @@ fn try_ingest_connect_plan(
             ack_delivery_id: downstream_message_id(&value),
         }));
     }
-    log_service_error("client-core-service ignored empty connect_plan for relay data plane");
+    log_service_error(
+        "client-core-service ignored unchanged or empty connect_plan for relay data plane",
+    );
     Ok(Some(ConnectPlanIngest {
         should_rebuild: false,
         ack_delivery_id: None,
@@ -1677,7 +1687,8 @@ mod tests {
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
-        ingest_downstream_publish, mqtt_connection_matches, network_event_targets_active_runtime,
+        ingest_downstream_publish, mqtt_connection_matches,
+        network_event_requires_data_plane_reconfigure, network_event_targets_active_runtime,
         reconnect_key, try_ingest_device_ip_reassigned,
     };
     use crate::control_plane::MqttCredential;
@@ -1820,6 +1831,22 @@ mod tests {
             Some("network-a")
         ));
         assert!(!network_event_targets_active_runtime("network-a", None));
+    }
+
+    #[test]
+    fn presence_events_do_not_reconfigure_the_data_plane() {
+        assert!(!network_event_requires_data_plane_reconfigure(
+            &NetworkEventType::MemberOnline
+        ));
+        assert!(!network_event_requires_data_plane_reconfigure(
+            &NetworkEventType::MemberOffline
+        ));
+        assert!(network_event_requires_data_plane_reconfigure(
+            &NetworkEventType::PeerPathChanged
+        ));
+        assert!(network_event_requires_data_plane_reconfigure(
+            &NetworkEventType::NetworkConfigChanged
+        ));
     }
 
     #[test]

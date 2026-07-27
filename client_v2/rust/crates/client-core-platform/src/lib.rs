@@ -1,7 +1,52 @@
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use anyhow::Result;
 use client_core::{NetworkRuntimeState, PlatformNetwork, PlatformResolverConfig, RouteSpec};
 
+static PLATFORM_LOG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 pub mod direct_udp;
+
+pub fn set_platform_log_dir(path: impl Into<PathBuf>) {
+    let _ = PLATFORM_LOG_DIR.set(path.into());
+}
+
+pub(crate) fn log_platform_error(message: impl AsRef<str>) {
+    let root = if let Some(path) = PLATFORM_LOG_DIR.get() {
+        path.clone()
+    } else if let Some(path) = std::env::var_os("SLAN_STATE_DIR") {
+        PathBuf::from(path)
+    } else if cfg!(target_os = "windows") {
+        std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from("/Library/Application Support")
+    } else if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join(".local").join("share")
+    } else {
+        std::env::temp_dir()
+    };
+    let path = root.join("SLAN").join("client-platform-error.log");
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{timestamp} {}", message.as_ref());
+    }
+}
 
 #[cfg(target_os = "android")]
 pub mod android;
