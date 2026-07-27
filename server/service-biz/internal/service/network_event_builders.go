@@ -97,12 +97,12 @@ func buildNetworkEventSnapshotFromRepositories(
 	return buildNetworkEventSnapshotPayload(resolved), nil
 }
 
-func networkEventMemberView(member model.NetworkDevice) NetworkEventMemberView {
+func networkEventMemberView(member model.NetworkDevice, now time.Time) NetworkEventMemberView {
 	member = normalizeNetworkMember(member)
 	return NetworkEventMemberView{
 		DeviceID:   strings.TrimSpace(member.DeviceID),
 		VirtualIP:  strings.TrimSpace(member.VirtualIP),
-		Online:     networkMemberOnline(member),
+		Online:     networkMemberOnlineAt(member, now),
 		LastSeenAt: member.LastSeenAt,
 		Tags:       []string{},
 		GroupIDs:   []string{},

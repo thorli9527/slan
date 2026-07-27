@@ -1,10 +1,12 @@
 package service
 
 import (
-	"strings"
+	"time"
 
 	"github.com/slan/service-biz/internal/model"
 )
+
+const deviceOnlineFreshnessWindow = 2 * time.Minute
 
 func normalizeNetworkMember(item model.NetworkDevice) model.NetworkDevice {
 	if item.MemberStatus == "" {
@@ -28,19 +30,35 @@ func networkMemberActivePtr(item *model.NetworkDevice) bool {
 	return networkMemberActive(*item)
 }
 
-func networkMemberOnline(item model.NetworkDevice) bool {
+func networkMemberOnlineAt(item model.NetworkDevice, now time.Time) bool {
 	item = normalizeNetworkMember(item)
 	if !networkMemberActive(item) {
 		return false
 	}
-	return item.MQTTConnected ||
-		item.PresenceStatus == model.DevicePresenceStatusConnected ||
-		item.PresenceStatus == model.DevicePresenceStatusActive ||
-		item.LastSeenAt > 0 ||
-		item.LastHeartbeatAt > 0 ||
-		item.LastRuntimeStateAt > 0 ||
-		item.LastEndpointAt > 0 ||
-		item.LastPathHealthAt > 0 ||
-		strings.TrimSpace(item.ActivePath) != "" ||
-		len(item.Endpoints) > 0
+	if item.MQTTConnected {
+		return true
+	}
+	latest := maxTimestamp(
+		item.LastSeenAt,
+		item.LastHeartbeatAt,
+		item.LastRuntimeStateAt,
+		item.LastEndpointAt,
+		item.LastPathHealthAt,
+	)
+	for _, endpoint := range item.Endpoints {
+		if endpoint.UpdatedAt > latest {
+			latest = endpoint.UpdatedAt
+		}
+	}
+	return latest > 0 && latest >= now.Add(-deviceOnlineFreshnessWindow).Unix()
+}
+
+func maxTimestamp(values ...int64) int64 {
+	var latest int64
+	for _, value := range values {
+		if value > latest {
+			latest = value
+		}
+	}
+	return latest
 }

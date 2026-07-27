@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
@@ -49,7 +50,7 @@ func managedDeviceView(ctx context.Context, networks repository.NetworkRepositor
 	view := OpsManagedDeviceView{
 		Device:          deviceView(device),
 		OwnerEmail:      ownerEmail,
-		HeartbeatOnline: device.Status == "active",
+		HeartbeatOnline: deviceHeartbeatOnlineAt(device, time.Now()),
 		NetworkEnabled:  device.Status == "active",
 		DeviceEnabled:   device.Status == "active",
 	}
@@ -61,4 +62,11 @@ func managedDeviceView(ctx context.Context, networks repository.NetworkRepositor
 	view.GlobalIP = managedDeviceGlobalIP(ctx, networks, device.DeviceID, attachedNetworks[0])
 	view.GlobalName = networkGlobalName(device.DeviceID, device.Alias, device.Name)
 	return view
+}
+
+func deviceHeartbeatOnlineAt(device model.Device, now time.Time) bool {
+	if device.Status != "active" || device.LastSeenAt <= 0 {
+		return false
+	}
+	return device.LastSeenAt >= now.Add(-deviceOnlineFreshnessWindow).Unix()
 }

@@ -3410,9 +3410,7 @@ pub(crate) fn drain_pending_control_tasks(
             match task_queue.take_next_pending() {
                 Ok(task) => task,
                 Err(error) => {
-                    log_service_error(format!(
-                        "CONTROL_TASK_DEQUEUE_ERROR error={error:#}"
-                    ));
+                    log_service_error(format!("CONTROL_TASK_DEQUEUE_ERROR error={error:#}"));
                     return state_with_error(&last_state, error.to_string());
                 }
             }
@@ -4425,7 +4423,7 @@ fn build_relay_data_plane_config(
             sessions
         })
         .collect::<Vec<_>>();
-    let sessions = filter_relay_sessions_for_transport(&sessions, relay_transport);
+    let sessions = select_relay_sessions_for_candidate(&sessions, relay_transport, relay);
     log_service_error(format!(
         "client-core-service relay config transport={} target={} sessions={} filtered_sessions=[{}]",
         relay_transport,
@@ -4484,6 +4482,7 @@ fn build_relay_data_plane_config(
     })
 }
 
+#[cfg(test)]
 fn filter_relay_sessions_for_transport(
     sessions: &[RelayPeerSession],
     relay_transport: &str,
@@ -4493,6 +4492,27 @@ fn filter_relay_sessions_for_transport(
         .filter(|session| relay_session_transport_matches(session, relay_transport))
         .cloned()
         .collect()
+}
+
+fn select_relay_sessions_for_candidate(
+    sessions: &[RelayPeerSession],
+    relay_transport: &str,
+    selected_relay: &RelayCandidateSelection,
+) -> Vec<RelayPeerSession> {
+    let mut selected = BTreeMap::<String, RelayPeerSession>::new();
+    for session in sessions
+        .iter()
+        .filter(|session| relay_session_transport_matches(session, relay_transport))
+    {
+        let replace = selected.get(&session.peer_node_id).is_none_or(|current| {
+            !relay_session_matches_candidate(current, selected_relay)
+                && relay_session_matches_candidate(session, selected_relay)
+        });
+        if replace {
+            selected.insert(session.peer_node_id.clone(), session.clone());
+        }
+    }
+    selected.into_values().collect()
 }
 
 fn relay_session_transport_matches(session: &RelayPeerSession, relay_transport: &str) -> bool {
@@ -5803,18 +5823,21 @@ fn spawn_local_resolver_supervisor(runtime: RuntimeActorHandle) {
         log_service_error("client-core-service local resolver supervisor started");
         let mut server: Option<ResolverServer> = None;
         let mut bound_addr: Option<String> = None;
+        let mut last_desired: Option<LocalResolverDesiredState> = None;
         loop {
-            log_service_error("client-core-service local resolver supervisor tick.begin");
             let desired = desired_local_resolver_state(&runtime);
-            log_service_error(format!(
-                "client-core-service local resolver supervisor desired enabled={} signedIn={} networkEnabled={} hasRequester={} hasResolverData={} bind={}",
-                desired.enabled,
-                desired.signed_in,
-                desired.network_enabled,
-                desired.has_requester_device_id,
-                desired.has_resolver_data,
-                desired.bind_addr,
-            ));
+            if last_desired.as_ref() != Some(&desired) {
+                log_service_error(format!(
+                    "client-core-service local resolver supervisor desired changed enabled={} signedIn={} networkEnabled={} hasRequester={} hasResolverData={} bind={}",
+                    desired.enabled,
+                    desired.signed_in,
+                    desired.network_enabled,
+                    desired.has_requester_device_id,
+                    desired.has_resolver_data,
+                    desired.bind_addr,
+                ));
+                last_desired = Some(desired.clone());
+            }
             if !desired.enabled {
                 server = None;
                 bound_addr = None;
@@ -5831,7 +5854,6 @@ fn spawn_local_resolver_supervisor(runtime: RuntimeActorHandle) {
                     desired_has_requester_device_id: Some(desired.has_requester_device_id),
                     desired_has_resolver_data: Some(desired.has_resolver_data),
                 });
-                log_service_error("client-core-service local resolver supervisor desired disabled");
                 thread::sleep(Duration::from_millis(500));
                 continue;
             }
@@ -5910,13 +5932,10 @@ fn spawn_local_resolver_supervisor(runtime: RuntimeActorHandle) {
                 status.desired_has_requester_device_id = Some(desired.has_requester_device_id);
                 status.desired_has_resolver_data = Some(desired.has_resolver_data);
             }
-            log_service_error("client-core-service local resolver supervisor status updated");
-
             let session = load_session().ok();
             let network = runtime_network_state_store()
                 .snapshot_for_session(session.as_ref())
                 .state;
-            log_service_error("client-core-service local resolver supervisor serving");
             let requester_device_id = desired.requester_device_id.clone().unwrap_or_default();
             let Some(active_server) = server.as_ref() else {
                 thread::sleep(Duration::from_millis(250));
@@ -6174,9 +6193,10 @@ fn relay_maintenance_reconfigure_reason(
     if relay_sessions_missing(stats) {
         return Some("relay_session_missing");
     }
-    if relay_response_stalled(stats, maintenance) {
-        return Some("relay_response_stalled");
-    }
+    // Missing replies may simply mean that every peer is offline. Rebuilding the
+    // local adapter cannot repair that condition and previously caused a restart
+    // loop roughly once per minute. Path diagnostics still report the response gap.
+    let _ = relay_response_stalled(stats, maintenance);
     if stats.relay_attach_failures > maintenance.last_attach_failures {
         maintenance.last_attach_failures = stats.relay_attach_failures;
         return Some("relay_attach_failure");

@@ -65,7 +65,72 @@ func TestDecodeControlUpPathHealthReport(t *testing.T) {
 	}
 }
 
-func TestReportEndpointAppliesDeviceEndpointsToEveryActiveNetwork(t *testing.T) {
+func TestHandleUpstreamPresenceMessagesRefreshMembership(t *testing.T) {
+	now := time.Unix(1700003000, 0)
+	for _, test := range []struct {
+		name               string
+		topicSuffix        string
+		wantHeartbeatAt    int64
+		wantRuntimeStateAt int64
+	}{
+		{name: "heartbeat", topicSuffix: "heartbeat", wantHeartbeatAt: now.Unix()},
+		{name: "runtime state", topicSuffix: "runtime-state", wantRuntimeStateAt: now.Unix()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			networks := &networkRuntimeTestNetworks{
+				networks: map[string]model.Network{
+					"net-a": {NetworkID: "net-a", Status: "active"},
+				},
+				networkDevices: map[string][]model.NetworkDevice{
+					"net-a": {{
+						NetworkID:      "net-a",
+						DeviceID:       "device-a",
+						Enabled:        true,
+						MemberStatus:   model.NetworkMemberStatusActive,
+						PresenceStatus: model.DevicePresenceStatusOffline,
+					}},
+				},
+			}
+			service := MQTTWebhookService{
+				Networks: networks,
+				Now:      func() time.Time { return now },
+			}
+
+			err := service.HandleUpstreamMessage(
+				context.Background(),
+				"slan/devices/device-a/"+test.topicSuffix,
+				[]byte(`{"deviceId":"device-a","activeNetworkId":"net-a","reportedAtMs":1700003000000}`),
+			)
+			if err != nil {
+				t.Fatalf("HandleUpstreamMessage returned error: %v", err)
+			}
+			if len(networks.savedNetworkDevices) != 1 {
+				t.Fatalf("expected one membership update, got %d", len(networks.savedNetworkDevices))
+			}
+			saved := networks.savedNetworkDevices[0]
+			if saved.LastSeenAt != now.Unix() || saved.PresenceStatus != model.DevicePresenceStatusActive {
+				t.Fatalf("unexpected presence update: %#v", saved)
+			}
+			if saved.LastHeartbeatAt != test.wantHeartbeatAt || saved.LastRuntimeStateAt != test.wantRuntimeStateAt {
+				t.Fatalf("unexpected message timestamp update: %#v", saved)
+			}
+		})
+	}
+}
+
+func TestHandleUpstreamPresenceRejectsDeviceMismatch(t *testing.T) {
+	service := MQTTWebhookService{Networks: &networkRuntimeTestNetworks{}}
+	err := service.HandleUpstreamMessage(
+		context.Background(),
+		"slan/devices/device-a/heartbeat",
+		[]byte(`{"deviceId":"device-b","activeNetworkId":"net-a"}`),
+	)
+	if err == nil {
+		t.Fatal("expected device mismatch error")
+	}
+}
+
+func TestReportEndpointUpdatesOnlyReportedNetwork(t *testing.T) {
 	networks := &networkRuntimeTestNetworks{
 		networks: map[string]model.Network{
 			"net-a": {NetworkID: "net-a", Status: "active"},
@@ -94,8 +159,65 @@ func TestReportEndpointAppliesDeviceEndpointsToEveryActiveNetwork(t *testing.T) 
 	if !changed {
 		t.Fatal("expected endpoint change")
 	}
-	if got := len(networks.savedNetworkDevices); got != 2 {
-		t.Fatalf("expected endpoints saved to 2 networks, got %d", got)
+	if got := len(networks.savedNetworkDevices); got != 1 {
+		t.Fatalf("expected endpoint saved only to reported network, got %d", got)
+	}
+	saved := networks.savedNetworkDevices[0]
+	if saved.NetworkID != "net-a" {
+		t.Fatalf("expected net-a update, got %q", saved.NetworkID)
+	}
+	if saved.LastEndpointAt != 1700003000 || saved.LastSeenAt != 1700003000 {
+		t.Fatalf("expected endpoint presence timestamps, got %#v", saved)
+	}
+	if len(saved.Endpoints) != 1 || saved.Endpoints[0].UpdatedAt != 1700003000 {
+		t.Fatalf("expected endpoint timestamp fallback, got %#v", saved.Endpoints)
+	}
+}
+
+func TestReportEndpointSkipsUnchangedEndpointWrite(t *testing.T) {
+	networks := &networkRuntimeTestNetworks{
+		networks: map[string]model.Network{
+			"net-a": {NetworkID: "net-a", Status: "active"},
+		},
+		networkDevices: map[string][]model.NetworkDevice{
+			"net-a": {{
+				NetworkID:    "net-a",
+				DeviceID:     "device-a",
+				Enabled:      true,
+				MemberStatus: model.NetworkMemberStatusActive,
+				NATType:      "easy",
+				Endpoints: []model.DeviceEndpoint{{
+					Type:      "direct_udp",
+					Address:   "1.2.3.4:5678",
+					UpdatedAt: 100,
+				}},
+			}},
+		},
+	}
+	service := MQTTWebhookService{
+		Networks: networks,
+		Now:      func() time.Time { return time.Unix(1700003000, 0) },
+	}
+
+	changed, err := service.ReportEndpoint(context.Background(), MQTTEndpointReportInput{
+		NetworkID: "net-a",
+		DeviceID:  "device-a",
+		NodeID:    "node-device-a",
+		NATType:   "easy",
+		Endpoints: []DeviceEndpointView{{
+			Type:      "direct_udp",
+			Address:   "1.2.3.4:5678",
+			UpdatedAt: 1700003000,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ReportEndpoint returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("unchanged endpoint must not report a configuration change")
+	}
+	if len(networks.savedNetworkDevices) != 0 {
+		t.Fatalf("unchanged endpoint must not write membership, got %d writes", len(networks.savedNetworkDevices))
 	}
 }
 

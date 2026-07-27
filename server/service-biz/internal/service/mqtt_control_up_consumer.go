@@ -10,6 +10,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
 )
 
@@ -26,38 +27,48 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	topic := fmt.Sprintf("%s/devices/+/control/up", mqttTopicRoot(s.Config))
+	topicRoot := mqttTopicRoot(s.Config)
+	topics := map[string]byte{
+		fmt.Sprintf("%s/devices/+/control/up", topicRoot):    1,
+		fmt.Sprintf("%s/devices/+/heartbeat", topicRoot):     0,
+		fmt.Sprintf("%s/devices/+/runtime-state", topicRoot): 0,
+	}
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
 		SetClientID(credential.ClientID + "-control-up").
-		SetUsername(credential.Username).
-		SetPassword(credential.Password).
 		SetConnectTimeout(5 * time.Second).
 		SetWriteTimeout(5 * time.Second).
 		SetOrderMatters(false).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(2 * time.Second)
+	opts.SetCredentialsProvider(func() (string, string) {
+		fresh := mqttkit.CredentialForServer(s.Config, currentTime(s.Now))
+		if fresh == nil {
+			return credential.Username, credential.Password
+		}
+		return fresh.Username, fresh.Password
+	})
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		log.Printf("mqtt control/up consumer connection lost: %v", err)
 	})
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
-		token := client.Subscribe(topic, 1, func(_ mqtt.Client, message mqtt.Message) {
+		token := client.SubscribeMultiple(topics, func(_ mqtt.Client, message mqtt.Message) {
 			msgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := s.HandleControlUpMessage(msgCtx, message.Topic(), message.Payload()); err != nil {
-				log.Printf("mqtt control/up consume failed topic=%s err=%v payload=%s", message.Topic(), err, string(message.Payload()))
+			if err := s.HandleUpstreamMessage(msgCtx, message.Topic(), message.Payload()); err != nil {
+				log.Printf("mqtt upstream consume failed topic=%s err=%v payload=%s", message.Topic(), err, string(message.Payload()))
 			}
 		})
 		if ok := token.WaitTimeout(5 * time.Second); !ok {
-			log.Printf("mqtt control/up consumer subscribe timeout topic=%s", topic)
+			log.Printf("mqtt upstream consumer subscribe timeout topics=%v", topics)
 			return
 		}
 		if err := token.Error(); err != nil {
-			log.Printf("mqtt control/up consumer subscribe failed topic=%s err=%v", topic, err)
+			log.Printf("mqtt upstream consumer subscribe failed topics=%v err=%v", topics, err)
 			return
 		}
-		log.Printf("mqtt control/up consumer subscribed topic=%s", topic)
+		log.Printf("mqtt upstream consumer subscribed topics=%v", topics)
 	})
 	client := mqtt.NewClient(opts)
 	connectToken := client.Connect()
@@ -72,6 +83,63 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 		client.Disconnect(250)
 	}()
 	return nil
+}
+
+func (s MQTTWebhookService) HandleUpstreamMessage(ctx context.Context, topic string, payload []byte) error {
+	switch {
+	case strings.HasSuffix(topic, "/control/up"):
+		return s.HandleControlUpMessage(ctx, topic, payload)
+	case strings.HasSuffix(topic, "/heartbeat"):
+		return s.handlePresenceMessage(ctx, topic, payload, true)
+	case strings.HasSuffix(topic, "/runtime-state"):
+		return s.handlePresenceMessage(ctx, topic, payload, false)
+	default:
+		return fmt.Errorf("unsupported mqtt upstream topic: %s", topic)
+	}
+}
+
+func (s MQTTWebhookService) handlePresenceMessage(ctx context.Context, topic string, payload []byte, heartbeat bool) error {
+	var values map[string]any
+	if err := json.Unmarshal(payload, &values); err != nil {
+		return fmt.Errorf("decode mqtt presence payload: %w", err)
+	}
+	deviceID := deviceIDFromUpstreamTopic(topic)
+	payloadDeviceID := stringMapValue(values, "deviceId")
+	if deviceID == "" || payloadDeviceID == "" || payloadDeviceID != deviceID {
+		return fmt.Errorf("mqtt presence device mismatch topic=%s payloadDeviceId=%s", deviceID, payloadDeviceID)
+	}
+	networkID := stringMapValue(values, "activeNetworkId")
+	if networkID == "" {
+		return fmt.Errorf("mqtt presence active network missing deviceId=%s", deviceID)
+	}
+	items, err := s.Networks.ListNetworkDevices(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	now := currentTime(s.Now)
+	for _, item := range items {
+		if item.DeviceID != deviceID || !networkMemberActive(item) {
+			continue
+		}
+		wasOnline := networkMemberOnlineAt(item, now)
+		updated := item
+		updated.LastSeenAt = now.Unix()
+		if heartbeat {
+			updated.LastHeartbeatAt = now.Unix()
+		} else {
+			updated.LastRuntimeStateAt = now.Unix()
+		}
+		updated.PresenceStatus = model.DevicePresenceStatusActive
+		updated.UpdatedAt = now.Unix()
+		if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
+			return err
+		}
+		if !wasOnline {
+			return publishDevicePresenceChanged(ctx, s.EventPublisher, now, networkID, deviceID, updated)
+		}
+		return nil
+	}
+	return ErrNotFound
 }
 
 func consumerBrokerURL(cfg mqttkit.Config, fallback string) string {
@@ -187,6 +255,14 @@ func decodeControlUpPayload(envelope MQTTControlUpEnvelope) (map[string]any, err
 func deviceIDFromControlUpTopic(topic string) string {
 	parts := strings.Split(strings.Trim(strings.TrimSpace(topic), "/"), "/")
 	if len(parts) != 5 || parts[1] != "devices" || parts[3] != "control" || parts[4] != "up" {
+		return ""
+	}
+	return parts[2]
+}
+
+func deviceIDFromUpstreamTopic(topic string) string {
+	parts := strings.Split(strings.Trim(strings.TrimSpace(topic), "/"), "/")
+	if len(parts) < 4 || parts[1] != "devices" {
 		return ""
 	}
 	return parts[2]

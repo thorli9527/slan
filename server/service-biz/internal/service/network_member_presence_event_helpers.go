@@ -48,7 +48,7 @@ func publishNetworkMemberChanged(
 		networkID,
 		uint64(version),
 		occurredAt.UnixMilli(),
-		NetworkEventMemberPayload{Member: networkEventMemberView(member)},
+		NetworkEventMemberPayload{Member: networkEventMemberView(member, occurredAt)},
 	)
 }
 
@@ -65,7 +65,8 @@ func publishDevicePresenceChanged(
 	}
 	member = normalizeNetworkMember(member)
 	eventType := NetworkEventMemberOffline
-	if networkMemberOnline(member) {
+	online := networkMemberOnlineAt(member, now)
+	if online {
 		eventType = NetworkEventMemberOnline
 	}
 	return publishNetworkEvent(
@@ -77,7 +78,7 @@ func publishDevicePresenceChanged(
 		now.UnixMilli(),
 		NetworkEventPresencePayload{
 			DeviceID:   strings.TrimSpace(deviceID),
-			Online:     networkMemberOnline(member),
+			Online:     online,
 			LastSeenAt: member.LastSeenAt,
 		},
 	)

@@ -44,6 +44,9 @@ use crate::{
 
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
 const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
+const MQTT_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(1);
+const MQTT_PLANNED_RECONNECT_REASON: &str =
+    "control mqtt proactive reconnect after session refresh window";
 
 fn network_event_requires_data_plane_reconfigure(event_type: &NetworkEventType) -> bool {
     !matches!(
@@ -68,7 +71,7 @@ pub fn spawn_control_transport_supervisor(
     state_notifier: Arc<RuntimeEventHub>,
 ) {
     thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(MQTT_SUPERVISOR_INTERVAL);
         wake_control_transport_worker(&runtime, &task_queue, &worker_state, &state_notifier);
     });
 }
@@ -174,9 +177,7 @@ fn run_control_transport_worker(
         downstream_topic,
         session.device_id.as_deref().unwrap_or_default()
     ));
-    if let Ok(mut state) = worker_state.lock() {
-        state.connected = true;
-    }
+    mark_worker_connected(&worker_state);
     sync_after_control_mqtt_connected(&runtime, &task_queue, &state_notifier)?;
 
     let mut last_ack_flush_ms = None;
@@ -247,16 +248,13 @@ fn run_control_transport_worker(
             last_network_subscribe_attempt_ms = Some(now_ms);
         }
         if now_ms.saturating_sub(connected_at_ms) >= MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS {
-            return Err(
-                "control mqtt proactive reconnect after session refresh window".to_string(),
-            );
+            return Err(MQTT_PLANNED_RECONNECT_REASON.to_string());
         }
         if now_ms.saturating_sub(last_keepalive_ping_ms.unwrap_or(0))
             >= MQTT_KEEPALIVE_PING_INTERVAL_MS
         {
             client.ping()?;
             last_keepalive_ping_ms = Some(now_ms);
-            log_service_error("client-core-service sent mqtt keepalive ping");
         }
         let tick = control_transport::control_transport_tick_plan(
             ControlTransportTickRequest {
@@ -285,7 +283,15 @@ fn run_control_transport_worker(
             tick.outbox.include_control_acks,
         );
         for message in messages {
-            publish_outbox_message_async(session.clone(), message.clone(), Arc::clone(&task_queue));
+            if uses_control_connection(message.kind) {
+                publish_outbox_on_control_connection(&mut client, &message, &task_queue)?;
+            } else {
+                publish_outbox_message_async(
+                    session.clone(),
+                    message.clone(),
+                    Arc::clone(&task_queue),
+                );
+            }
             last_keepalive_ping_ms = Some(now_ms);
             match message.kind {
                 ControlTransportMessageKind::ControlAck => {
@@ -1467,6 +1473,27 @@ fn publish_outbox_message_once(
     client.publish(&message.topic, payload, thin_qos(message.qos))
 }
 
+fn publish_outbox_on_control_connection(
+    client: &mut ThinControlMqttClient,
+    message: &ControlTransportMessage,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+) -> Result<(), String> {
+    let payload = serde_json::to_vec(&message.payload)
+        .map_err(|err| format!("encode outbox payload {}: {err}", message.id))?;
+    client
+        .publish(&message.topic, &payload, thin_qos(message.qos))
+        .map_err(|err| format!("publish outbox {} on control connection: {err}", message.id))?;
+    mark_transport_published(message, task_queue)?;
+    Ok(())
+}
+
+fn uses_control_connection(kind: ControlTransportMessageKind) -> bool {
+    matches!(
+        kind,
+        ControlTransportMessageKind::Heartbeat | ControlTransportMessageKind::RuntimeState
+    )
+}
+
 fn outbox_client_suffix(message: &ControlTransportMessage, attempt: usize) -> String {
     let mut suffix = String::with_capacity(64);
     suffix.push_str("v2-outbox-");
@@ -1634,6 +1661,14 @@ fn claim_worker(
     true
 }
 
+fn mark_worker_connected(worker_state: &Arc<Mutex<ControlTransportWorkerState>>) {
+    if let Ok(mut state) = worker_state.lock() {
+        state.connected = true;
+        state.backoff_ms = 1_000;
+        state.next_attempt_ms = 0;
+    }
+}
+
 fn release_worker(
     worker_state: &Arc<Mutex<ControlTransportWorkerState>>,
     reconnect_key: String,
@@ -1658,7 +1693,10 @@ fn release_worker(
     }
     state.running = false;
     state.connected = false;
-    state.backoff_ms = if error.is_some() {
+    let should_backoff = error
+        .as_deref()
+        .is_some_and(|reason| reason != MQTT_PLANNED_RECONNECT_REASON);
+    state.backoff_ms = if should_backoff {
         (state.backoff_ms.max(1_000) * 2).min(30_000)
     } else {
         1_000
@@ -1687,9 +1725,9 @@ mod tests {
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
-        ingest_downstream_publish, mqtt_connection_matches,
+        ingest_downstream_publish, mark_worker_connected, mqtt_connection_matches,
         network_event_requires_data_plane_reconfigure, network_event_targets_active_runtime,
-        reconnect_key, try_ingest_device_ip_reassigned,
+        reconnect_key, release_worker, try_ingest_device_ip_reassigned, uses_control_connection,
     };
     use crate::control_plane::MqttCredential;
     use crate::network_event::{
@@ -1773,6 +1811,62 @@ mod tests {
         after.mqtt.as_mut().expect("mqtt credential").password = "secret-2".to_string();
 
         assert!(!mqtt_connection_matches(&before, &after));
+    }
+
+    #[test]
+    fn successful_mqtt_connection_resets_reconnect_backoff() {
+        let state = Arc::new(Mutex::new(super::ControlTransportWorkerState {
+            running: true,
+            connected: false,
+            reconnect_key: Some("session".to_string()),
+            backoff_ms: 30_000,
+            next_attempt_ms: u64::MAX,
+        }));
+
+        mark_worker_connected(&state);
+
+        let state = state.lock().expect("worker state");
+        assert!(state.connected);
+        assert_eq!(state.backoff_ms, 1_000);
+        assert_eq!(state.next_attempt_ms, 0);
+    }
+
+    #[test]
+    fn planned_mqtt_reconnect_does_not_increase_backoff() {
+        let state = Arc::new(Mutex::new(super::ControlTransportWorkerState {
+            running: true,
+            connected: true,
+            reconnect_key: Some("session".to_string()),
+            backoff_ms: 1_000,
+            next_attempt_ms: 0,
+        }));
+
+        release_worker(
+            &state,
+            "session".to_string(),
+            Some(super::MQTT_PLANNED_RECONNECT_REASON.to_string()),
+        );
+
+        let state = state.lock().expect("worker state");
+        assert!(!state.running);
+        assert!(!state.connected);
+        assert_eq!(state.backoff_ms, 1_000);
+    }
+
+    #[test]
+    fn only_qos_zero_state_messages_reuse_control_connection() {
+        assert!(uses_control_connection(
+            super::ControlTransportMessageKind::Heartbeat
+        ));
+        assert!(uses_control_connection(
+            super::ControlTransportMessageKind::RuntimeState
+        ));
+        assert!(!uses_control_connection(
+            super::ControlTransportMessageKind::EndpointReport
+        ));
+        assert!(!uses_control_connection(
+            super::ControlTransportMessageKind::ControlAck
+        ));
     }
 
     #[test]

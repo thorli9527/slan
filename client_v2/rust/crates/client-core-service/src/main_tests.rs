@@ -10,8 +10,9 @@ use super::{
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
-    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
-    request_is_watch, rotate_log_file, routes_with_peer_virtual_ips, status_is_managed_disabled,
+    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type, request_is_watch,
+    rotate_log_file, routes_with_peer_virtual_ips, select_relay_sessions_for_candidate,
+    status_is_managed_disabled,
     valid_direct_candidate_address, ControlPeer, LocalRequestMetrics, PersistedConnectPlan,
     PersistedConnectPlanPath, PersistedConnectPlanStore, PreparedControlNetworkActivation,
     RelayMaintenanceState, LOCAL_REQUEST_CONCURRENCY_LIMIT, LOCAL_WATCH_CONCURRENCY_LIMIT,
@@ -838,6 +839,36 @@ fn relay_session_filter_keeps_ticket_for_requested_transport() {
 }
 
 #[test]
+fn relay_session_selection_keeps_one_selected_candidate_per_peer() {
+    let selected = test_relay_selection("relay-a", "udp", "relay-a.example:29110");
+    let mut alternate_ticket = test_relay_ticket("net-1", "node-local", "node-peer");
+    alternate_ticket.session_id = "session-alternate".to_string();
+    alternate_ticket.relay_url = "udp://relay-b.example:29110".to_string();
+    let mut selected_ticket = test_relay_ticket("net-1", "node-local", "node-peer");
+    selected_ticket.session_id = "session-selected".to_string();
+    selected_ticket.relay_url = format!("udp://{}", selected.address);
+    let sessions = vec![
+        RelayPeerSession {
+            session_id: alternate_ticket.session_id.clone(),
+            peer_node_id: "node-peer".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9".to_string()],
+            ticket: alternate_ticket,
+        },
+        RelayPeerSession {
+            session_id: selected_ticket.session_id.clone(),
+            peer_node_id: "node-peer".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9".to_string()],
+            ticket: selected_ticket,
+        },
+    ];
+
+    let actual = select_relay_sessions_for_candidate(&sessions, "udp", &selected);
+
+    assert_eq!(actual.len(), 1);
+    assert_eq!(actual[0].session_id, "session-selected");
+}
+
+#[test]
 fn connect_plan_content_ignores_refresh_timestamp() {
     let first = PersistedConnectPlan {
         peer_node_id: "node-peer".to_string(),
@@ -1394,7 +1425,7 @@ fn relay_maintenance_reconfigures_when_connect_plan_is_newer() {
 }
 
 #[test]
-fn relay_maintenance_reconfigures_when_relay_stops_returning_packets() {
+fn relay_maintenance_does_not_restart_when_peer_stops_returning_packets() {
     let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
     let mut stats = test_relay_stats("2026-05-03T10:10:00Z", now);
     stats.tun_packets_sent = 10;
@@ -1409,7 +1440,11 @@ fn relay_maintenance_reconfigures_when_relay_stops_returning_packets() {
 
     assert_eq!(
         relay_maintenance_reconfigure_reason(now, Some(&stats), &mut maintenance, 0),
-        Some("relay_response_stalled")
+        None
+    );
+    assert_eq!(
+        maintenance.no_rx_intervals,
+        RELAY_NO_RX_RECONFIGURE_INTERVALS
     );
 }
 

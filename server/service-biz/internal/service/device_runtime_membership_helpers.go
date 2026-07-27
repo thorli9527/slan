@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
@@ -78,10 +79,10 @@ func findNetworkMembership(
 	return model.NetworkDevice{}, false, nil
 }
 
-func shouldPublishRuntimeMembershipPresenceEvent(previous model.NetworkDevice, current model.NetworkDevice) bool {
+func shouldPublishRuntimeMembershipPresenceEvent(previous model.NetworkDevice, current model.NetworkDevice, now time.Time) bool {
 	previous = normalizeNetworkMember(previous)
 	current = normalizeNetworkMember(current)
-	if networkMemberOnline(previous) != networkMemberOnline(current) {
+	if networkMemberOnlineAt(previous, now) != networkMemberOnlineAt(current, now) {
 		return true
 	}
 	if previous.PresenceStatus != current.PresenceStatus {

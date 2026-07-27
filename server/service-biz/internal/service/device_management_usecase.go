@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
@@ -138,7 +139,7 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeMemberships(ctx context.C
 		updates = append(updates, deviceRuntimeMembershipUpdate{
 			NetworkID:  network.NetworkID,
 			Membership: updated,
-			Publish:    shouldPublishRuntimeMembershipPresenceEvent(previous, updated),
+			Publish:    shouldPublishRuntimeMembershipPresenceEvent(previous, updated, time.Unix(now, 0)),
 		})
 	}
 	if !reportedNetworkFound {
