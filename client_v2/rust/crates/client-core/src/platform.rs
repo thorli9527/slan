@@ -466,6 +466,11 @@ pub trait PlatformNetwork {
     fn mark_network_enabled(&self, _virtual_ip: &str) -> Result<()> {
         Ok(())
     }
+    /// 验证适配器是否实际配置了指定的 IP 地址。
+    /// 默认返回 true（跳过验证），Windows 平台会实际检查适配器 IP。
+    fn verify_adapter_ip(&self, _virtual_ip: &str) -> Result<bool> {
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

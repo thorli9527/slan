@@ -203,13 +203,11 @@ fn embedded_active_network_id(session: &mut PersistedSession) -> Result<String> 
                 client.active_network_id(session_device_api_token(session))?;
         }
     }
-    session
+    Ok(session
         .active_network_id
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!("device unavailable: current device is not assigned to any network")
-        })
+        .unwrap_or_default()) // Return empty string if no network (allows enabling client without peers)
 }
 
 fn non_empty_embedded_network_id(value: &str) -> Option<String> {
@@ -221,6 +219,10 @@ fn prepare_embedded_relay_candidates_for_session(
     session: &PersistedSession,
     network_id: &str,
 ) -> Result<Vec<PersistedRelayCandidate>> {
+    // No network — no relay candidates needed
+    if network_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     let device_id = session
         .device_id
         .as_deref()

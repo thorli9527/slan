@@ -434,11 +434,11 @@ std::optional<std::string> ForwardToServiceWithAutoStart(
   if (!TryStartBundledService()) {
     return std::nullopt;
   }
-  for (int attempt = 0; attempt < 15; ++attempt) {
+  for (int attempt = 0; attempt < 60; ++attempt) {
     if (const auto response = ForwardToService(method, arguments)) {
       return response;
     }
-    Sleep(100);
+    Sleep(500);
   }
   return std::nullopt;
 }

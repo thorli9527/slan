@@ -518,7 +518,9 @@ pub(crate) fn activate_network(
     // Fast path: if the adapter is already configured with the correct IP,
     // skip the expensive install/configure steps (~12s saved per redundant cycle).
     // This prevents timeout when multiple activation cycles are queued.
-    let already_configured = platform
+    // IMPORTANT: also verify the adapter actually has the IP — the runtime state
+    // cache can be stale if the adapter lost its IP (driver reset, system event, etc).
+    let cache_matches = platform
         .read_runtime_state()
         .ok()
         .is_some_and(|state| {
@@ -528,12 +530,22 @@ pub(crate) fn activate_network(
                     .as_deref()
                     .is_some_and(|ip| ip == activation.virtual_ip)
         });
-    if already_configured {
+    let adapter_has_ip = cache_matches
+        && platform
+            .verify_adapter_ip(activation.virtual_ip)
+            .unwrap_or(false);
+    if adapter_has_ip {
         crate::log_service_error(format!(
-            "activate_network: fast path — adapter already configured with {}",
+            "activate_network: fast path — adapter verified with {}",
             activation.virtual_ip
         ));
     } else {
+        if cache_matches {
+            crate::log_service_error(format!(
+                "activate_network: cache says {} but adapter verification failed — reconfiguring",
+                activation.virtual_ip
+            ));
+        }
         platform.install_adapter()?;
         platform.configure_ip(activation.virtual_ip, activation.prefix_len)?;
         platform.configure_resolver(activation.resolver)?;

@@ -45,13 +45,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "{app}"; Permissions: users-modify
 
 [Files]
-Source: "{#SourceDir}\slan_client_v2.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\client-core-service.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\wintun.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\client_core_plugin_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SourceDir}\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; Package everything from the staging directory
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autodesktop}\SLAN Client V2"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
@@ -67,11 +62,93 @@ begin
   Result := Exec(Filename, Params, '', SW_HIDE, Wait, ResultCode) and (ResultCode = 0);
 end;
 
+// --- HVCI / Test Signing helpers (must be defined before first use) ---
+
+function IsHvciEnabled(): Boolean;
+var
+  RegPath: string;
+  EnabledVal: Cardinal;
+begin
+  Result := False;
+  RegPath := 'SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity';
+  if RegQueryDWordValue(HKLM, RegPath, 'Enabled', EnabledVal) then begin
+    Result := (EnabledVal = 1);
+  end;
+end;
+
+function IsSecureBootEnabled(): Boolean;
+var
+  RegPath: string;
+  EnabledVal: Cardinal;
+begin
+  Result := False;
+  RegPath := 'SYSTEM\CurrentControlSet\Control\SecureBoot\State';
+  if RegQueryDWordValue(HKLM, RegPath, 'UEFISecureBootEnabled', EnabledVal) then begin
+    Result := (EnabledVal = 1);
+  end;
+end;
+
+function IsTestSigningEnabled(): Boolean;
+var
+  ResultCode: Integer;
+  OutputFile: string;
+  Lines: TArrayOfString;
+  I: Integer;
+  Line: string;
+begin
+  Result := False;
+  OutputFile := ExpandConstant('{tmp}') + '\\bcdedit-out.txt';
+  
+  // Use cmd.exe with output redirection (most reliable in Inno Setup)
+  Exec(
+    ExpandConstant('{sys}\cmd.exe'),
+    '/c bcdedit /enum > "' + OutputFile + '" 2>&1',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode
+  );
+  
+  if LoadStringsFromFile(OutputFile, Lines) then begin
+    for I := 0 to GetArrayLength(Lines) - 1 do begin
+      Line := Lowercase(Lines[I]);
+      if (Pos('testsigning', Line) > 0) and (Pos('yes', Line) > 0) then begin
+        Result := True;
+        exit;
+      end;
+    end;
+  end;
+end;
+
+function EnableTestSigning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  // Method 1: Try bcdedit directly (installer should already be elevated)
+  if Exec(ExpandConstant('{sys}\bcdedit.exe'), '/set testsigning on', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then begin
+    Result := True;
+    exit;
+  end;
+  
+  // Method 2: Use PowerShell Start-Process -Verb RunAs for explicit elevation
+  if Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Start-Process bcdedit -ArgumentList ''/set testsigning on'' -Verb RunAs -Wait"',
+    '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode
+  ) and (ResultCode = 0) then begin
+    Result := True;
+    exit;
+  end;
+  
+  Result := False;
+end;
+
 function StopAndDeleteWindowsService(): Boolean;
 var
   ResultCode: Integer;
 begin
+  // Stop the service first
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Wait a bit for the service to actually stop
+  Sleep(2000);
+  // Delete the service
   Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;
@@ -188,8 +265,9 @@ begin
     end;
   end;
 
-  ServiceBinPath := '""' + ExpandConstant('{app}\client-core-service.exe') + '"" --windows-service';
+  ServiceBinPath := ExpandConstant('{app}\client-core-service.exe') + ' --windows-service';
 
+  // Create the service - binPath value must be quoted as a whole
   Result := Exec(
     ExpandConstant('{sys}\sc.exe'),
     'create {#ServiceName} start= auto obj= LocalSystem DisplayName= "{#ServiceDisplayName}" binPath= "' + ServiceBinPath + '"',
@@ -197,7 +275,20 @@ begin
     SW_HIDE,
     ewWaitUntilTerminated,
     ResultCode
-  ) and (ResultCode = 0);
+  );
+  if not Result or (ResultCode <> 0) then begin
+    // If create failed, service might already exist — try to delete and recreate
+    StopAndDeleteWindowsService();
+    WaitForWindowsServiceDeleted();
+    Result := Exec(
+      ExpandConstant('{sys}\sc.exe'),
+      'create {#ServiceName} start= auto obj= LocalSystem DisplayName= "{#ServiceDisplayName}" binPath= "' + ServiceBinPath + '"',
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode
+    ) and (ResultCode = 0);
+  end;
   if not Result then begin
     exit;
   end;
@@ -213,14 +304,41 @@ begin
 end;
 
 procedure VerifyWintunAdapterInstalled();
+var
+  HvciOn: Boolean;
+  TestSigningOn: Boolean;
+  SecureBootOn: Boolean;
 begin
-  if not ExecHidden(
+  if ExecHidden(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter) { Enable-NetAdapter -Name ''SLAN LAN Adapter'' -Confirm:$false -ErrorAction SilentlyContinue | Out-Null; $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter -and $adapter.AdminStatus -eq ''Up'') { exit 0 } }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
     ewWaitUntilTerminated
   ) then begin
-    RaiseException('Failed to install SLAN Wintun adapter. Please allow administrator permission and reinstall.');
+    exit;
   end;
+  // Adapter verification failed — diagnose the cause
+  HvciOn := IsHvciEnabled();
+  TestSigningOn := IsTestSigningEnabled();
+  SecureBootOn := IsSecureBootEnabled();
+  if HvciOn and not TestSigningOn then begin
+    if SecureBootOn then begin
+      RaiseException(
+        'Failed to install SLAN Wintun adapter.' + #13 + #10 +
+        'Secure Boot is ENABLED — Test Signing cannot be enabled.' + #13 + #10 + #13 + #10 +
+        'Please:' + #13 + #10 +
+        '  1. Reboot into BIOS/UEFI and disable Secure Boot' + #13 + #10 +
+        '  2. In Windows: bcdedit /set testsigning on' + #13 + #10 +
+        '  3. Reboot and run the installer again.'
+      );
+    end else begin
+      RaiseException(
+        'Failed to install SLAN Wintun adapter. HVCI is enabled but Test Signing is off.' + #13 + #10 +
+        'Please run in elevated PowerShell: bcdedit /set testsigning on' + #13 + #10 +
+        'Then reboot and run the installer again.'
+      );
+    end;
+  end;
+  RaiseException('Failed to install SLAN Wintun adapter. Please allow administrator permission and reinstall.');
 end;
 
 procedure ClearClientV2AppData();
@@ -246,12 +364,65 @@ begin
   );
 end;
 
+// --- HVCI-aware adapter check ---
+
+function CheckHvciAndTestSigning(): Boolean;
+var
+  ResultCode: Integer;
+  SecureBootOn: Boolean;
+begin
+  Result := True;
+  if not IsHvciEnabled() then begin
+    exit;
+  end;
+  if IsTestSigningEnabled() then begin
+    exit;
+  end;
+  // HVCI on + Test Signing off — check Secure Boot
+  SecureBootOn := IsSecureBootEnabled();
+  if SecureBootOn then begin
+    MsgBox(
+      'SLAN Client requires Test Signing mode to install the Wintun network driver.' + #13 + #10 + #13 + #10 +
+      'Your system has Secure Boot ENABLED, which blocks enabling Test Signing.' + #13 + #10 + #13 + #10 +
+      'Please do the following manually:' + #13 + #10 +
+      '  1. Reboot and enter BIOS/UEFI settings (press F2/Del/F12 during boot)' + #13 + #10 +
+      '  2. Find "Secure Boot" and set it to DISABLED' + #13 + #10 +
+      '  3. Save and exit BIOS' + #13 + #10 +
+      '  4. In Windows, open elevated PowerShell and run:' + #13 + #10 +
+      '     bcdedit /set testsigning on' + #13 + #10 +
+      '  5. Reboot, then run this installer again.',
+      mbInformation, MB_OK
+    );
+    Result := False;
+    exit;
+  end;
+  // Secure Boot off — try to enable Test Signing automatically
+  if MsgBox(
+    'SLAN Client requires Test Signing mode to install the Wintun network driver.' + #13 + #10 +
+    'Your system has HVCI enabled, which blocks drivers with expired certificates.' + #13 + #10 + #13 + #10 +
+    'The installer will enable Test Signing now. A reboot is required.' + #13 + #10 +
+    'After rebooting, please run the installer again.',
+    mbConfirmation, MB_YESNO
+  ) = IDYES then begin
+    if EnableTestSigning() then begin
+      MsgBox('Test Signing has been enabled. The system will now reboot.' + #13 + #10 +
+             'After reboot, please run the SLAN Client installer again.', mbInformation, MB_OK);
+      Exec(ExpandConstant('{sys}\shutdown.exe'), '/r /t 5 /c "SLAN Client: rebooting for Test Signing"', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+    end else begin
+      MsgBox('Failed to enable Test Signing. Please run in elevated PowerShell:' + #13 + #10 +
+             '  bcdedit /set testsigning on' + #13 + #10 +
+             'Then reboot and run the installer again.', mbError, MB_OK);
+    end;
+  end;
+  Result := False;
+end;
+
 function InitializeSetup(): Boolean;
 begin
   StopExistingRuntime();
   DeleteServiceTask();
   DeleteHelperTask();
-  Result := True;
+  Result := CheckHvciAndTestSigning();
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

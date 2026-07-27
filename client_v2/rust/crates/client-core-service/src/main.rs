@@ -481,22 +481,38 @@ where
     }
     let final_state = if pending.enable_network {
         let prepared = prepare_latest_control_network_activation();
-        platform_transition::run_inline_serialized("startup.pending.enable", |platform| {
-            let executed = match prepared {
-                Ok(plan) => execute_platform_network_activation(platform, &plan)
-                    .map(|()| plan)
-                    .inspect_err(|_| {
-                        let _ = platform_transition::disable_network(platform);
-                    }),
-                Err(error) => Err(error),
-            };
+        // Check if plan has a virtual IP; if not, skip platform activation (no network assigned).
+        let has_virtual_ip = prepared.as_ref().ok().is_some_and(|plan| {
+            plan.session.virtual_ip.as_deref().map(str::trim).is_some_and(|v| !v.is_empty())
+        });
+        if !has_virtual_ip {
+            log_service_error(
+                "client-core-service startup: skipping platform activation, no virtual IP assigned",
+            );
+            let executed = prepared.map(|plan| plan);
             let committed = commit_control_network_activation_result(runtime, executed);
             if committed.rollback_platform {
-                let _ = platform_transition::disable_network(platform);
+                let _ = platform_transition::disable_network(&PlatformNetworkImpl);
             }
-            Ok(committed.state)
-        })
-        .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()))
+            committed.state
+        } else {
+            platform_transition::run_inline_serialized("startup.pending.enable", |platform| {
+                let executed = match prepared {
+                    Ok(plan) => execute_platform_network_activation(platform, &plan)
+                        .map(|()| plan)
+                        .inspect_err(|_| {
+                            let _ = platform_transition::disable_network(platform);
+                        }),
+                    Err(error) => Err(error),
+                };
+                let committed = commit_control_network_activation_result(runtime, executed);
+                if committed.rollback_platform {
+                    let _ = platform_transition::disable_network(platform);
+                }
+                Ok(committed.state)
+            })
+            .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()))
+        }
     } else {
         login_state
     };
@@ -3905,6 +3921,7 @@ fn load_network_session() -> Result<PersistedSession> {
     Ok(session)
 }
 
+#[derive(Clone)]
 struct PreparedControlNetworkActivation {
     session: PersistedSession,
     relay_candidates: Vec<PersistedRelayCandidate>,
@@ -4099,15 +4116,42 @@ fn execute_runtime_network_activation(
     transition: PreparedRuntimeNetworkActivation,
 ) -> Result<ClientViewState> {
     let command_kind = command_kind.into();
-    if let Ok(plan) = transition.prepared.as_ref() {
-        if !activation_context_matches(&runtime.snapshot().state, &plan.session)
+    // Check staleness and whether a virtual IP is assigned, without borrowing transition.prepared
+    // for the entire function lifetime (which would conflict with the later move).
+    let is_stale = transition.prepared.as_ref().ok().is_some_and(|plan| {
+        !activation_context_matches(&runtime.snapshot().state, &plan.session)
             || !persisted_activation_context_matches(&plan.session)
-        {
-            log_service_error(
-                "client-core-service skipped stale network activation before platform apply",
-            );
-            return Ok(runtime.snapshot().state);
-        }
+    });
+    if is_stale {
+        log_service_error(
+            "client-core-service skipped stale network activation before platform apply",
+        );
+        return Ok(runtime.snapshot().state);
+    }
+    let has_virtual_ip = transition.prepared.as_ref().ok().is_some_and(|plan| {
+        plan.session
+            .virtual_ip
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|v| !v.is_empty())
+    });
+    if !has_virtual_ip {
+        // No virtual IP assigned (device not in any network) — skip platform activation entirely.
+        // The network can still be "enabled" in the UI, just without peers or an adapter IP.
+        log_service_error(
+            "client-core-service skipping platform activation: no virtual IP assigned (device not in any network)",
+        );
+        let plan = transition.prepared.ok();
+        let committed = runtime.call_named(
+            command_kind.clone(),
+            correlation_id.clone(),
+            move |runtime| {
+                let executed: Result<PreparedControlNetworkActivation, _> =
+                    plan.ok_or_else(|| anyhow::anyhow!("no activation plan"));
+                Ok(commit_control_network_activation_result(runtime, executed))
+            },
+        )?;
+        return Ok(committed.state);
     }
     let network_was_enabled = runtime.snapshot().state.network_enabled;
     let snapshots = runtime.snapshots();
@@ -4299,12 +4343,8 @@ fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
                 client.active_network_id(session_device_api_token(session))?;
         }
     }
-    let Some(network_id) = session.active_network_id.clone() else {
-        return Err(anyhow::anyhow!(
-            "device unavailable: current device is not assigned to any network"
-        ));
-    };
-    Ok(network_id)
+    // Return empty string if no network (allows enabling client without peers)
+    Ok(session.active_network_id.clone().unwrap_or_default())
 }
 
 fn non_empty_network_id(value: &str) -> Option<String> {
@@ -4316,6 +4356,10 @@ fn prepare_relay_candidates_for_session(
     session: &PersistedSession,
     network_id: &str,
 ) -> Result<Vec<PersistedRelayCandidate>> {
+    // No network — no relay candidates needed
+    if network_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     let device_id = session
         .device_id
         .as_deref()

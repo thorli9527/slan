@@ -1167,7 +1167,8 @@ fn activation_plan_from_device_network_configs(response: &Value) -> Result<Netwo
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("device network configs response missing items"))?;
     if configs.is_empty() {
-        bail!("device unavailable: current device is not assigned to any network");
+        // Device not assigned to any network — return empty plan (network can still be enabled, just no peers)
+        return Ok(NetworkActivationPlan::default());
     }
 
     let mut merged = NetworkActivationPlan::default();

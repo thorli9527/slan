@@ -367,6 +367,12 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         persist_state(&state)
     }
 
+    fn verify_adapter_ip(&self, virtual_ip: &str) -> Result<bool> {
+        verify_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip)
+            .map(|()| true)
+            .or(Ok(false))
+    }
+
     fn diagnostics(&self) -> Result<PlatformNetworkDiagnostics> {
         read_windows_network_diagnostics(DEFAULT_INTERFACE_NAME)
     }

@@ -68,15 +68,6 @@ struct TrayServiceState {
   std::string error;
 };
 
-TrayServiceState QueryTrayServiceState();
-void ToggleNetworkFromTray();
-void UpdateTrayIconState(HWND window, const TrayServiceState& state);
-HICON CreateVLTrayIcon(bool network_enabled, bool service_available);
-bool IsTrayNetworkActionEnabled(const TrayServiceState& state);
-const wchar_t* TrayTooltip(const TrayServiceState& state);
-std::string JsonStringField(const std::string& json, const char* field);
-std::wstring Utf8ToWide(const std::string& value);
-
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
 // Scale helper to convert logical scaler values to physical using passed in
@@ -102,6 +93,15 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
 }
 
 }  // namespace
+
+TrayServiceState QueryTrayServiceState();
+void ToggleNetworkFromTray();
+HICON CreateVLTrayIcon(bool network_enabled, bool service_available);
+std::string JsonStringField(const std::string& json, const char* field);
+void UpdateTrayIconState(HWND window, const TrayServiceState& state);
+bool IsTrayNetworkActionEnabled(const TrayServiceState& state);
+const wchar_t* TrayTooltip(const TrayServiceState& state);
+std::wstring Utf8ToWide(const std::string& value);
 
 void AddTrayIcon(HWND window) {
   NOTIFYICONDATA notify_icon{};
