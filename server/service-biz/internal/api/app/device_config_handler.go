@@ -35,7 +35,15 @@ func (h DeviceConfigHandler) DeviceNetworkConfigs(w http.ResponseWriter, r *http
 	for _, item := range items {
 		payloads = append(payloads, networkResolvedConfigPayload(item))
 	}
-	serviceapi.WriteJSON(w, http.StatusOK, networkConfigsPayload(payloads))
+	profile, err := h.Devices.GetDeviceProfile(r.Context(), deviceID)
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	payload := networkConfigsPayload(payloads)
+	payload["deviceId"] = deviceID
+	payload["globalIp"] = profile.GlobalIP
+	serviceapi.WriteJSON(w, http.StatusOK, payload)
 }
 
 func (h DeviceConfigHandler) DeviceMQTTCredential(w http.ResponseWriter, r *http.Request) {

@@ -1167,8 +1167,23 @@ fn activation_plan_from_device_network_configs(response: &Value) -> Result<Netwo
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("device network configs response missing items"))?;
     if configs.is_empty() {
-        // Device not assigned to any network — return empty plan (network can still be enabled, just no peers)
-        return Ok(NetworkActivationPlan::default());
+        let virtual_ip = response
+            .get("globalIp")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(normalize_virtual_ip)
+            .ok_or_else(|| {
+                anyhow::anyhow!("device unavailable: current device has no assigned global IP")
+            })?;
+        let self_node_id =
+            optional_string(response, "deviceId").map(|device_id| format!("node-{device_id}"));
+        return Ok(NetworkActivationPlan {
+            virtual_ip,
+            prefix_len: 32,
+            self_node_id,
+            ..NetworkActivationPlan::default()
+        });
     }
 
     let mut merged = NetworkActivationPlan::default();
@@ -2284,6 +2299,24 @@ mod tests {
         assert_eq!(plan.routes.len(), 2);
         assert_eq!(plan.peers.len(), 2);
         assert_eq!(plan.relay_candidates.len(), 2);
+    }
+
+    #[test]
+    fn device_activation_without_network_uses_global_device_ip() {
+        let plan = activation_plan_from_device_network_configs(&serde_json::json!({
+            "deviceId": "device-1",
+            "globalIp": "10.0.1.44",
+            "items": []
+        }))
+        .expect("activation plan without network membership");
+
+        assert_eq!(plan.virtual_ip, "10.0.1.44");
+        assert_eq!(plan.prefix_len, 32);
+        assert_eq!(plan.self_node_id.as_deref(), Some("node-device-1"));
+        assert!(plan.peers.is_empty());
+        assert!(plan.routes.is_empty());
+        assert!(plan.resolver.servers.is_empty());
+        assert!(plan.relay_candidates.is_empty());
     }
 
     #[test]
