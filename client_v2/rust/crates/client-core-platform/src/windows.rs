@@ -4168,31 +4168,35 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
     if virtual_ip.is_empty() || virtual_ip.eq_ignore_ascii_case("pending") {
         bail!("device unavailable: missing assigned virtual IP");
     }
-    // Adapter is already enabled by ensure_installed_adapter_ready (PowerShell Enable-NetAdapter).
-    // Wait for adapter to become fully operational (Wintun needs extra time after enable).
-    thread::sleep(Duration::from_secs(3));
-    // Use PowerShell New-NetIPAddress for reliable Wintun IP configuration.
-    // netsh `interface ipv4 set address` is unreliable on Wintun adapters — it silently
-    // fails to apply the IP even though the command returns success.
-    // PowerShell cmdlets (New-NetIPAddress / Remove-NetIPAddress) work reliably with Wintun
-    // and are the same approach used by WireGuard for Windows.
+    // Windows 10 can keep DHCP/APIPA active for several seconds after a Wintun
+    // adapter is enabled. Disable DHCP explicitly and verify the exact address
+    // in the same PowerShell operation before continuing with routes and DNS.
     let script = format!(
-        "$idx = (Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue).ifIndex; \
+        "$ErrorActionPreference = 'Stop'; \
+         $expected = '{}'; \
+         $idx = (Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue).ifIndex; \
          if (-not $idx) {{ throw 'SLAN adapter not found' }}; \
+         Set-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -Dhcp Disabled -ErrorAction Stop | Out-Null; \
          Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue; \
-         New-NetIPAddress -InterfaceIndex $idx -IPAddress '{}' -PrefixLength {} -AddressFamily IPv4 -ErrorAction Stop | Out-Null",
-        escape_powershell_single_quoted(interface_name),
+         New-NetIPAddress -InterfaceIndex $idx -IPAddress $expected -PrefixLength {} -AddressFamily IPv4 -ErrorAction Stop | Out-Null; \
+         $applied = $false; \
+         for ($attempt = 0; $attempt -lt 40; $attempt++) {{ \
+           $applied = $null -ne (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected }} | Select-Object -First 1); \
+           if ($applied) {{ break }}; \
+           Start-Sleep -Milliseconds 250; \
+         }}; \
+         if (-not $applied) {{ throw \"SLAN adapter IP '$expected' did not become active\" }}; \
+         Write-Output $expected",
         virtual_ip,
+        escape_powershell_single_quoted(interface_name),
         prefix_len,
     );
     debug_log(&format!("configure_adapter_ip: setting {virtual_ip}/{prefix_len} on '{interface_name}'"));
     run_powershell(&script).context("set Wintun adapter IP via PowerShell")?;
-    debug_log(&format!("configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s"));
-    // Wait for IP to take effect.
-    thread::sleep(Duration::from_secs(1));
+    debug_log("configure_adapter_ip: PowerShell static IP configuration verified");
     // Verify via ipconfig.
     let ipconfig_output = run_ipconfig().unwrap_or_default();
-    if ipconfig_output.contains(virtual_ip) {
+    if output_contains_exact_ipv4(&ipconfig_output, virtual_ip) {
         debug_log("configure_adapter_ip: OK (ipconfig verified)");
         return Ok(());
     }
@@ -4203,15 +4207,15 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
         escape_powershell_single_quoted(interface_name),
     );
     let ips = run_powershell(&verify_script).unwrap_or_default();
-    if ips.contains(virtual_ip) {
+    if output_contains_exact_ipv4(&ips, virtual_ip) {
         debug_log("configure_adapter_ip: OK (Get-NetIPAddress verified)");
         return Ok(());
     }
-    debug_log(&format!("configure_adapter_ip: FAILED - ipconfig contains {virtual_ip}: {}, Get-NetIPAddress: [{ips}]", ipconfig_output.contains(virtual_ip)));
+    debug_log(&format!("configure_adapter_ip: FAILED - ipconfig contains exact {virtual_ip}: {}, Get-NetIPAddress: [{ips}]", output_contains_exact_ipv4(&ipconfig_output, virtual_ip)));
     bail!(
         "SLAN local network adapter '{interface_name}' did not apply IP '{virtual_ip}': \
          ipconfig contains: {}, Get-NetIPAddress returned: [{ips}]",
-        ipconfig_output.contains(virtual_ip)
+        output_contains_exact_ipv4(&ipconfig_output, virtual_ip)
     );
 }
 
@@ -4239,7 +4243,7 @@ fn verify_adapter_ip(interface_name: &str, virtual_ip: &str) -> Result<()> {
     let status = parts.get(1).copied().unwrap_or("");
     let ips = parts.get(2).copied().unwrap_or("");
     debug_log(&format!("verify_adapter_ip: admin={admin} status={status} ips=[{ips}]"));
-    if !ips.contains(virtual_ip) {
+    if !output_contains_exact_ipv4(ips, virtual_ip) {
         bail!(
             "SLAN local network adapter '{interface_name}' expected IP '{virtual_ip}' but it was not applied. \
              admin={admin} status={status} Get-NetIPAddress returned: [{ips}]"
@@ -4247,6 +4251,12 @@ fn verify_adapter_ip(interface_name: &str, virtual_ip: &str) -> Result<()> {
     }
     debug_log("verify_adapter_ip: OK");
     Ok(())
+}
+
+fn output_contains_exact_ipv4(output: &str, expected: &str) -> bool {
+    output
+        .split(|character: char| !(character.is_ascii_digit() || character == '.'))
+        .any(|candidate| candidate == expected)
 }
 
 fn configure_routes(interface_name: &str, routes: &[RouteSpec]) -> Result<()> {
@@ -4562,7 +4572,8 @@ mod tests {
         detach_udp_relay_sessions, direct_udp_control_packet, direct_udp_control_payload,
         direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
         escape_netsh_arg, is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply,
-        mark_ready_transports, normalize_direct_udp_address, parse_cidr_for_netsh,
+        mark_ready_transports, normalize_direct_udp_address, output_contains_exact_ipv4,
+        parse_cidr_for_netsh,
         prefix_len_to_subnet_mask, refresh_relay_ticket_timing, relay_error_message,
         relay_runtime_paths_from_config, relay_udp_address_for_session, send_frame_to_peer,
         validate_relay_peer_session, validate_relay_peer_session_for_path, AttachedRelayPeer,
@@ -5772,5 +5783,15 @@ mod tests {
     fn escape_netsh_arg_wraps_in_double_quotes() {
         assert_eq!(escape_netsh_arg("SLAN LAN Adapter"), "SLAN LAN Adapter");
         assert_eq!(escape_netsh_arg("simple"), "simple");
+    }
+
+    #[test]
+    fn exact_ipv4_match_does_not_accept_address_prefixes() {
+        assert!(output_contains_exact_ipv4(
+            "169.254.20.1,10.0.1.114",
+            "10.0.1.114"
+        ));
+        assert!(!output_contains_exact_ipv4("10.0.1.114", "10.0.1.11"));
+        assert!(!output_contains_exact_ipv4("10.0.1.1140", "10.0.1.114"));
     }
 }
