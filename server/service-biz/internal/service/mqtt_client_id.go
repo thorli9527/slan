@@ -1,11 +1,21 @@
 package service
 
-import "fmt"
+import (
+	"fmt"
+	"sync/atomic"
+	"time"
+)
+
+var mqttClientIDSequence atomic.Uint64
 
 func serverMQTTClientID(baseClientID, role string, attempt int) string {
-	clientID := fmt.Sprintf("%s-%s", baseClientID, role)
-	if attempt > 1 {
-		clientID = fmt.Sprintf("%s-r%d", clientID, attempt)
-	}
-	return clientID
+	sequence := mqttClientIDSequence.Add(1)
+	return fmt.Sprintf(
+		"%s-%s-r%d-%x-%x",
+		baseClientID,
+		role,
+		attempt,
+		time.Now().UnixNano(),
+		sequence,
+	)
 }

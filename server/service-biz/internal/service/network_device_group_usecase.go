@@ -121,7 +121,7 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 		existingByID[member.DeviceID] = member
 	}
 	now := deviceNow(s.Now).Unix()
-	changedDeviceIDs := make([]string, 0)
+	changedDevices := make(map[string]string)
 	for deviceID := range desired {
 		device, ok, err := s.Devices.GetDevice(ctx, deviceID)
 		if err != nil {
@@ -146,7 +146,7 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 		if err := s.Networks.SaveNetworkDevice(ctx, newNetworkDeviceMembership(network.NetworkID, deviceID, true, now)); err != nil {
 			return err
 		}
-		changedDeviceIDs = append(changedDeviceIDs, deviceID)
+		changedDevices[deviceID] = "joined"
 	}
 	for deviceID := range existingByID {
 		if _, ok := desired[deviceID]; ok {
@@ -155,7 +155,7 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 		if err := s.Networks.DeleteNetworkDevice(ctx, network.NetworkID, deviceID); err != nil {
 			return err
 		}
-		changedDeviceIDs = append(changedDeviceIDs, deviceID)
+		changedDevices[deviceID] = "left"
 	}
 	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, network.NetworkID, reason)
 	if err != nil {
@@ -167,15 +167,15 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, nil, s.EventPublisher, s.Now, network.NetworkID, version.Version, version.Reason); err != nil {
 		return err
 	}
-	for _, deviceID := range changedDeviceIDs {
-		if err := s.publishGroupDerivedNetworkMembership(ctx, deviceID, network.NetworkID); err != nil {
+	for deviceID, operation := range changedDevices {
+		if err := s.publishGroupDerivedNetworkMembership(ctx, deviceID, network.NetworkID, operation, version.Version); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s DeviceGroupService) publishGroupDerivedNetworkMembership(ctx context.Context, deviceID, changedNetworkID string) error {
+func (s DeviceGroupService) publishGroupDerivedNetworkMembership(ctx context.Context, deviceID, changedNetworkID, operation string, membershipVersion int64) error {
 	if s.DevicePublisher == nil {
 		return nil
 	}
@@ -192,10 +192,13 @@ func (s DeviceGroupService) publishGroupDerivedNetworkMembership(ctx context.Con
 		Type:      "device_network_membership_changed",
 		MessageID: fmt.Sprintf("devgroupnet%d%s", now.UnixMilli(), deviceID),
 		Payload: map[string]any{
-			"deviceId":   deviceID,
-			"networkId":  changedNetworkID,
-			"networkIds": networkIDs,
-			"source":     "device_group_reference",
+			"deviceId":          deviceID,
+			"networkId":         changedNetworkID,
+			"changedNetworkId":  changedNetworkID,
+			"networkIds":        networkIDs,
+			"membershipVersion": membershipVersion,
+			"operation":         operation,
+			"source":            "device_group_reference",
 		},
 	})
 }

@@ -1,6 +1,7 @@
 //! macOS platform bridge for SLAN mesh networking.
 
 use std::{
+    collections::HashMap,
     env,
     ffi::CString,
     fs::{self, File},
@@ -43,6 +44,7 @@ const UTUN_CONTROL_NAME: &str = "com.apple.net.utun_control";
 const UTUN_OPT_IFNAME: libc::c_int = 2;
 const DEFAULT_UTUN_MTU: u16 = 1280;
 const MAX_PACKET_SIZE: usize = 4096;
+const RELAY_PEER_NOT_ATTACHED_COOLDOWN: Duration = Duration::from_secs(30);
 const UTUN_HEADER_LEN: usize = 4;
 const AF_INET_HEADER: [u8; UTUN_HEADER_LEN] = [0, 0, 0, libc::AF_INET as u8];
 const MOCK_INTERFACE_NAME: &str = "utun-mock";
@@ -1762,6 +1764,7 @@ fn run_udp_data_plane(
     let mut last_direct_udp_probe = Instant::now()
         .checked_sub(direct_udp_probe_interval)
         .unwrap_or_else(Instant::now);
+    let mut relay_send_blocked_until: HashMap<String, Instant> = HashMap::new();
     persist_relay_stats(stats);
     while !stop.load(Ordering::SeqCst) {
         let mut did_work = false;
@@ -1896,6 +1899,14 @@ fn run_udp_data_plane(
                                     }
                                 }
                                 if !direct_sent {
+                                    if relay_send_blocked_until
+                                        .get(&peer.peer_node_id)
+                                        .is_some_and(|until| Instant::now() < *until)
+                                    {
+                                        stats.last_tun_drop_reason =
+                                            Some("relay_peer_not_attached_backoff".to_string());
+                                        continue;
+                                    }
                                     let mut relay_sent = false;
                                     if let Some(payload) = encode_relay_forward(peer, &frame) {
                                         for attempt in 0..relay_send_attempt_count(&packet) {
@@ -2116,6 +2127,27 @@ fn run_udp_data_plane(
             match peer.socket.recv(&mut relay_buffer) {
                 Ok(frame_len) => {
                     did_work = true;
+                    if let Some(error) = relay_error_message(&relay_buffer[..frame_len]) {
+                        stats.relay_error_responses =
+                            stats.relay_error_responses.saturating_add(1);
+                        stats.last_relay_error = Some(format!(
+                            "peer {} session {}: {error}",
+                            peer.peer_node_id, peer.session_id
+                        ));
+                        if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+                            peer_stats.relay_errors = peer_stats.relay_errors.saturating_add(1);
+                            peer_stats.last_relay_error = Some(error.clone());
+                        }
+                        if error.contains("peer not attached")
+                            || error.contains("participant not attached")
+                        {
+                            relay_send_blocked_until.insert(
+                                peer.peer_node_id.clone(),
+                                Instant::now() + RELAY_PEER_NOT_ATTACHED_COOLDOWN,
+                            );
+                        }
+                        continue;
+                    }
                     let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
                     if decoded_payload.is_none()
                         && relay_control_kind(&relay_buffer[..frame_len]).is_some()
@@ -2576,6 +2608,22 @@ fn relay_control_kind(frame: &[u8]) -> Option<String> {
             .map(str::to_string),
         _ => None,
     }
+}
+
+fn relay_error_message(payload: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    if value.get("kind").and_then(serde_json::Value::as_str) != Some("error") {
+        return None;
+    }
+    Some(
+        value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .or_else(|| value.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("relay_error")
+            .to_string(),
+    )
 }
 
 fn relay_data_plane_stats_from_config(

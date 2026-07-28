@@ -21,11 +21,13 @@ import (
 
 // UDPServer 承载 relay_udp 数据面，并同时启动本节点的管理 HTTP 服务。
 type UDPServer struct {
-	conn      *net.UDPConn
-	store     state.StoreAPI
-	service   *Service
-	adminAddr string
-	cfg       config.Config
+	conn              *net.UDPConn
+	store             state.StoreAPI
+	service           *Service
+	adminAddr         string
+	cfg               config.Config
+	transientErrorsMu sync.Mutex
+	transientErrors   map[string]time.Time
 }
 
 // NewUDPServer 使用默认内存状态创建 UDP 中继服务。
@@ -49,11 +51,12 @@ func NewUDPServerWithStore(cfg config.Config, store state.StoreAPI) (*UDPServer,
 		store = state.NewStore()
 	}
 	return &UDPServer{
-		conn:      conn,
-		store:     store,
-		service:   NewService(store),
-		adminAddr: cfg.AdminListenAddr,
-		cfg:       cfg,
+		conn:            conn,
+		store:           store,
+		service:         NewService(store),
+		adminAddr:       cfg.AdminListenAddr,
+		cfg:             cfg,
+		transientErrors: make(map[string]time.Time),
 	}, nil
 }
 
@@ -107,6 +110,9 @@ func (s *UDPServer) servePackets() error {
 			datagramHead(buf[:n]),
 		)
 		if err := s.handlePacket(addr, buf[:n]); err != nil {
+			if !s.shouldReportTransientError(addr, err, time.Now()) {
+				continue
+			}
 			log.Printf("wire relay request failed remote=%s err=%v", addr.String(), err)
 			_ = s.write(addr, protocol.ServerMessage{
 				Kind: "error",
@@ -117,6 +123,38 @@ func (s *UDPServer) servePackets() error {
 			})
 		}
 	}
+}
+
+const transientErrorReportInterval = 10 * time.Second
+
+func (s *UDPServer) shouldReportTransientError(addr *net.UDPAddr, err error, now time.Time) bool {
+	if !errors.Is(err, state.ErrPeerNotAttached) && !errors.Is(err, state.ErrParticipantNotFound) {
+		return true
+	}
+	key := addr.String()
+	if errors.Is(err, state.ErrPeerNotAttached) {
+		key += "|peer"
+	} else {
+		key += "|participant"
+	}
+	s.transientErrorsMu.Lock()
+	defer s.transientErrorsMu.Unlock()
+	if s.transientErrors == nil {
+		s.transientErrors = make(map[string]time.Time)
+	}
+	if previous, exists := s.transientErrors[key]; exists && now.Sub(previous) < transientErrorReportInterval {
+		return false
+	}
+	s.transientErrors[key] = now
+	if len(s.transientErrors) > 4096 {
+		cutoff := now.Add(-time.Minute)
+		for item, seenAt := range s.transientErrors {
+			if seenAt.Before(cutoff) {
+				delete(s.transientErrors, item)
+			}
+		}
+	}
+	return true
 }
 
 func (s *UDPServer) registerAndHeartbeat() {

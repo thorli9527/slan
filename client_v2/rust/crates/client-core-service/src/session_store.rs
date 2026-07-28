@@ -455,6 +455,24 @@ pub(crate) fn prepare_session_device_registered(
     Ok(projection)
 }
 
+pub(crate) fn force_renew_mqtt_credential() -> Result<()> {
+    let mut session = load_session().context("load session for mqtt credential renewal")?;
+    if session.access_token.trim().is_empty() {
+        anyhow::bail!("cannot renew mqtt credential without a registered session");
+    }
+    let client = ControlPlaneClient::from_env();
+    let (relay_candidates, network_configs) =
+        prepare_bound_device_session(&client, &mut session, true)
+            .context("force renew device session after mqtt authentication rejection")?;
+    persist_session(&session).context("persist renewed mqtt credential")?;
+    apply_prepared_session_runtime(&PreparedSession {
+        session,
+        relay_candidates,
+        network_configs,
+    });
+    Ok(())
+}
+
 fn apply_prepared_session_runtime(prepared: &PreparedSession) {
     if !prepared.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(prepared.relay_candidates.clone());

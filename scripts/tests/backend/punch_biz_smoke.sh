@@ -4,9 +4,13 @@ set -euo pipefail
 SCRIPT_PATH="${BASH_SOURCE:-$0}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
 ROOT_DIR="$SCRIPT_DIR"
-while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
+while [ ! -e "$ROOT_DIR/.git" ] && [ ! -e "$ROOT_DIR/scripts/lib/client_default_endpoints.sh" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
+if [ ! -e "$ROOT_DIR/scripts/lib/client_default_endpoints.sh" ]; then
+  echo "unable to locate repository root from $SCRIPT_DIR" >&2
+  exit 1
+fi
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 
 BASE_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"

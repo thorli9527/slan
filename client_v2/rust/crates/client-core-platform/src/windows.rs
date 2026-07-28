@@ -303,21 +303,35 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         // which caused frequent timeouts and unreliable adapter state detection.
         let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
         let cached = load_cached_runtime_state().unwrap_or_default();
-        if !runtime.network_enabled {
+        // A service/runtime restart resets the process-local cache while the
+        // adapter and persisted desired state remain active. Treat that state
+        // as enabled until an explicit disable clears the persisted state.
+        let recovered_virtual_ip = runtime
+            .virtual_ip
+            .clone()
+            .or_else(|| cached.virtual_ip.clone());
+        let network_enabled = runtime.network_enabled
+            || (cached.network_enabled && recovered_virtual_ip.is_some());
+        if !network_enabled {
             debug_log(&format!(
                 "read_runtime_state: network_enabled=false adapter_present={} virtual_ip={:?} cached_enabled={}",
                 runtime.adapter_present, runtime.virtual_ip, cached.network_enabled,
             ));
+        } else if !runtime.network_enabled {
+            debug_log(&format!(
+                "read_runtime_state: recovered enabled state from persisted runtime virtual_ip={:?}",
+                recovered_virtual_ip,
+            ));
         }
         Ok(NetworkRuntimeState {
-            adapter_present: runtime.adapter_present,
-            network_enabled: runtime.network_enabled,
-            virtual_ip: if runtime.network_enabled {
-                runtime.virtual_ip.clone()
+            adapter_present: runtime.adapter_present || network_enabled,
+            network_enabled,
+            virtual_ip: if network_enabled {
+                recovered_virtual_ip
             } else {
                 None
             },
-            active_path: if runtime.network_enabled {
+            active_path: if network_enabled {
                 runtime
                     .relay_config
                     .as_ref()
@@ -335,7 +349,7 @@ impl PlatformNetwork for WindowsPlatformNetwork {
             } else {
                 None
             },
-            peer_paths: if runtime.network_enabled {
+            peer_paths: if network_enabled {
                 runtime
                     .relay_config
                     .as_ref()

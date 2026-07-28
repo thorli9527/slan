@@ -68,6 +68,26 @@ func TestHandleAttachAndForward(t *testing.T) {
 	}
 }
 
+func TestTransientRelayErrorsAreRateLimitedPerRemote(t *testing.T) {
+	server := &UDPServer{}
+	remote := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12000}
+	now := time.Now()
+	wrapped := fmt.Errorf("forward session=s1: %w", state.ErrPeerNotAttached)
+	if !server.shouldReportTransientError(remote, wrapped, now) {
+		t.Fatal("first transient error must be reported")
+	}
+	if server.shouldReportTransientError(remote, wrapped, now.Add(time.Second)) {
+		t.Fatal("repeated transient error must be rate limited")
+	}
+	if !server.shouldReportTransientError(
+		remote,
+		wrapped,
+		now.Add(transientErrorReportInterval),
+	) {
+		t.Fatal("transient error must be reported after the interval")
+	}
+}
+
 func TestHandleForwardCanEmitCompatibilityAck(t *testing.T) {
 	server := &UDPServer{store: state.NewStore()}
 	server.cfg.ForwardAckEnabled = true

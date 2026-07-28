@@ -6083,6 +6083,8 @@ struct RelayMaintenanceState {
     last_tun_packets_sent: u64,
     last_relay_packets_received: u64,
     no_rx_intervals: u32,
+    consecutive_reconfigure_failures: u32,
+    retry_not_before_ms: u64,
 }
 
 fn spawn_relay_data_plane_maintenance_worker(
@@ -6138,6 +6140,9 @@ fn maintain_relay_data_plane(
     let Some(reason) = reconfigure_reason else {
         return Ok(());
     };
+    if now < maintenance.retry_not_before_ms && reason != "ticket_expired" {
+        return Ok(());
+    }
     if relay_reconfigure_backoff_applies(reason)
         && maintenance.last_reconfigure_ms > 0
         && now.saturating_sub(maintenance.last_reconfigure_ms) < RELAY_RECONFIGURE_BACKOFF_MS
@@ -6162,7 +6167,16 @@ fn maintain_relay_data_plane(
         transition,
     )?;
     if state.error.is_none() {
+        maintenance.consecutive_reconfigure_failures = 0;
+        maintenance.retry_not_before_ms = 0;
         report_runtime_state(&state);
+    } else {
+        maintenance.consecutive_reconfigure_failures = maintenance
+            .consecutive_reconfigure_failures
+            .saturating_add(1);
+        maintenance.retry_not_before_ms = now.saturating_add(relay_retry_backoff_ms(
+            maintenance.consecutive_reconfigure_failures,
+        ));
     }
     let next_stats = load_relay_runtime_stats();
     if let Some(stats) = next_stats.as_ref() {
@@ -6186,6 +6200,13 @@ fn maintain_relay_data_plane(
     let business_data = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
     publish_business_event(state_notifier, business_type, business_data);
     Ok(())
+}
+
+fn relay_retry_backoff_ms(consecutive_failures: u32) -> u64 {
+    const BASE_MS: u64 = 30_000;
+    const MAX_MS: u64 = 10 * 60 * 1000;
+    let shift = consecutive_failures.saturating_sub(1).min(5);
+    BASE_MS.saturating_mul(1_u64 << shift).min(MAX_MS)
 }
 
 fn relay_maintenance_reconfigure_reason(

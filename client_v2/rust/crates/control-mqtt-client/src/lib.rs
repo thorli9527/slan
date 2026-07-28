@@ -368,8 +368,14 @@ fn mqtt_remaining_length(mut length: usize) -> Result<Vec<u8>, String> {
 
 fn read_mqtt_connack(stream: &mut TcpStream) -> Result<(), String> {
     let packet = read_mqtt_packet(stream)?;
-    if packet.header != 0x20 || packet.body.len() < 2 || packet.body[1] != 0 {
-        return Err("mqtt broker rejected connection".to_string());
+    if packet.header != 0x20 || packet.body.len() < 2 {
+        return Err("mqtt broker returned invalid connack".to_string());
+    }
+    if packet.body[1] != 0 {
+        return Err(format!(
+            "mqtt broker rejected connection code={}",
+            packet.body[1]
+        ));
     }
     Ok(())
 }

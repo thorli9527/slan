@@ -230,7 +230,7 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 			DevicePublisher: s.DevicePublisher,
 			Now:             s.Now,
 		}
-		if err := groupService.publishGroupDerivedNetworkMembership(ctx, device.DeviceID, activeNetworkID); err != nil {
+		if err := groupService.publishGroupDerivedNetworkMembership(ctx, device.DeviceID, activeNetworkID, "joined", 0); err != nil {
 			return CompleteDeviceLoginDeviceView{}, err
 		}
 	}

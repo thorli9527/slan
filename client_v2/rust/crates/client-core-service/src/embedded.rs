@@ -1894,6 +1894,14 @@ fn ingest_embedded_device_network_membership_changed(value: &Value) -> Result<()
             anyhow::anyhow!("device_network_membership_changed payload is missing")
         })?)
         .context("decode embedded device network membership")?;
+    let changed_network_id = payload
+        .changed_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let operation = payload.operation.clone().unwrap_or_default();
+    let membership_version = payload.membership_version;
     let snapshot = runtime().snapshot();
     let mut session = load_session().context("load embedded membership session")?;
     apply_device_network_membership(&mut session, payload)?;
@@ -1906,10 +1914,37 @@ fn ingest_embedded_device_network_membership_changed(value: &Value) -> Result<()
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            if let Ok(configs) =
-                client.device_network_configs(session_device_api_token(&session), device_id)
-            {
-                prepared.network_configs = configs;
+            prepared.network_configs = client
+                .device_network_configs(session_device_api_token(&session), device_id)
+                .context("refresh full embedded network configs after membership change")?;
+            if operation == "joined" {
+                if let Some(network_id) = changed_network_id.as_deref() {
+                    let network_snapshot = client
+                        .network_snapshot(session_device_api_token(&session), network_id, device_id)
+                        .with_context(|| {
+                            format!("load embedded joined network snapshot networkId={network_id}")
+                        })?;
+                    let snapshot_envelope = NetworkEventEnvelope {
+                        r#type: "network_event".to_string(),
+                        network_id: network_snapshot.network_id.clone(),
+                        version: network_snapshot.version,
+                        event_id: synthetic_snapshot_event_id(
+                            "membership",
+                            &network_snapshot.network_id,
+                            network_snapshot.version,
+                        ),
+                        event_type: crate::network_event::NetworkEventType::NetworkSnapshot,
+                        occurred_at: current_timestamp_ms(),
+                        payload: serde_json::to_value(network_snapshot.snapshot)
+                            .context("encode embedded joined network snapshot")?,
+                    };
+                    crate::network_module::apply_network_module_event(
+                        network_id,
+                        device_id,
+                        &snapshot_envelope,
+                    )
+                    .context("apply embedded joined network snapshot")?;
+                }
             }
         }
     }
@@ -1937,6 +1972,10 @@ fn ingest_embedded_device_network_membership_changed(value: &Value) -> Result<()
             "messageId": value.get("messageId").and_then(Value::as_str),
             "networkIds": network_ids,
             "activeNetworkId": active_network_id,
+            "changedNetworkId": changed_network_id,
+            "operation": operation,
+            "membershipVersion": membership_version,
+            "fullNetworkRefresh": true,
             "reconfigureRequired": true,
         }),
         &state,

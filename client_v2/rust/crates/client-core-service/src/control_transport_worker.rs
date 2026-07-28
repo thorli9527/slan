@@ -36,7 +36,8 @@ use crate::{
     runtime_event_hub::RuntimeEventHub,
     session_device_api_token,
     session_store::{
-        current_session_runtime_epoch, prepare_session_from_control_plane, PreparedSession,
+        current_session_runtime_epoch, force_renew_mqtt_credential,
+        prepare_session_from_control_plane, PreparedSession,
     },
     PersistedSession, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
@@ -113,6 +114,19 @@ pub fn wake_control_transport_worker(
             state_notifier,
         );
         let error = result.err();
+        if error
+            .as_deref()
+            .is_some_and(|message| message.contains("mqtt broker rejected connection code="))
+        {
+            match force_renew_mqtt_credential() {
+                Ok(()) => log_service_error(
+                    "client-core-service renewed mqtt credential after broker authentication rejection",
+                ),
+                Err(renew_error) => log_service_error(format!(
+                    "client-core-service failed to renew mqtt credential after broker authentication rejection: {renew_error:#}"
+                )),
+            }
+        }
         release_worker(&worker_state, reconnect_key, error);
     });
 }
@@ -617,6 +631,14 @@ fn try_ingest_device_network_membership_changed(
             .ok_or_else(|| "device_network_membership_changed payload is missing".to_string())?,
     )
     .map_err(|err| format!("decode device network membership payload: {err}"))?;
+    let changed_network_id = event
+        .changed_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let operation = event.operation.clone().unwrap_or_default();
+    let membership_version = event.membership_version;
     let expected_revision = runtime.snapshot().revision;
     let mut session = load_session().map_err(|err| err.to_string())?;
     let expected_device_id = session
@@ -629,10 +651,43 @@ fn try_ingest_device_network_membership_changed(
     let mut prepared = PreparedSession::from_session(session.clone());
     if !session.access_token.trim().is_empty() {
         let client = ControlPlaneClient::from_env();
-        if let Ok(configs) =
-            client.device_network_configs(session_device_api_token(&session), &expected_device_id)
-        {
-            prepared.network_configs = configs;
+        prepared.network_configs = client
+            .device_network_configs(session_device_api_token(&session), &expected_device_id)
+            .map_err(|error| {
+                format!("refresh full network configs after membership change: {error:#}")
+            })?;
+        if operation == "joined" {
+            if let Some(network_id) = changed_network_id.as_deref() {
+                let snapshot = client
+                    .network_snapshot(
+                        session_device_api_token(&session),
+                        network_id,
+                        &expected_device_id,
+                    )
+                    .map_err(|error| {
+                        format!("load joined network snapshot networkId={network_id}: {error:#}")
+                    })?;
+                let snapshot_envelope = NetworkEventEnvelope {
+                    r#type: "network_event".to_string(),
+                    network_id: snapshot.network_id.clone(),
+                    version: snapshot.version,
+                    event_id: synthetic_snapshot_event_id(
+                        "membership",
+                        &snapshot.network_id,
+                        snapshot.version,
+                    ),
+                    event_type: NetworkEventType::NetworkSnapshot,
+                    occurred_at: current_timestamp_ms(),
+                    payload: serde_json::to_value(snapshot.snapshot)
+                        .map_err(|error| format!("encode joined network snapshot: {error}"))?,
+                };
+                crate::network_module::apply_network_module_event(
+                    network_id,
+                    &expected_device_id,
+                    &snapshot_envelope,
+                )
+                .map_err(|error| format!("apply joined network snapshot: {error:#}"))?;
+            }
         }
     }
     let state = runtime
@@ -657,6 +712,10 @@ fn try_ingest_device_network_membership_changed(
         serde_json::json!({
             "messageType": "device_network_membership_changed",
             "messageId": delivery_id,
+            "changedNetworkId": changed_network_id,
+            "operation": operation,
+            "membershipVersion": membership_version,
+            "fullNetworkRefresh": true,
         }),
     );
     Ok(true)

@@ -350,6 +350,17 @@ type networkAccessTestBroadcaster struct {
 	events []NetworkEventEnvelope
 }
 
+type networkAccessTestDevicePublisher struct {
+	deviceIDs []string
+	events    []DeviceControlEnvelope
+}
+
+func (p *networkAccessTestDevicePublisher) PublishDeviceControl(_ context.Context, deviceID string, event DeviceControlEnvelope) error {
+	p.deviceIDs = append(p.deviceIDs, deviceID)
+	p.events = append(p.events, event)
+	return nil
+}
+
 func (s *networkAccessTestBroadcaster) PublishNetworkEvent(_ context.Context, event NetworkEventEnvelope) error {
 	s.events = append(s.events, event)
 	return nil
@@ -704,6 +715,7 @@ func TestListNetworkDeviceGroupsReturnsReferencedGroupsAndTheirMembers(t *testin
 }
 
 func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
+	devicePublisher := &networkAccessTestDevicePublisher{}
 	users := &networkAccessTestUsers{users: map[string]model.User{
 		"user-1": {UserID: "user-1", Email: "u@example.com", Status: "active"},
 	}}
@@ -726,11 +738,12 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 		groupReferences: map[string][]model.NetworkDeviceGroupReference{},
 	}
 	service := DeviceGroupService{
-		Users:         users,
-		Devices:       devices,
-		Networks:      networks,
-		NetworkGroups: networks,
-		Now:           func() time.Time { return time.Unix(1700000000, 0) },
+		Users:           users,
+		Devices:         devices,
+		Networks:        networks,
+		NetworkGroups:   networks,
+		DevicePublisher: devicePublisher,
+		Now:             func() time.Time { return time.Unix(1700000000, 0) },
 	}
 
 	view, err := service.AddNetworkDeviceGroup(context.Background(), AddNetworkDeviceGroupInput{
@@ -745,6 +758,16 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 	if got := devices.devices["dev-1"].VirtualIP; got != "10.0.1.1" {
 		t.Fatalf("expected group materialization to allocate 10.0.1.1, got %q", got)
 	}
+	if len(devicePublisher.events) != 1 {
+		t.Fatalf("expected one joined membership event, got %d", len(devicePublisher.events))
+	}
+	joined := devicePublisher.events[0].Payload
+	if joined["operation"] != "joined" || joined["changedNetworkId"] != "net-1" {
+		t.Fatalf("unexpected joined membership payload: %#v", joined)
+	}
+	if joined["membershipVersion"] == uint64(0) {
+		t.Fatalf("expected joined membership version, payload=%#v", joined)
+	}
 
 	view, err = service.RemoveNetworkDeviceGroup(context.Background(), RemoveNetworkDeviceGroupInput{
 		NetworkID: "net-1", GroupID: "dgrp-1", ActorUserID: "user-1",
@@ -754,6 +777,13 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 	}
 	if len(view.Items) != 0 || len(networks.networkDevices["net-1"]) != 0 {
 		t.Fatalf("expected reference and materialized member removal, view=%+v members=%+v", view, networks.networkDevices["net-1"])
+	}
+	if len(devicePublisher.events) != 2 {
+		t.Fatalf("expected joined and left membership events, got %d", len(devicePublisher.events))
+	}
+	left := devicePublisher.events[1].Payload
+	if left["operation"] != "left" || left["changedNetworkId"] != "net-1" {
+		t.Fatalf("unexpected left membership payload: %#v", left)
 	}
 }
 

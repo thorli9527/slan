@@ -73,9 +73,13 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 	client := mqtt.NewClient(opts)
 	connectToken := client.Connect()
 	if ok := connectToken.WaitTimeout(6 * time.Second); !ok {
+		// ConnectRetry keeps running after WaitTimeout. Stop this client before
+		// the caller creates another consumer with the same stable client ID.
+		client.Disconnect(0)
 		return fmt.Errorf("connect mqtt broker timeout")
 	}
 	if err := connectToken.Error(); err != nil {
+		client.Disconnect(0)
 		return fmt.Errorf("connect mqtt broker: %w", err)
 	}
 	go func() {

@@ -80,6 +80,12 @@ pub(crate) struct DeviceNetworkMembershipChangedPayload {
     pub(crate) device_id: String,
     #[serde(default)]
     pub(crate) network_ids: Vec<String>,
+    #[serde(default, alias = "networkId")]
+    pub(crate) changed_network_id: Option<String>,
+    #[serde(default)]
+    pub(crate) operation: Option<String>,
+    #[serde(default)]
+    pub(crate) membership_version: u64,
 }
 
 pub(crate) fn apply_device_network_membership(
@@ -102,7 +108,7 @@ pub(crate) fn apply_device_network_membership(
     if session
         .active_network_id
         .as_ref()
-        .is_some_and(|network_id| !session.network_ids.contains(network_id))
+        .is_none_or(|network_id| !session.network_ids.contains(network_id))
     {
         session.active_network_id = session.network_ids.first().cloned();
     }
@@ -416,6 +422,9 @@ mod tests {
                     "network-b".to_string(),
                     String::new(),
                 ],
+                changed_network_id: Some("network-b".to_string()),
+                operation: Some("joined".to_string()),
+                membership_version: 7,
             },
         )
         .expect("apply membership");
@@ -434,11 +443,35 @@ mod tests {
             DeviceNetworkMembershipChangedPayload {
                 device_id: "device-2".to_string(),
                 network_ids: vec!["network-a".to_string()],
+                changed_network_id: None,
+                operation: None,
+                membership_version: 0,
             },
         );
 
         assert!(result.is_err());
         assert!(session.network_ids.is_empty());
+    }
+
+    #[test]
+    fn first_membership_selects_the_first_joined_network() {
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("device-1".to_string());
+
+        apply_device_network_membership(
+            &mut session,
+            DeviceNetworkMembershipChangedPayload {
+                device_id: "device-1".to_string(),
+                network_ids: vec!["network-b".to_string(), "network-a".to_string()],
+                changed_network_id: Some("network-b".to_string()),
+                operation: Some("joined".to_string()),
+                membership_version: 1,
+            },
+        )
+        .expect("apply first membership");
+
+        assert_eq!(session.network_ids, vec!["network-a", "network-b"]);
+        assert_eq!(session.active_network_id.as_deref(), Some("network-a"));
     }
 
     #[test]

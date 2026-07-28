@@ -9,6 +9,7 @@ use super::{
     platform_resolver_config, publish_method_business_event,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
+    relay_retry_backoff_ms,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
     relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type, request_is_watch,
     rotate_log_file, routes_with_peer_virtual_ips, select_relay_sessions_for_candidate,
@@ -1348,6 +1349,14 @@ fn relay_maintenance_marks_expired_ticket_as_urgent() {
         Some("ticket_expired")
     );
     assert!(!relay_reconfigure_backoff_applies("ticket_expired"));
+}
+
+#[test]
+fn relay_attach_retry_uses_bounded_exponential_backoff() {
+    assert_eq!(relay_retry_backoff_ms(1), 30_000);
+    assert_eq!(relay_retry_backoff_ms(2), 60_000);
+    assert_eq!(relay_retry_backoff_ms(3), 120_000);
+    assert_eq!(relay_retry_backoff_ms(10), 600_000);
 }
 
 #[test]
