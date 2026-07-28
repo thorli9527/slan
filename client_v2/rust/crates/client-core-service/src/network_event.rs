@@ -80,12 +80,25 @@ pub(crate) struct DeviceNetworkMembershipChangedPayload {
     pub(crate) device_id: String,
     #[serde(default)]
     pub(crate) network_ids: Vec<String>,
-    #[serde(default, alias = "networkId")]
+    #[serde(default)]
     pub(crate) changed_network_id: Option<String>,
     #[serde(default)]
     pub(crate) operation: Option<String>,
     #[serde(default)]
     pub(crate) membership_version: u64,
+}
+
+pub(crate) fn decode_device_network_membership_payload(
+    mut value: Value,
+) -> serde_json::Result<DeviceNetworkMembershipChangedPayload> {
+    if let Some(payload) = value.as_object_mut() {
+        let canonical = payload.remove("changedNetworkId");
+        let legacy = payload.remove("networkId");
+        if let Some(changed_network_id) = canonical.or(legacy) {
+            payload.insert("changedNetworkId".to_string(), changed_network_id);
+        }
+    }
+    serde_json::from_value(value)
 }
 
 pub(crate) fn apply_device_network_membership(
@@ -400,10 +413,43 @@ pub(crate) fn synthetic_snapshot_event_id(scope: &str, network_id: &str, version
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_device_network_membership, network_event_business_data, synthetic_snapshot_event_id,
+        apply_device_network_membership, decode_device_network_membership_payload,
+        network_event_business_data, synthetic_snapshot_event_id,
         DeviceNetworkMembershipChangedPayload, NetworkEventType,
     };
     use crate::session_store::PersistedSession;
+
+    #[test]
+    fn membership_payload_prefers_canonical_field_when_legacy_field_is_also_present() {
+        let payload = decode_device_network_membership_payload(serde_json::json!({
+            "deviceId": "device-1",
+            "networkId": "network-legacy",
+            "changedNetworkId": "network-current",
+            "networkIds": ["network-current"],
+            "operation": "joined"
+        }))
+        .expect("decode duplicate-compatible membership payload");
+
+        assert_eq!(
+            payload.changed_network_id.as_deref(),
+            Some("network-current")
+        );
+    }
+
+    #[test]
+    fn membership_payload_accepts_legacy_network_id() {
+        let payload = decode_device_network_membership_payload(serde_json::json!({
+            "deviceId": "device-1",
+            "networkId": "network-legacy",
+            "networkIds": ["network-legacy"]
+        }))
+        .expect("decode legacy membership payload");
+
+        assert_eq!(
+            payload.changed_network_id.as_deref(),
+            Some("network-legacy")
+        );
+    }
 
     #[test]
     fn membership_update_normalizes_networks_and_replaces_removed_active_network() {

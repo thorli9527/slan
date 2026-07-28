@@ -520,16 +520,13 @@ pub(crate) fn activate_network(
     // This prevents timeout when multiple activation cycles are queued.
     // IMPORTANT: also verify the adapter actually has the IP — the runtime state
     // cache can be stale if the adapter lost its IP (driver reset, system event, etc).
-    let cache_matches = platform
-        .read_runtime_state()
-        .ok()
-        .is_some_and(|state| {
-            state.network_enabled
-                && state
-                    .virtual_ip
-                    .as_deref()
-                    .is_some_and(|ip| ip == activation.virtual_ip)
-        });
+    let cache_matches = platform.read_runtime_state().ok().is_some_and(|state| {
+        state.network_enabled
+            && state
+                .virtual_ip
+                .as_deref()
+                .is_some_and(|ip| ip == activation.virtual_ip)
+    });
     let adapter_has_ip = cache_matches
         && platform
             .verify_adapter_ip(activation.virtual_ip)
@@ -548,9 +545,11 @@ pub(crate) fn activate_network(
         }
         platform.install_adapter()?;
         platform.configure_ip(activation.virtual_ip, activation.prefix_len)?;
-        platform.configure_resolver(activation.resolver)?;
-        platform.configure_resolver_map(activation.resolver_zones, activation.resolver_records)?;
     }
+    // Resolver, routes and relay state belong to the current network plan, not
+    // to the adapter IP. They must be refreshed even when the IP fast path is used.
+    platform.configure_resolver(activation.resolver)?;
+    platform.configure_resolver_map(activation.resolver_zones, activation.resolver_records)?;
     platform.configure_routes(activation.routes)?;
     platform.configure_relay(activation.relay_config)?;
     platform.mark_network_enabled(activation.virtual_ip)?;

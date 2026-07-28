@@ -54,11 +54,11 @@ class _HomePageState extends State<HomePage> {
   /// 上一次登录态，用于从未登录变已登录时触发平台授权准备。
   bool _lastSignedIn = false;
 
-  /// UI 本地网络切换锁，覆盖命令派发到 bridge 首次状态回推之间的窗口。
-  bool _networkTogglePending = false;
+  /// UI 刚派发的网络目标；非空时同时表示操作锁和乐观显示值。
+  bool? _pendingNetworkTarget;
 
-  /// 本次网络切换的目标状态，用于立即更新开关显示。
-  bool? _networkToggleTargetEnabled;
+  /// 当前正在打开的浏览器命令，避免连续点击重复打开窗口。
+  ClientCommandType? _pendingBrowserCommand;
 
   @override
   void initState() {
@@ -109,8 +109,12 @@ class _HomePageState extends State<HomePage> {
                         SignedInActions(
                           desktop: _isDesktopLike,
                           showConsole: _showWebConsoleAction,
-                          onOpenConsole:
-                              _showWebConsoleAction ? _openWebConsole : null,
+                          onOpenConsole: _showWebConsoleAction &&
+                                  _pendingBrowserCommand == null
+                              ? _openWebConsole
+                              : null,
+                          consoleBusy: _pendingBrowserCommand ==
+                              ClientCommandType.openWebConsole,
                           onLogout: () => widget.bridge.dispatch(
                             const ClientCommand(ClientCommandType.logout),
                           ),
@@ -132,10 +136,25 @@ class _HomePageState extends State<HomePage> {
                             height: 46,
                             child: FilledButton.icon(
                               key: const Key('desktop-browser-login'),
-                              onPressed:
-                                  state.syncing ? null : _openBrowserLogin,
-                              icon: const Icon(Icons.login_rounded, size: 18),
-                              label: const Text('打开浏览器登录'),
+                              onPressed: state.syncing ||
+                                      _pendingBrowserCommand != null
+                                  ? null
+                                  : _openBrowserLogin,
+                              icon: _pendingBrowserCommand ==
+                                      ClientCommandType.openClientLogin
+                                  ? const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.login_rounded, size: 18),
+                              label: Text(
+                                _pendingBrowserCommand ==
+                                        ClientCommandType.openClientLogin
+                                    ? '正在打开'
+                                    : '打开浏览器登录',
+                              ),
                             ),
                           ),
                       ],
@@ -292,6 +311,15 @@ class _HomePageState extends State<HomePage> {
     ClientCommand command, {
     required String failurePrefix,
   }) async {
+    if (_pendingBrowserCommand != null) {
+      ClientUiDiagnostics.unawaitedCriticalLog(
+        'home.browser.ignoredInFlight',
+        state: widget.bridge.state.value,
+        fields: {'command': command.type.name},
+      );
+      return;
+    }
+    setState(() => _pendingBrowserCommand = command.type);
     ClientUiDiagnostics.unawaitedCriticalLog(
       'home.browser.tap',
       state: widget.bridge.state.value,
@@ -320,22 +348,28 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$failurePrefix：${_friendlyError('$error')}')),
       );
+    } finally {
+      if (mounted && _pendingBrowserCommand == command.type) {
+        setState(() => _pendingBrowserCommand = null);
+      }
     }
   }
 
   /// 处理用户点击网络开关。
   void _toggleNetwork(bool enabled) {
-    if (_networkTogglePending) {
+    final state = widget.bridge.state.value;
+    if (_pendingNetworkTarget != null ||
+        state.syncing ||
+        !state.switchEnabled) {
       ClientUiDiagnostics.unawaitedLog(
         'home.switch.ignoredInFlight',
-        state: widget.bridge.state.value,
+        state: state,
         fields: {'targetEnabled': enabled},
       );
       return;
     }
     setState(() {
-      _networkTogglePending = true;
-      _networkToggleTargetEnabled = enabled;
+      _pendingNetworkTarget = enabled;
     });
     _lastShownError = null;
     ClientUiDiagnostics.unawaitedLog(
@@ -358,8 +392,7 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (!mounted) return;
       setState(() {
-        _networkTogglePending = false;
-        _networkToggleTargetEnabled = null;
+        _pendingNetworkTarget = null;
       });
     }
   }
@@ -496,9 +529,9 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSignedInHeader({
     required ClientViewState state,
   }) {
-    final displayedState = _networkTogglePending
+    final displayedState = _pendingNetworkTarget != null
         ? state.copyWith(
-            networkEnabled: _networkToggleTargetEnabled ?? state.networkEnabled,
+            networkEnabled: _pendingNetworkTarget,
             syncing: true,
             switchEnabled: false,
           )

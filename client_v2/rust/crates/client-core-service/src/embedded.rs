@@ -43,7 +43,7 @@ use crate::{
     network_event::{
         apply_device_network_membership, network_event_business_data,
         network_event_targets_session, network_event_topics_for_session,
-        synthetic_snapshot_event_id, DeviceNetworkMembershipChangedPayload, NetworkEventEnvelope,
+        synthetic_snapshot_event_id, NetworkEventEnvelope,
     },
     network_event_apply::ApplyResult,
     network_event_projection::{
@@ -1889,11 +1889,12 @@ fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
 }
 
 fn ingest_embedded_device_network_membership_changed(value: &Value) -> Result<()> {
-    let payload: DeviceNetworkMembershipChangedPayload =
-        serde_json::from_value(value.get("payload").cloned().ok_or_else(|| {
+    let payload = crate::network_event::decode_device_network_membership_payload(
+        value.get("payload").cloned().ok_or_else(|| {
             anyhow::anyhow!("device_network_membership_changed payload is missing")
-        })?)
-        .context("decode embedded device network membership")?;
+        })?,
+    )
+    .context("decode embedded device network membership")?;
     let changed_network_id = payload
         .changed_network_id
         .as_deref()

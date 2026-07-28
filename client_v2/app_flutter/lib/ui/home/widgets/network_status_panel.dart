@@ -237,7 +237,8 @@ class _NetworkSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final switchBusy = state.syncing && !state.switchEnabled;
+    final switchBusy = state.syncing;
+    final switchInteractive = state.switchEnabled && !switchBusy;
     final enabled = state.networkEnabled;
     return Tooltip(
       message: switchBusy
@@ -273,8 +274,7 @@ class _NetworkSwitch extends StatelessWidget {
                 inactiveTrackColor: theme.colorScheme.surfaceContainerHighest,
                 inactiveThumbColor: theme.colorScheme.onSurfaceVariant,
                 trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-                onChanged:
-                    state.switchEnabled && !state.syncing ? onToggle : null,
+                onChanged: switchInteractive ? onToggle : null,
               ),
             ),
           ],

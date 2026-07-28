@@ -138,7 +138,7 @@ use crate::session_store::{
     ensure_session_node_binding, load_pending_console_login, load_session,
     load_valid_registered_session, lock_session_runtime_epoch, persist_session,
     prepare_client_login_session, prepare_session_device_registered,
-    prepare_session_from_control_plane, remove_session, remove_user_session_preserving_device,
+    prepare_session_from_control_plane, remove_user_session_preserving_device,
     report_runtime_state, revoke_remote_sessions, session_auth_invalid_error,
     session_device_api_token, session_is_expired, session_not_found_error,
     sync_session_device_fields, PersistedSession, PreparedSession,
@@ -481,38 +481,24 @@ where
     }
     let final_state = if pending.enable_network {
         let prepared = prepare_latest_control_network_activation();
-        // Check if plan has a virtual IP; if not, skip platform activation (no network assigned).
-        let has_virtual_ip = prepared.as_ref().ok().is_some_and(|plan| {
-            plan.session.virtual_ip.as_deref().map(str::trim).is_some_and(|v| !v.is_empty())
-        });
-        if !has_virtual_ip {
-            log_service_error(
-                "client-core-service startup: skipping platform activation, no virtual IP assigned",
-            );
-            let executed = prepared.map(|plan| plan);
-            let committed = commit_control_network_activation_result(runtime, executed);
-            if committed.rollback_platform {
-                let _ = platform_transition::disable_network(&PlatformNetworkImpl);
+        platform_transition::run_inline_serialized("startup.pending.enable", |platform| {
+            let executed = match prepared {
+                Ok(plan) => execute_platform_network_activation_safely(platform, &plan)
+                    .map(|platform_was_enabled| (plan, platform_was_enabled)),
+                Err(error) => Err(error),
+            };
+            let platform_was_enabled = executed
+                .as_ref()
+                .ok()
+                .is_some_and(|(_, was_enabled)| *was_enabled);
+            let committed =
+                commit_control_network_activation_result(runtime, executed.map(|(plan, _)| plan));
+            if committed.rollback_platform && !platform_was_enabled {
+                let _ = platform_transition::disable_network(platform);
             }
-            committed.state
-        } else {
-            platform_transition::run_inline_serialized("startup.pending.enable", |platform| {
-                let executed = match prepared {
-                    Ok(plan) => execute_platform_network_activation(platform, &plan)
-                        .map(|()| plan)
-                        .inspect_err(|_| {
-                            let _ = platform_transition::disable_network(platform);
-                        }),
-                    Err(error) => Err(error),
-                };
-                let committed = commit_control_network_activation_result(runtime, executed);
-                if committed.rollback_platform {
-                    let _ = platform_transition::disable_network(platform);
-                }
-                Ok(committed.state)
-            })
-            .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()))
-        }
+            Ok(committed.state)
+        })
+        .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()))
     } else {
         login_state
     };
@@ -1828,7 +1814,6 @@ where
     match prepared {
         Ok(()) => {
             let mut state = runtime.apply_network_disabled_state();
-            let _ = clear_session_virtual_ip();
             state.virtual_ip = None;
             state
         }
@@ -4109,6 +4094,29 @@ fn execute_platform_network_activation(
     )
 }
 
+fn execute_platform_network_activation_safely(
+    platform: &PlatformNetworkImpl,
+    plan: &PreparedControlNetworkActivation,
+) -> Result<bool> {
+    let platform_was_enabled = platform
+        .read_runtime_state()
+        .ok()
+        .is_some_and(|state| state.network_enabled);
+    if let Err(error) = execute_platform_network_activation(platform, plan) {
+        if platform_was_enabled {
+            log_service_error(
+                "client-core-service preserved existing network after reconfiguration failure",
+            );
+        } else if let Err(rollback_error) = platform_transition::disable_network(platform) {
+            log_service_error(format!(
+                "client-core-service failed to roll back partial network activation: {rollback_error:#}"
+            ));
+        }
+        return Err(error);
+    }
+    Ok(platform_was_enabled)
+}
+
 fn execute_runtime_network_activation(
     runtime: &RuntimeActorHandle,
     command_kind: impl Into<String>,
@@ -4128,31 +4136,6 @@ fn execute_runtime_network_activation(
         );
         return Ok(runtime.snapshot().state);
     }
-    let has_virtual_ip = transition.prepared.as_ref().ok().is_some_and(|plan| {
-        plan.session
-            .virtual_ip
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|v| !v.is_empty())
-    });
-    if !has_virtual_ip {
-        // No virtual IP assigned (device not in any network) — skip platform activation entirely.
-        // The network can still be "enabled" in the UI, just without peers or an adapter IP.
-        log_service_error(
-            "client-core-service skipping platform activation: no virtual IP assigned (device not in any network)",
-        );
-        let plan = transition.prepared.ok();
-        let committed = runtime.call_named(
-            command_kind.clone(),
-            correlation_id.clone(),
-            move |runtime| {
-                let executed: Result<PreparedControlNetworkActivation, _> =
-                    plan.ok_or_else(|| anyhow::anyhow!("no activation plan"));
-                Ok(commit_control_network_activation_result(runtime, executed))
-            },
-        )?;
-        return Ok(committed.state);
-    }
     let network_was_enabled = runtime.snapshot().state.network_enabled;
     let snapshots = runtime.snapshots();
     let executed = match transition.prepared {
@@ -4165,21 +4148,7 @@ fn execute_runtime_network_activation(
                 {
                     anyhow::bail!("stale platform network activation");
                 }
-                let network_was_enabled = platform
-                    .read_runtime_state()
-                    .ok()
-                    .is_some_and(|state| state.network_enabled);
-                execute_platform_network_activation(platform, &plan)
-                    .map(|()| plan)
-                    .inspect_err(|_| {
-                        if network_was_enabled {
-                            log_service_error(
-                                "client-core-service preserved existing network after reconfiguration failure",
-                            );
-                        } else {
-                            let _ = platform_transition::disable_network(platform);
-                        }
-                    })
+                execute_platform_network_activation_safely(platform, &plan).map(|_| plan)
             },
         ),
         Err(error) => Err(error),
@@ -4303,7 +4272,6 @@ where
                 if session_auth_invalid_error(&error) || error_message.contains("session expired") {
                     runtime.apply_logout_state();
                 }
-                let _ = clear_session_virtual_ip();
                 ControlNetworkActivationCommit {
                     state: state_with_error(runtime.state(), error_message),
                     rollback_platform: true,
@@ -4318,7 +4286,6 @@ where
             if session_auth_invalid_error(&error) || error_message.contains("session expired") {
                 runtime.apply_logout_state();
             }
-            let _ = clear_session_virtual_ip();
             ControlNetworkActivationCommit {
                 state: state_with_error(runtime.state(), error_message),
                 rollback_platform: false,
@@ -5229,7 +5196,7 @@ fn execute_downstream_network_assignment(
             }
             prepared.and_then(|assignment| {
                 if let Some(activation) = assignment.activation.as_ref() {
-                    execute_platform_network_activation(platform, activation)?;
+                    execute_platform_network_activation_safely(platform, activation)?;
                 }
                 Ok(assignment)
             })
@@ -5252,8 +5219,6 @@ fn execute_downstream_network_assignment(
                 log_service_error(
                     "client-core-service preserved existing network after downstream reconcile failure",
                 );
-            } else {
-                let _ = disable_platform_network_serialized();
             }
         }
     }
@@ -5268,7 +5233,7 @@ fn execute_downstream_network_assignment(
                 .and_then(|assignment| assignment.activation.as_ref())
                 .is_some();
             let committed = match commit_downstream_network_assignment(runtime, prepared) {
-                Ok(()) => (runtime.state().clone(), false),
+                Ok(()) => runtime.state().clone(),
                 Err(error) => {
                     log_service_error(format!(
                         "client-core-service downstream network commit failed (platform_applied={platform_applied}): {error:#}"
@@ -5276,10 +5241,7 @@ fn execute_downstream_network_assignment(
                     // If the platform activation succeeded, do NOT rollback — the adapter
                     // is already configured. A newer event may have changed the session,
                     // but that event will trigger its own activation.
-                    (
-                        state_with_error(runtime.state(), error.to_string()),
-                        false,
-                    )
+                    state_with_error(runtime.state(), error.to_string())
                 }
             };
             Ok(committed)
@@ -5293,18 +5255,7 @@ fn execute_downstream_network_assignment(
         );
         return Ok(runtime.snapshot().state);
     }
-    let (state, rollback_platform) = committed.unwrap();
-    if rollback_platform {
-        log_service_error("client-core-service rolled back failed downstream network commit");
-        if network_was_enabled {
-            log_service_error(
-                "client-core-service preserved existing network after downstream commit rollback",
-            );
-        } else {
-            let _ = disable_platform_network_serialized();
-        }
-    }
-    Ok(state)
+    Ok(committed.unwrap())
 }
 
 fn deactivate_control_network() {
@@ -5464,18 +5415,6 @@ fn persist_connect_plan_store(store: &PersistedConnectPlanStore) -> Result<()> {
         .lock()
         .expect("runtime connect plan store mutex poisoned") = store.clone();
     Ok(())
-}
-
-fn clear_session_virtual_ip() -> Result<()> {
-    let Ok(mut session) = load_session() else {
-        return Ok(());
-    };
-    if session.access_token.trim().is_empty() {
-        let _ = remove_session();
-        return Ok(());
-    }
-    session.virtual_ip = None;
-    persist_session(&session)
 }
 
 fn state_with_error(state: &ClientViewState, error: String) -> ClientViewState {

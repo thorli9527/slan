@@ -765,6 +765,9 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 	if joined["operation"] != "joined" || joined["changedNetworkId"] != "net-1" {
 		t.Fatalf("unexpected joined membership payload: %#v", joined)
 	}
+	if _, exists := joined["networkId"]; exists {
+		t.Fatalf("joined membership payload must not duplicate changedNetworkId as networkId: %#v", joined)
+	}
 	if joined["membershipVersion"] == uint64(0) {
 		t.Fatalf("expected joined membership version, payload=%#v", joined)
 	}
@@ -784,6 +787,9 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 	left := devicePublisher.events[1].Payload
 	if left["operation"] != "left" || left["changedNetworkId"] != "net-1" {
 		t.Fatalf("unexpected left membership payload: %#v", left)
+	}
+	if _, exists := left["networkId"]; exists {
+		t.Fatalf("left membership payload must not duplicate changedNetworkId as networkId: %#v", left)
 	}
 }
 

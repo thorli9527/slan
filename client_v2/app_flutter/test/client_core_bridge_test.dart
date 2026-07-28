@@ -103,6 +103,56 @@ void main() {
     expect(next?.virtualIp, '10.0.0.1');
   });
 
+  test('runtime event does not unlock an in-flight network toggle', () {
+    final pending = ClientViewState.fromJson({
+      'signedIn': true,
+      'networkEnabled': true,
+      'syncing': true,
+      'syncReason': 'enableNetwork',
+      'switchEnabled': false,
+    });
+    final runtime = ClientViewState.fromJson({
+      'signedIn': true,
+      'networkEnabled': false,
+      'syncing': false,
+      'switchEnabled': true,
+    });
+
+    final next = reduceBusinessEvent(
+      pending,
+      {'businessType': ClientBusinessEventType.networkRuntimeChanged},
+      dataState: runtime,
+      snapshotState: runtime,
+      networkToggleInFlight: true,
+    );
+
+    expect(next?.networkEnabled, isTrue);
+    expect(next?.syncing, isTrue);
+    expect(next?.syncReason, 'enableNetwork');
+    expect(next?.switchEnabled, isFalse);
+  });
+
+  test('only terminal network events settle a toggle', () {
+    expect(
+      businessEventSettlesNetworkToggle(
+        ClientBusinessEventType.networkRuntimeChanged,
+      ),
+      isFalse,
+    );
+    expect(
+      businessEventSettlesNetworkToggle(
+        ClientBusinessEventType.networkSwitchFinished,
+      ),
+      isTrue,
+    );
+    expect(
+      businessEventSettlesNetworkToggle(
+        ClientBusinessEventType.networkSwitchFailed,
+      ),
+      isTrue,
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('client login command uses openClientLogin type', () {
@@ -177,6 +227,49 @@ void main() {
     );
     expect(bridge.state.value.userLabel, 'desktop@example.test');
     expect(service.seenMethods, contains('localState'));
+  });
+
+  test('desktop browser dispatch coalesces concurrent commands', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final releaseDispatch = Completer<void>();
+    var dispatchCount = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'dispatch');
+      dispatchCount += 1;
+      await releaseDispatch.future;
+      return {
+        'signedIn': true,
+        'deviceId': 'desktop-device-1',
+        'networkEnabled': false,
+        'syncing': false,
+        'switchEnabled': true,
+      };
+    });
+    addTearDown(() {
+      if (!releaseDispatch.isCompleted) {
+        releaseDispatch.complete();
+      }
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    var openCount = 0;
+    final bridge = MethodChannelClientCoreBridge(
+      openExternalUrl: (_) async => openCount += 1,
+    );
+    _closeBridgeOnTearDown(bridge);
+    const command = ClientCommand(ClientCommandType.openClientLogin);
+
+    final first = bridge.dispatch(command);
+    final second = bridge.dispatch(command);
+    await Future<void>.delayed(Duration.zero);
+    expect(dispatchCount, 1);
+
+    releaseDispatch.complete();
+    await Future.wait([first, second]);
+    expect(dispatchCount, 1);
+    expect(openCount, 1);
   });
 
   test('desktop Web Console falls back to direct URL for device session',

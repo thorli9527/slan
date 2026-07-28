@@ -37,6 +37,37 @@ void main() {
     expect(find.text('tester@example.com'), findsOneWidget);
   });
 
+  testWidgets('browser login blocks repeated clicks while opening',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final bridge = _UiTestBridge(
+        initialState: ClientViewState.initial(),
+        activationDelay: Duration.zero,
+        browserCommandDelay: const Duration(milliseconds: 100),
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      final button = find.byKey(const Key('desktop-browser-login'));
+      await tester.tap(button);
+      await tester.tap(button);
+      await tester.pump();
+
+      expect(bridge.browserCommandCount, 1);
+      expect(find.text('正在打开'), findsOneWidget);
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+
+      await tester.pump(bridge.browserCommandDelay);
+      await tester.pumpAndSettle();
+      expect(find.text('打开浏览器登录'), findsOneWidget);
+      expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('desktop network control omits enabled status label',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -538,6 +569,7 @@ class _UiTestBridge implements ClientCoreBridge {
     this.disableError,
     this.inviteError,
     this.dispatchStartDelay = Duration.zero,
+    this.browserCommandDelay = Duration.zero,
   })  : _state = ValueNotifier<ClientViewState>(initialState),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -553,10 +585,12 @@ class _UiTestBridge implements ClientCoreBridge {
   final String? disableError;
   final String? inviteError;
   final Duration dispatchStartDelay;
+  final Duration browserCommandDelay;
   ClientCommandType? lastCommand;
   Map<String, Object?>? lastPayload;
   int androidPrepareCount = 0;
   int networkCommandCount = 0;
+  int browserCommandCount = 0;
   final List<String> acceptedInviteCodes = [];
   String serverUrl = 'http://127.0.0.1:28080';
 
@@ -595,6 +629,11 @@ class _UiTestBridge implements ClientCoreBridge {
 
   @override
   Future<void> dispatch(ClientCommand command) async {
+    if (command.type == ClientCommandType.openClientLogin ||
+        command.type == ClientCommandType.openWebConsole) {
+      browserCommandCount += 1;
+      await Future<void>.delayed(browserCommandDelay);
+    }
     if (command.type == ClientCommandType.enableNetwork ||
         command.type == ClientCommandType.disableNetwork) {
       networkCommandCount += 1;

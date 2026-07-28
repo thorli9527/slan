@@ -21,8 +21,7 @@ use crate::{
     network_event::{
         apply_device_network_membership, network_event_business_data,
         network_event_targets_session, network_event_topics_for_session,
-        synthetic_snapshot_event_id, DeviceNetworkMembershipChangedPayload, NetworkEventEnvelope,
-        NetworkEventType,
+        synthetic_snapshot_event_id, NetworkEventEnvelope, NetworkEventType,
     },
     network_event_apply::ApplyResult,
     network_event_projection::{
@@ -454,11 +453,21 @@ fn ingest_downstream_publish(
         );
         return Ok(());
     }
-    if try_ingest_device_network_membership_changed(payload, runtime, state_notifier)? {
-        log_service_error(
-            "client-core-service consumed downstream control message as device_network_membership_changed",
-        );
-        return Ok(());
+    match try_ingest_device_network_membership_changed(payload, runtime, task_queue, state_notifier)
+    {
+        Ok(true) => {
+            log_service_error(
+                "client-core-service consumed downstream control message as device_network_membership_changed",
+            );
+            return Ok(());
+        }
+        Ok(false) => {}
+        Err(error) => {
+            log_service_error(format!(
+                "client-core-service ignored invalid device_network_membership_changed message: {error}"
+            ));
+            return Ok(());
+        }
     }
     if try_ingest_device_ip_reassigned(payload, runtime, state_notifier)? {
         log_service_error(
@@ -608,6 +617,7 @@ fn ingest_downstream_publish(
 fn try_ingest_device_network_membership_changed(
     payload: &[u8],
     runtime: &RuntimeActorHandle,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
     state_notifier: &Arc<RuntimeEventHub>,
 ) -> Result<bool, String> {
     let value: serde_json::Value =
@@ -624,7 +634,7 @@ fn try_ingest_device_network_membership_changed(
         return Ok(true);
     }
     let delivery_id = downstream_message_id(&value);
-    let event: DeviceNetworkMembershipChangedPayload = serde_json::from_value(
+    let event = crate::network_event::decode_device_network_membership_payload(
         value
             .get("payload")
             .cloned()
@@ -690,7 +700,7 @@ fn try_ingest_device_network_membership_changed(
             }
         }
     }
-    let state = runtime
+    let mut state = runtime
         .call_named_if_revision(
             "network.membership.commit",
             delivery_id
@@ -705,6 +715,20 @@ fn try_ingest_device_network_membership_changed(
         )
         .map_err(|err| format!("commit network membership: {err:#}"))?
         .unwrap_or_else(|| runtime.snapshot().state);
+    if state.network_enabled {
+        {
+            let mut queue = task_queue
+                .lock()
+                .map_err(|_| "control task queue mutex poisoned".to_string())?;
+            queue
+                .enqueue_downstream_unacked(
+                    crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
+                    false,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        state = crate::drain_pending_control_tasks(runtime, task_queue);
+    }
     publish_state_business_event_with_extra(
         state_notifier,
         BUSINESS_NETWORK_RUNTIME_CHANGED,

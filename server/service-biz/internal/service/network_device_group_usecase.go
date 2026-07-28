@@ -193,7 +193,6 @@ func (s DeviceGroupService) publishGroupDerivedNetworkMembership(ctx context.Con
 		MessageID: fmt.Sprintf("devgroupnet%d%s", now.UnixMilli(), deviceID),
 		Payload: map[string]any{
 			"deviceId":          deviceID,
-			"networkId":         changedNetworkID,
 			"changedNetworkId":  changedNetworkID,
 			"networkIds":        networkIDs,
 			"membershipVersion": membershipVersion,

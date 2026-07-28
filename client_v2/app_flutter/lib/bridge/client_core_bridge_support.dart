@@ -34,6 +34,11 @@ bool businessEventRequiresStateQuery(String? type,
       type == ClientBusinessEventType.networkSwitchFailed;
 }
 
+bool businessEventSettlesNetworkToggle(String? type) {
+  return type == ClientBusinessEventType.networkSwitchFinished ||
+      type == ClientBusinessEventType.networkSwitchFailed;
+}
+
 Map<String, Object?> businessEventReceivedLogFields(
   String? type, {
   Map<String, Object?>? businessDataMap,
@@ -133,6 +138,7 @@ ClientViewState? reduceBusinessEvent(
   ClientViewState? queriedState,
   required ClientViewState? dataState,
   required ClientViewState? snapshotState,
+  bool networkToggleInFlight = false,
 }) {
   final type = businessEventType(event);
   // The event payload describes the state when the event was published, while
@@ -159,12 +165,40 @@ ClientViewState? reduceBusinessEvent(
         clearVirtualIp: !incoming.networkEnabled,
       );
     case ClientBusinessEventType.networkSwitchFinished:
-    case ClientBusinessEventType.networkRuntimeChanged:
       return incoming.copyWith(
         syncing: false,
         clearSyncReason: true,
         switchEnabled: true,
         clearVirtualIp: !incoming.networkEnabled,
+      );
+    case ClientBusinessEventType.networkRuntimeChanged:
+      if (!networkToggleInFlight) {
+        return incoming.copyWith(
+          syncing: false,
+          clearSyncReason: true,
+          switchEnabled: true,
+          clearVirtualIp: !incoming.networkEnabled,
+        );
+      }
+      final merged = mergeBusinessState(
+        current,
+        incoming,
+        event: event,
+        businessType: type,
+      );
+      // Runtime snapshots can arrive while the platform is still applying the
+      // adapter and routes. Keep the optimistic target and the UI lock until a
+      // terminal switch event (or the command result) settles the operation.
+      return merged.copyWith(
+        networkEnabled: current.networkEnabled,
+        virtualIp: current.virtualIp,
+        syncing: true,
+        syncReason: current.syncReason,
+        switchEnabled: false,
+        notice: current.notice,
+        error: current.error,
+        errorSource: current.errorSource,
+        clearVirtualIp: !current.networkEnabled,
       );
     case ClientBusinessEventType.networkSwitchFailed:
       final error = incoming.error ??

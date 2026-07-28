@@ -123,11 +123,14 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 首次订阅从当前最新事件开始，避免应用启动时重放历史 UI 状态。
   bool _businessEventCursorInitialized = false;
 
-  /// 是否存在正在执行的网络开关操作。
-  bool _networkToggleInFlight = false;
-
   /// 当前网络开关操作上下文。
   NetworkToggleOperation? _networkToggleOperation;
+
+  /// 网络开关是否正在执行。操作上下文本身是唯一状态源。
+  bool get _networkToggleInFlight => _networkToggleOperation != null;
+
+  /// 当前桌面浏览器命令，用于合并连续点击。
+  Future<void>? _desktopBrowserCommandInFlight;
 
   /// 用户是否刚刚主动退出，用于抑制旧 session 事件回写 UI。
   bool _localLogoutRequested = false;
@@ -368,6 +371,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       state: _state.value,
       fields: _commandLogFields(command),
     );
+    if (_usesDesktopBrowserPlugin(command.type)) {
+      await _dispatchDesktopBrowserCommandOnce(command);
+      return;
+    }
     if (command.type == ClientCommandType.openClientLogin) {
       _localLogoutRequested = false;
     }
@@ -414,8 +421,35 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return;
     }
     await _dispatchControlWithFallback(command);
+  }
+
+  /// 串行执行桌面浏览器命令；连续点击复用同一个 Future，不重复打开窗口。
+  Future<void> _dispatchDesktopBrowserCommandOnce(ClientCommand command) {
+    final inFlight = _desktopBrowserCommandInFlight;
+    if (inFlight != null) {
+      ClientUiDiagnostics.unawaitedCriticalLog(
+        'bridge.browser.dispatch.ignoredInFlight',
+        state: _state.value,
+        fields: {'command': command.type.name},
+      );
+      return inFlight;
+    }
+    late final Future<void> operation;
+    operation = _runDesktopBrowserCommand(command).whenComplete(() {
+      if (identical(_desktopBrowserCommandInFlight, operation)) {
+        _desktopBrowserCommandInFlight = null;
+      }
+    });
+    _desktopBrowserCommandInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runDesktopBrowserCommand(ClientCommand command) async {
+    if (command.type == ClientCommandType.openClientLogin) {
+      _localLogoutRequested = false;
+    }
+    await _dispatchControlWithFallback(command);
     if (command.type == ClientCommandType.openClientLogin &&
-        _isDesktopHostPlatform &&
         !_state.value.signedIn) {
       _startDesktopBrowserLoginStateWatch();
     }
@@ -1232,7 +1266,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 清除当前网络切换上下文，并让旧异步回调失效。
   void _clearNetworkToggle() {
     _networkToggleEpoch++;
-    _networkToggleInFlight = false;
     _networkToggleOperation = null;
   }
 
@@ -1391,7 +1424,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
     final previousState = _state.value;
     final epoch = ++_networkToggleEpoch;
-    _networkToggleInFlight = true;
     final targetEnabled = command.type == ClientCommandType.enableNetwork;
     final operation = NetworkToggleOperation(
       epoch: epoch,
@@ -1592,7 +1624,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (!_isCurrentNetworkToggle(operation)) {
       return;
     }
-    _networkToggleInFlight = false;
     _networkToggleOperation = null;
     _networkToggleEpoch++;
   }
@@ -2489,9 +2520,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     final dataState = _eventPayloadState(event, 'businessData');
     final snapshotState = _eventPayloadState(event, 'snapshot');
     final type = businessEventType(event);
-    if (type == ClientBusinessEventType.networkSwitchFinished ||
-        type == ClientBusinessEventType.networkRuntimeChanged ||
-        type == ClientBusinessEventType.networkSwitchFailed) {
+    if (businessEventSettlesNetworkToggle(type)) {
       _settleNetworkToggleFromEvent();
     }
 
@@ -2501,6 +2530,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       queriedState: queriedState,
       dataState: dataState,
       snapshotState: snapshotState,
+      networkToggleInFlight: _networkToggleInFlight,
     );
   }
 
@@ -2568,10 +2598,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// 收到平台或业务事件后，结算当前网络开关操作。
   void _settleNetworkToggleFromEvent() {
-    if (!_networkToggleInFlight && _networkToggleOperation == null) {
+    if (_networkToggleOperation == null) {
       return;
     }
-    _networkToggleInFlight = false;
     _networkToggleOperation = null;
     _networkToggleEpoch++;
   }
