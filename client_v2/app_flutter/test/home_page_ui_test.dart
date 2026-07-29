@@ -144,7 +144,7 @@ void main() {
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
-      await tester.binding.setSurfaceSize(const Size(480, 230));
+      await tester.binding.setSurfaceSize(const Size(480, 270));
       final bridge = _UiTestBridge(
         initialState: const ClientViewState(
           signedIn: true,
@@ -164,8 +164,8 @@ void main() {
       final logout = find.text('退出登录');
       expect(console, findsOneWidget);
       expect(logout, findsOneWidget);
-      expect(tester.getBottomRight(console).dy, lessThanOrEqualTo(230));
-      expect(tester.getBottomRight(logout).dy, lessThanOrEqualTo(230));
+      expect(tester.getBottomRight(console).dy, lessThanOrEqualTo(270));
+      expect(tester.getBottomRight(logout).dy, lessThanOrEqualTo(270));
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;

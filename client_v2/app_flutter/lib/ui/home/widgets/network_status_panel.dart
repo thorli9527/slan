@@ -36,7 +36,7 @@ class SignedInStatusPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: EdgeInsets.fromLTRB(16, desktop ? 13 : 10, 16, 12),
+      padding: EdgeInsets.fromLTRB(16, desktop ? 10 : 10, 16, 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
