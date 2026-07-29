@@ -281,7 +281,7 @@ void main() {
     }
   });
 
-  testWidgets('switch stays enabled while activating and shows assigned ip',
+  testWidgets('switch shows ip only after network activation completes',
       (tester) async {
     final bridge = _UiTestBridge(
       initialState: const ClientViewState(
@@ -300,7 +300,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_networkSwitch(tester).value, isFalse);
-    expect(find.text('10.0.0.10'), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsNothing);
 
     await tester.tap(find.byKey(const Key('network-switch')));
     await tester.pump();
@@ -308,7 +309,7 @@ void main() {
     expect(bridge.lastCommand, ClientCommandType.enableNetwork);
     expect(_networkSwitch(tester).value, isTrue);
     expect(_networkSwitch(tester).onChanged, isNull);
-    expect(find.text('10.0.0.10'), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsNothing);
 
     await tester.pump(bridge.activationDelay);
     await tester.pumpAndSettle();
@@ -384,7 +385,7 @@ void main() {
 
     expect(_networkSwitch(tester).value, isFalse);
     expect(_networkSwitch(tester).onChanged, isNotNull);
-    expect(find.text('待分配'), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
   });
 
   testWidgets('server disabled activation failure shows admin message',

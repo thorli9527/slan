@@ -305,7 +305,8 @@ fn stale_network_activation_result_preserves_current_runtime_state() {
     let state = committed.state;
 
     assert_eq!(state.device_id.as_deref(), Some("new-device"));
-    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.9"));
+    assert_eq!(state.virtual_ip, None);
+    assert!(!state.network_enabled);
     assert!(state.error.is_none());
     assert!(!committed.rollback_platform);
 }
@@ -553,7 +554,7 @@ fn failed_platform_deactivation_preserves_enabled_runtime_state() {
 }
 
 #[test]
-fn disabled_network_preserves_assigned_device_ip() {
+fn disabled_network_hides_assigned_device_ip() {
     let mut runtime = ClientRuntime::new(TestPlatformNetwork);
     runtime.apply_assigned_ip_state(AssignedIpPayload {
         virtual_ip: "10.0.0.2".to_string(),
@@ -563,7 +564,7 @@ fn disabled_network_preserves_assigned_device_ip() {
     let state = runtime.apply_network_disabled_state();
 
     assert!(!state.network_enabled);
-    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
+    assert_eq!(state.virtual_ip, None);
 
     let state = runtime
         .dispatch(ClientCommand::ApplyPlatformRuntimeState(
@@ -571,7 +572,7 @@ fn disabled_network_preserves_assigned_device_ip() {
         ))
         .expect("apply disabled platform runtime state");
     assert!(!state.network_enabled);
-    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
+    assert_eq!(state.virtual_ip, None);
 }
 
 #[test]
@@ -595,7 +596,7 @@ fn sync_assigned_ip_does_not_create_empty_session() {
         .is_none());
     let state = runtime.apply_assigned_ip_state(payload);
 
-    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
+    assert_eq!(state.virtual_ip, None);
     assert!(
         crate::session_store::load_session().is_err(),
         "SyncAssignedIp must not create an empty persisted session"

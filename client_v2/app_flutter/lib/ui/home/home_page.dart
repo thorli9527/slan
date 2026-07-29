@@ -587,6 +587,12 @@ class _HomePageState extends State<HomePage> {
 
   /// 归一化当前虚拟 IP 展示文案。
   String _ipText(ClientViewState state) {
+    if (!state.networkEnabled) {
+      return '未启用';
+    }
+    if (state.syncing) {
+      return '启用中';
+    }
     final virtualIp = state.virtualIp?.trim();
     if (!state.signedIn || virtualIp == null || virtualIp.isEmpty) {
       return '待分配';
