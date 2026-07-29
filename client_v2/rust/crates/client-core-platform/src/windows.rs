@@ -83,6 +83,7 @@ struct WintunRuntime {
     _library: Library,
     handle: WintunAdapterHandle,
     session: WintunSessionHandle,
+    start_session: WintunStartSessionFunc,
     end_session: WintunEndSessionFunc,
     close_adapter: WintunCloseAdapterFunc,
     receive_packet: WintunReceivePacketFunc,
@@ -455,7 +456,43 @@ fn ensure_installed_adapter_ready(interface_name: &str) -> Result<()> {
     debug_log(&format!("ensure_installed_adapter_ready: enabling '{interface_name}'"));
     let result = run_powershell(&script);
     debug_log(&format!("ensure_installed_adapter_ready: result={result:?}"));
-    result.map(|_| ())
+    let output = result?;
+    if adapter_enable_requires_session_restart(&output) {
+        restart_wintun_session().context("restart Wintun session after adapter enable")?;
+    }
+    Ok(())
+}
+
+fn adapter_enable_requires_session_restart(output: &str) -> bool {
+    output
+        .split_whitespace()
+        .find_map(|item| item.strip_prefix("before="))
+        .is_some_and(|status| !status.eq_ignore_ascii_case("up"))
+}
+
+fn restart_wintun_session() -> Result<()> {
+    let runtime = WINTUN_RUNTIME.get_or_init(|| Mutex::new(None));
+    let mut runtime = runtime.lock().expect("wintun runtime mutex poisoned");
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("Wintun runtime is not ready"))?;
+    let _ = runtime.data_plane.take();
+    if !runtime.session.is_null() {
+        unsafe {
+            (runtime.end_session)(runtime.session);
+        }
+        runtime.session = std::ptr::null_mut();
+    }
+    let session = unsafe { (runtime.start_session)(runtime.handle, 0x400000) };
+    if session.is_null() {
+        bail!(
+            "failed to restart Wintun session: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    runtime.session = session;
+    debug_log("restart_wintun_session: session restarted after adapter enable");
+    Ok(())
 }
 
 fn ensure_adapter_created(interface_name: &str) -> Result<()> {
@@ -569,6 +606,7 @@ fn ensure_adapter_created(interface_name: &str) -> Result<()> {
         _library: library,
         handle,
         session,
+        start_session,
         end_session,
         close_adapter,
         receive_packet,
@@ -4181,11 +4219,15 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
          New-NetIPAddress -InterfaceIndex $idx -IPAddress $expected -PrefixLength {} -AddressFamily IPv4 -ErrorAction Stop | Out-Null; \
          $applied = $false; \
          for ($attempt = 0; $attempt -lt 40; $attempt++) {{ \
-           $applied = $null -ne (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected }} | Select-Object -First 1); \
+           $applied = $null -ne (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected -and $_.AddressState -eq 'Preferred' }} | Select-Object -First 1); \
            if ($applied) {{ break }}; \
            Start-Sleep -Milliseconds 250; \
          }}; \
-         if (-not $applied) {{ throw \"SLAN adapter IP '$expected' did not become active\" }}; \
+         if (-not $applied) {{ \
+           $state = (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected }} | Select-Object -First 1).AddressState; \
+           throw \"SLAN adapter IP '$expected' did not become usable (state=$state)\" \
+         }}; \
+         Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -like '169.254.*' }} | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; \
          Write-Output $expected",
         virtual_ip,
         escape_powershell_single_quoted(interface_name),
@@ -4222,31 +4264,40 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
 fn verify_adapter_ip(interface_name: &str, virtual_ip: &str) -> Result<()> {
     debug_log(&format!("verify_adapter_ip: checking '{interface_name}' for {virtual_ip}"));
     // Use PowerShell for all verification — netsh is unreliable on Wintun adapters.
-    // Note: Wintun adapters show "Disconnected" or "Down" until the Wintun session is
-    // started (which happens later in configure_relay). So we only verify:
-    // 1. The adapter exists
-    // 2. The IP address is configured
-    // We do NOT check connection status here.
+    // The address must be Preferred. A Tentative address exists in the store but
+    // cannot be selected as a source address or carry overlay traffic.
     let script = format!(
         "$a = Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue; \
          if (-not $a) {{ throw 'adapter not found' }}; \
          $status = $a.Status.ToString(); \
          $admin = $a.AdminStatus.ToString(); \
-         $ips = (Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ','; \
-         Write-Output \"$admin|$status|$ips\"",
+         $addresses = Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue; \
+         $ips = ($addresses.IPAddress) -join ','; \
+         $expectedState = ($addresses | Where-Object {{ $_.IPAddress -eq '{}' }} | Select-Object -First 1).AddressState; \
+         Write-Output \"$admin|$status|$ips|$expectedState\"",
         escape_powershell_single_quoted(interface_name),
         escape_powershell_single_quoted(interface_name),
+        escape_powershell_single_quoted(virtual_ip),
     );
     let output = run_powershell(&script).context("verify Wintun adapter IP via PowerShell")?;
-    let parts: Vec<&str> = output.trim().splitn(3, '|').collect();
+    let parts: Vec<&str> = output.trim().splitn(4, '|').collect();
     let admin = parts.first().copied().unwrap_or("");
     let status = parts.get(1).copied().unwrap_or("");
     let ips = parts.get(2).copied().unwrap_or("");
-    debug_log(&format!("verify_adapter_ip: admin={admin} status={status} ips=[{ips}]"));
+    let address_state = parts.get(3).copied().unwrap_or("");
+    debug_log(&format!(
+        "verify_adapter_ip: admin={admin} status={status} ips=[{ips}] address_state={address_state}"
+    ));
     if !output_contains_exact_ipv4(ips, virtual_ip) {
         bail!(
             "SLAN local network adapter '{interface_name}' expected IP '{virtual_ip}' but it was not applied. \
              admin={admin} status={status} Get-NetIPAddress returned: [{ips}]"
+        );
+    }
+    if !address_state.eq_ignore_ascii_case("preferred") {
+        bail!(
+            "SLAN local network adapter '{interface_name}' IP '{virtual_ip}' is not usable. \
+             admin={admin} status={status} addressState={address_state}"
         );
     }
     debug_log("verify_adapter_ip: OK");
@@ -4569,7 +4620,8 @@ fn parse_cidr_for_netsh(cidr: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        detach_udp_relay_sessions, direct_udp_control_packet, direct_udp_control_payload,
+        adapter_enable_requires_session_restart, detach_udp_relay_sessions,
+        direct_udp_control_packet, direct_udp_control_payload,
         direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
         escape_netsh_arg, is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply,
         mark_ready_transports, normalize_direct_udp_address, output_contains_exact_ipv4,
@@ -4582,6 +4634,20 @@ mod tests {
         DIRECT_UDP_PROBE_PACKET, MAX_DIRECT_UDP_PROBE_INTERVAL, MIN_DIRECT_UDP_PROBE_INTERVAL,
     };
     use crate::windows::parse_rfc3339_utc_ms;
+
+    #[test]
+    fn restarts_wintun_session_only_after_adapter_state_transition() {
+        assert!(adapter_enable_requires_session_restart(
+            "before=Down after=Up"
+        ));
+        assert!(adapter_enable_requires_session_restart(
+            "before=Disabled after=Up"
+        ));
+        assert!(!adapter_enable_requires_session_restart(
+            "before=Up after=Up"
+        ));
+        assert!(!adapter_enable_requires_session_restart("unexpected output"));
+    }
     use client_core::{
         ipv4_destination,
         relay_frame::{base64_decode, encode_slan_relay_data_frame},
