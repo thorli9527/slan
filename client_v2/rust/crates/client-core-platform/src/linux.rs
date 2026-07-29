@@ -551,6 +551,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
                 }
             }
             let _ = run_ip(&["addr", "flush", "dev", &interface_name]);
+            let _ = run_ip(&["link", "set", "dev", &interface_name, "down"]);
         }
         runtime.network_enabled = false;
         runtime.virtual_ip = None;
