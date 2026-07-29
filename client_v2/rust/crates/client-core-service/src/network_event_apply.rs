@@ -39,6 +39,13 @@ pub fn apply_network_event(
     } else {
         state.bind_network_id(&envelope.network_id);
     }
+    if envelope.event_type == NetworkEventType::NetworkVersion {
+        if envelope.version <= state.version {
+            return Ok(ApplyResult::IgnoredStale);
+        }
+        state.sync_status = NetworkSyncStatus::OutOfSync;
+        return Ok(ApplyResult::NeedsSnapshot);
+    }
     let versionless_runtime_event = is_versionless_runtime_event(&envelope);
     if !versionless_runtime_event {
         match check_version(state, envelope.version) {
@@ -55,6 +62,7 @@ pub fn apply_network_event(
     }
 
     match envelope.event_type {
+        NetworkEventType::NetworkVersion => unreachable!("network version handled above"),
         NetworkEventType::NetworkSnapshot => {
             let payload: NetworkSnapshotPayload = serde_json::from_value(envelope.payload)?;
             apply_snapshot(state, payload);
@@ -330,5 +338,54 @@ mod tests {
                 .online,
             true
         );
+    }
+
+    #[test]
+    fn ignores_network_version_heartbeat_when_version_is_unchanged() {
+        let mut state = RuntimeNetworkState::default();
+        state.bind_network_id("net-1");
+        state.version = 9;
+
+        let result = apply_network_event(
+            &mut state,
+            NetworkEventEnvelope {
+                r#type: "network_event".to_string(),
+                network_id: "net-1".to_string(),
+                version: 9,
+                event_id: "net-1-network-version-9".to_string(),
+                event_type: NetworkEventType::NetworkVersion,
+                occurred_at: 9,
+                payload: serde_json::json!({ "configVersion": 9 }),
+            },
+        )
+        .expect("apply unchanged network version");
+
+        assert_eq!(result, ApplyResult::IgnoredStale);
+        assert_eq!(state.version, 9);
+    }
+
+    #[test]
+    fn newer_network_version_heartbeat_requires_snapshot() {
+        let mut state = RuntimeNetworkState::default();
+        state.bind_network_id("net-1");
+        state.version = 9;
+
+        let result = apply_network_event(
+            &mut state,
+            NetworkEventEnvelope {
+                r#type: "network_event".to_string(),
+                network_id: "net-1".to_string(),
+                version: 10,
+                event_id: "net-1-network-version-10".to_string(),
+                event_type: NetworkEventType::NetworkVersion,
+                occurred_at: 10,
+                payload: serde_json::json!({ "configVersion": 10 }),
+            },
+        )
+        .expect("apply newer network version");
+
+        assert_eq!(result, ApplyResult::NeedsSnapshot);
+        assert_eq!(state.sync_status, NetworkSyncStatus::OutOfSync);
+        assert_eq!(state.version, 9);
     }
 }

@@ -9,13 +9,14 @@ import (
 )
 
 type NetworkCoreService struct {
-	Users          repository.UserRepository
-	Devices        repository.DeviceRepository
-	Networks       repository.NetworkRepository
-	Ops            repository.OpsRepository
-	EventPublisher NetworkEventPublisher
-	NewNetworkID   func() string
-	Now            func() time.Time
+	Users              repository.UserRepository
+	Devices            repository.DeviceRepository
+	Networks           repository.NetworkRepository
+	Ops                repository.OpsRepository
+	EventPublisher     NetworkEventPublisher
+	VersionPushTracker *NetworkVersionPushTracker
+	NewNetworkID       func() string
+	Now                func() time.Time
 }
 
 type NetworkInviteService struct {

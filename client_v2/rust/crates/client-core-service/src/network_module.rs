@@ -285,8 +285,19 @@ pub(crate) fn apply_network_module_event(
             let payload: NetworkSnapshotPayload = serde_json::from_value(envelope.payload.clone())?;
             drop(guard);
             replace_network_module_from_snapshot(network_id, local_device_id, &payload);
+            if envelope.version > 0 {
+                if let Some(config) = module()
+                    .lock()
+                    .expect("client network module mutex poisoned")
+                    .configs
+                    .get_mut(network_id)
+                {
+                    config.config_version = Some(envelope.version as i64);
+                }
+            }
             return Ok(());
         }
+        NetworkEventType::NetworkVersion => {}
         NetworkEventType::MemberAdded | NetworkEventType::MemberUpdated => {
             let payload: NetworkEventMemberPayload =
                 serde_json::from_value(envelope.payload.clone())?;
@@ -360,6 +371,9 @@ pub(crate) fn apply_network_module_event(
             remove_device_group(config, &payload.group_id);
         }
         NetworkEventType::PeerPathChanged => {}
+    }
+    if envelope.version > 0 {
+        config.config_version = Some(envelope.version as i64);
     }
     Ok(())
 }

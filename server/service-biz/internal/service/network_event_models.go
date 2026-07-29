@@ -5,6 +5,7 @@ import "context"
 type NetworkEventType string
 
 const (
+	NetworkEventVersion            NetworkEventType = "network_version"
 	NetworkEventSnapshot           NetworkEventType = "network_snapshot"
 	NetworkEventMemberAdded        NetworkEventType = "member_added"
 	NetworkEventMemberRemoved      NetworkEventType = "member_removed"

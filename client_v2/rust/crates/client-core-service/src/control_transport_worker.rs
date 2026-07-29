@@ -792,6 +792,20 @@ fn try_ingest_network_event(
         return Ok(true);
     }
     if !network_event_targets_active_runtime(&envelope.network_id, active_network_id) {
+        if envelope.event_type == NetworkEventType::NetworkVersion
+            && crate::network_module::network_module_snapshot()
+                .configs
+                .iter()
+                .find(|config| config.network_id.trim() == envelope.network_id.trim())
+                .and_then(|config| config.config_version)
+                .is_some_and(|version| version >= envelope.version as i64)
+        {
+            log_service_error(format!(
+                "client-core-service ignored unchanged inactive network version networkId={} version={}",
+                envelope.network_id, envelope.version
+            ));
+            return Ok(true);
+        }
         let local_device_id = session
             .device_id
             .as_deref()

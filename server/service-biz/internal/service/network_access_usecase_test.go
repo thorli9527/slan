@@ -31,7 +31,11 @@ func (s *networkAccessTestUsers) SaveUser(_ context.Context, item model.User) er
 }
 
 func (s *networkAccessTestUsers) ListUsers(context.Context) ([]model.User, error) {
-	return nil, nil
+	items := make([]model.User, 0, len(s.users))
+	for _, item := range s.users {
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 type networkAccessTestDevices struct {

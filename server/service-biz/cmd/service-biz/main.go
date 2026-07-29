@@ -17,9 +17,36 @@ func main() {
 	if routeSetConsumesMQTTUpstream(routeSet) {
 		go startMQTTControlUpConsumer(server)
 	}
+	if routeSetPublishesNetworkVersions(routeSet) {
+		go startNetworkVersionPublisher(server)
+	}
 	log.Printf("service-biz listening on %s routeSet=%s", addr, routeSet)
 	if err := http.ListenAndServe(addr, server.RoutesFor(routeSet)); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func routeSetPublishesNetworkVersions(routeSet string) bool {
+	return routeSet == serviceapp.RouteSetAll || routeSet == serviceapp.RouteSetApp
+}
+
+func startNetworkVersionPublisher(server *serviceapp.Server) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		result, err := server.Container().Services.Network.CoreAccess.PushNetworkVersionHeartbeats(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("periodic network version push partial failure: %v", err)
+		}
+		log.Printf(
+			"periodic network version push scanned=%d eligible=%d published=%d skippedUnchanged=%d",
+			result.ScannedNetworks,
+			result.EligibleNetworks,
+			result.PublishedNetworks,
+			result.SkippedUnchanged,
+		)
 	}
 }
 

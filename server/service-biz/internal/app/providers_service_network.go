@@ -9,13 +9,14 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 	devicePublisher := servicepkg.NewDeviceControlPublisher(deps.mqttConfig())
 	return NetworkServices{
 		CoreAccess: servicepkg.NetworkCoreService{
-			Users:          repos.Users,
-			Devices:        repos.Devices,
-			Networks:       repos.Networks,
-			Ops:            repos.Ops,
-			EventPublisher: eventPublisher,
-			NewNetworkID:   ids.NewNetworkID,
-			Now:            deps.now(),
+			Users:              repos.Users,
+			Devices:            repos.Devices,
+			Networks:           repos.Networks,
+			Ops:                repos.Ops,
+			EventPublisher:     eventPublisher,
+			VersionPushTracker: servicepkg.NewNetworkVersionPushTracker(),
+			NewNetworkID:       ids.NewNetworkID,
+			Now:                deps.now(),
 		},
 		InviteManagement: servicepkg.NetworkInviteService{
 			Users:           repos.Users,
