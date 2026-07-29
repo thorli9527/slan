@@ -128,7 +128,7 @@ ClientViewState mergeBusinessState(
     trafficRxBytesPerMinute: incoming.trafficRxBytesPerMinute,
     trafficUpdatedAtMs: incoming.trafficUpdatedAtMs,
     clearSyncReason: incoming.syncReason == null,
-    clearVirtualIp: !incoming.networkEnabled,
+    clearVirtualIp: !incoming.signedIn,
   );
 }
 
@@ -162,14 +162,14 @@ ClientViewState? reduceBusinessEvent(
         switchEnabled: incoming.switchEnabled,
         notice: incoming.notice,
         error: incoming.error,
-        clearVirtualIp: !incoming.networkEnabled,
+        clearVirtualIp: !incoming.signedIn,
       );
     case ClientBusinessEventType.networkSwitchFinished:
       return incoming.copyWith(
         syncing: false,
         clearSyncReason: true,
         switchEnabled: true,
-        clearVirtualIp: !incoming.networkEnabled,
+        clearVirtualIp: !incoming.signedIn,
       );
     case ClientBusinessEventType.networkRuntimeChanged:
       if (!networkToggleInFlight) {
@@ -177,7 +177,7 @@ ClientViewState? reduceBusinessEvent(
           syncing: false,
           clearSyncReason: true,
           switchEnabled: true,
-          clearVirtualIp: !incoming.networkEnabled,
+          clearVirtualIp: !incoming.signedIn,
         );
       }
       final merged = mergeBusinessState(
@@ -198,7 +198,7 @@ ClientViewState? reduceBusinessEvent(
         notice: current.notice,
         error: current.error,
         errorSource: current.errorSource,
-        clearVirtualIp: !current.networkEnabled,
+        clearVirtualIp: !current.signedIn,
       );
     case ClientBusinessEventType.networkSwitchFailed:
       final error = incoming.error ??
@@ -213,7 +213,7 @@ ClientViewState? reduceBusinessEvent(
         switchEnabled: true,
         error: error,
         errorSource: ClientErrorSource.networkSwitch,
-        clearVirtualIp: !incoming.networkEnabled,
+        clearVirtualIp: !incoming.signedIn,
       );
     case ClientBusinessEventType.controlSyncChanged:
     case ClientBusinessEventType.stateChanged:

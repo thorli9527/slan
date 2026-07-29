@@ -94,15 +94,15 @@ class ClientViewState {
 
   /// 从本地服务或移动端内嵌服务返回的 JSON 解析 UI 状态。
   ///
-  /// 服务端在网络未启用时可能仍保留历史虚拟 IP；这里仅在
-  /// [networkEnabled] 为 true 时展示虚拟 IP，避免 UI 显示过期地址。
+  /// 设备专属 IP 独立于网络成员关系和启用状态。已登录设备即使尚未
+  /// 加入网络或暂时停用虚拟网卡，也应保留服务端分配的 IP。
   factory ClientViewState.fromJson(Map<String, Object?> json) {
     final networkEnabled = json['networkEnabled'] == true;
     return ClientViewState(
       signedIn: json['signedIn'] == true,
       userLabel: json['userLabel'] as String?,
       deviceId: json['deviceId'] as String?,
-      virtualIp: networkEnabled ? _virtualIp(json['virtualIp']) : null,
+      virtualIp: _virtualIp(json['virtualIp']),
       networkEnabled: networkEnabled,
       syncing: json['syncing'] == true,
       syncReason: json['syncReason'] as String?,

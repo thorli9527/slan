@@ -532,7 +532,7 @@ void main() {
         return {
           'accepted': true,
           'state': {
-            'signedIn': false,
+            'signedIn': true,
             'networkEnabled': true,
             'virtualIp': '10.0.0.44',
             'syncing': false,
@@ -550,7 +550,7 @@ void main() {
           'revision': 1,
           'businessType': ClientBusinessEventType.networkRuntimeChanged,
           'businessData': {
-            'signedIn': false,
+            'signedIn': true,
             'networkEnabled': true,
             'virtualIp': '10.0.0.44',
             'syncing': false,
@@ -558,7 +558,7 @@ void main() {
             'messageType': 'platform_runtime_state',
           },
           'snapshot': {
-            'signedIn': false,
+            'signedIn': true,
             'networkEnabled': true,
             'virtualIp': '10.0.0.44',
             'syncing': false,
@@ -1697,18 +1697,18 @@ void main() {
             'networkEnabled': false,
             'syncing': false,
             'switchEnabled': true,
-            'virtualIp': null,
+            'virtualIp': '10.0.0.10',
           },
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'localState',
+        expectedMethod: 'start',
         body: {
           'signedIn': true,
           'networkEnabled': false,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': null,
+          'virtualIp': '10.0.0.10',
         },
       ),
       _ServiceReply(
@@ -1718,7 +1718,7 @@ void main() {
           'networkEnabled': false,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': null,
+          'virtualIp': '10.0.0.10',
         },
       ),
     ]);
@@ -1740,7 +1740,7 @@ void main() {
     expect(bridge.state.value.syncing, isTrue);
     expect(bridge.state.value.switchEnabled, isFalse);
     expect(bridge.state.value.networkEnabled, isFalse);
-    expect(bridge.state.value.virtualIp, isNull);
+    expect(bridge.state.value.virtualIp, '10.0.0.10');
 
     await _waitFor(
       () => bridge.state.value.syncing == false,
@@ -1748,7 +1748,7 @@ void main() {
     );
     expect(bridge.state.value.switchEnabled, isTrue);
     expect(bridge.state.value.networkEnabled, isFalse);
-    expect(bridge.state.value.virtualIp, isNull);
+    expect(bridge.state.value.virtualIp, '10.0.0.10');
   });
 
   test('enable failure restores switch', () async {
@@ -2063,7 +2063,7 @@ void main() {
     );
 
     expect(bridge.state.value.networkEnabled, isFalse);
-    expect(bridge.state.value.virtualIp, isNull);
+    expect(bridge.state.value.virtualIp, '10.0.0.10');
     expect(bridge.state.value.switchEnabled, isFalse);
 
     await _waitFor(
@@ -2167,7 +2167,7 @@ void main() {
     expect(bridge.state.value.virtualIp, isNull);
   });
 
-  test('disabled network state does not expose stale virtual ip', () {
+  test('disabled network state retains assigned device ip', () {
     final state = ClientViewState.fromJson({
       'signedIn': true,
       'networkEnabled': false,
@@ -2177,7 +2177,7 @@ void main() {
     });
 
     expect(state.networkEnabled, isFalse);
-    expect(state.virtualIp, isNull);
+    expect(state.virtualIp, '10.0.0.99');
   });
 }
 

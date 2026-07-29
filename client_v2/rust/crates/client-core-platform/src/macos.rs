@@ -464,7 +464,6 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
         if macos_network_mock_enabled() {
-            runtime.interface_name = None;
             runtime.virtual_ip = None;
             runtime.prefix_len = None;
             runtime.resolver_servers.clear();
@@ -489,6 +488,9 @@ impl PlatformNetwork for MacosPlatformNetwork {
         runtime.resolver_records.clear();
         runtime.relay_config = None;
 
+        // The data-plane thread owns the active utun descriptor. Stopping it
+        // closes that descriptor, so immediately open an unconfigured utun to
+        // keep a platform tunnel present while the network is disabled.
         drop(utun);
         if let Some(interface_name) = interface_name.as_deref() {
             let _ = clear_utun_dns(interface_name);
@@ -498,7 +500,15 @@ impl PlatformNetwork for MacosPlatformNetwork {
             for route in resolver_routes.iter().rev() {
                 let _ = delete_utun_route(interface_name, route);
             }
-            let _ = run_command("/sbin/ifconfig", &[interface_name, "down"]);
+        }
+        match open_utun() {
+            Ok(standby_utun) => {
+                runtime.interface_name = Some(standby_utun.interface_name.clone());
+                runtime.utun = Some(standby_utun);
+            }
+            Err(error) => {
+                eprintln!("macos standby utun unavailable after disable: {error:#}");
+            }
         }
         flush_macos_dns_cache();
         drop(runtime);

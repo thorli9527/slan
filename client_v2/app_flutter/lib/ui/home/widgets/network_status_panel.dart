@@ -22,7 +22,7 @@ class SignedInStatusPanel extends StatelessWidget {
 
   final bool desktop;
 
-  /// 当前虚拟 IP 文案，未启用网络时由页面层传入“未启用”。
+  /// 当前设备专属虚拟 IP 文案，与网络开关状态独立。
   final String currentIp;
 
   /// bridge 当前 UI 状态。

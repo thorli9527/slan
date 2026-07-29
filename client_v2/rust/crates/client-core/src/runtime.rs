@@ -47,7 +47,6 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         self.state.sync_reason = None;
         self.state.switch_enabled = true;
         self.state.network_enabled = false;
-        self.state.virtual_ip = None;
         self.state.notice = Some("networkDisabled".to_string());
         self.state.clone()
     }
@@ -130,16 +129,12 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             }
             ClientCommand::ApplyPlatformRuntimeState(runtime_state) => {
                 self.state.network_enabled = runtime_state.network_enabled;
-                self.state.virtual_ip = runtime_state
+                if let Some(virtual_ip) = runtime_state
                     .virtual_ip
                     .and_then(|value| normalize_virtual_ip(&value))
-                    .or_else(|| {
-                        if runtime_state.network_enabled {
-                            self.state.virtual_ip.take()
-                        } else {
-                            None
-                        }
-                    });
+                {
+                    self.state.virtual_ip = Some(virtual_ip);
+                }
                 self.state.notice = Some("platformRuntimeStateSynced".to_string());
             }
             ClientCommand::ApplyTrafficStats(payload) => {
@@ -176,9 +171,12 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         }
         let runtime_state = self.platform.read_runtime_state()?;
         self.state.network_enabled = runtime_state.network_enabled;
-        self.state.virtual_ip = runtime_state
+        if let Some(virtual_ip) = runtime_state
             .virtual_ip
-            .and_then(|value| normalize_virtual_ip(&value));
+            .and_then(|value| normalize_virtual_ip(&value))
+        {
+            self.state.virtual_ip = Some(virtual_ip);
+        }
         Ok(())
     }
 

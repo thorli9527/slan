@@ -1812,11 +1812,7 @@ where
     P: client_core::PlatformNetwork,
 {
     match prepared {
-        Ok(()) => {
-            let mut state = runtime.apply_network_disabled_state();
-            state.virtual_ip = None;
-            state
-        }
+        Ok(()) => runtime.apply_network_disabled_state(),
         Err(error) => state_with_error(runtime.state(), error.to_string()),
     }
 }
@@ -4238,12 +4234,8 @@ where
     match prepared {
         Ok(plan) => match commit_control_network_activation(runtime, plan) {
             Ok(()) => {
-                let mut state = runtime.state().clone();
-                if !state.network_enabled {
-                    state.virtual_ip = None;
-                }
                 ControlNetworkActivationCommit {
-                    state,
+                    state: runtime.state().clone(),
                     rollback_platform: false,
                 }
             }
@@ -5421,9 +5413,6 @@ fn state_with_error(state: &ClientViewState, error: String) -> ClientViewState {
     let mut state = state.clone();
     state.syncing = false;
     state.switch_enabled = true;
-    if !state.network_enabled {
-        state.virtual_ip = None;
-    }
     state.error = Some(error);
     state
 }

@@ -287,6 +287,7 @@ void main() {
       initialState: const ClientViewState(
         signedIn: true,
         userLabel: 'tester@example.com',
+        virtualIp: '10.0.0.10',
         networkEnabled: false,
         syncing: false,
         switchEnabled: true,
@@ -299,7 +300,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_networkSwitch(tester).value, isFalse);
-    expect(find.text('未启用'), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('network-switch')));
     await tester.pump();
@@ -307,7 +308,7 @@ void main() {
     expect(bridge.lastCommand, ClientCommandType.enableNetwork);
     expect(_networkSwitch(tester).value, isTrue);
     expect(_networkSwitch(tester).onChanged, isNull);
-    expect(find.text('未启用'), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsOneWidget);
 
     await tester.pump(bridge.activationDelay);
     await tester.pumpAndSettle();
@@ -383,7 +384,7 @@ void main() {
 
     expect(_networkSwitch(tester).value, isFalse);
     expect(_networkSwitch(tester).onChanged, isNotNull);
-    expect(find.text('未启用'), findsOneWidget);
+    expect(find.text('待分配'), findsOneWidget);
   });
 
   testWidgets('server disabled activation failure shows admin message',
@@ -687,6 +688,7 @@ class _UiTestBridge implements ClientCoreBridge {
   }
 
   void _enable(ClientCommand command) {
+    final previousIp = _state.value.virtualIp;
     _state.value = _state.value.copyWith(
       networkEnabled: true,
       syncing: true,
@@ -694,7 +696,7 @@ class _UiTestBridge implements ClientCoreBridge {
       switchEnabled: false,
       error: null,
       notice: null,
-      clearVirtualIp: true,
+      virtualIp: previousIp,
     );
 
     unawaited(Future<void>(() async {
@@ -707,7 +709,7 @@ class _UiTestBridge implements ClientCoreBridge {
           switchEnabled: true,
           error: activationError,
           errorSource: ClientErrorSource.networkSwitch,
-          clearVirtualIp: true,
+          virtualIp: previousIp,
         );
         return;
       }
@@ -730,7 +732,7 @@ class _UiTestBridge implements ClientCoreBridge {
       switchEnabled: false,
       error: null,
       notice: null,
-      clearVirtualIp: true,
+      virtualIp: previousIp,
     );
 
     unawaited(Future<void>(() async {
@@ -752,7 +754,7 @@ class _UiTestBridge implements ClientCoreBridge {
         syncing: false,
         clearSyncReason: true,
         switchEnabled: true,
-        clearVirtualIp: true,
+        virtualIp: previousIp,
       );
     }));
   }

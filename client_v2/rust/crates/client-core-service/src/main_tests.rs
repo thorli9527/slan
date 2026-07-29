@@ -553,6 +553,28 @@ fn failed_platform_deactivation_preserves_enabled_runtime_state() {
 }
 
 #[test]
+fn disabled_network_preserves_assigned_device_ip() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime.apply_assigned_ip_state(AssignedIpPayload {
+        virtual_ip: "10.0.0.2".to_string(),
+        prefix_len: Some(32),
+    });
+
+    let state = runtime.apply_network_disabled_state();
+
+    assert!(!state.network_enabled);
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
+
+    let state = runtime
+        .dispatch(ClientCommand::ApplyPlatformRuntimeState(
+            NetworkRuntimeState::default(),
+        ))
+        .expect("apply disabled platform runtime state");
+    assert!(!state.network_enabled);
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
+}
+
+#[test]
 fn sync_assigned_ip_does_not_create_empty_session() {
     let _lock = crate::test_env_lock();
     let state_dir = std::env::temp_dir().join(format!(

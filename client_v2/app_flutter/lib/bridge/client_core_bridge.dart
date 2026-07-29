@@ -1278,7 +1278,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       enableMethod: 'localNetworkActivate',
       disableMethod: 'localNetworkDeactivate',
       ignoredEvent: 'bridge.switch.ignoredInFlight',
-      clearVirtualIpWhenDisabling: true,
+      clearVirtualIpWhenDisabling: false,
     );
     if (operation == null) {
       return;
@@ -1452,7 +1452,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       enableMethod: enableMethod,
       disableMethod: disableMethod,
       ignoredEvent: ignoredEvent,
-      clearVirtualIpWhenDisabling: true,
+      clearVirtualIpWhenDisabling: false,
     );
   }
 
@@ -1641,7 +1641,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       notice: notice,
       error: error,
       errorSource: ClientErrorSource.networkSwitch,
-      clearVirtualIp: !operation.previousState.networkEnabled,
+      clearVirtualIp: !operation.previousState.signedIn,
     );
   }
 
@@ -1734,7 +1734,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       virtualIp: operation.targetEnabled
           ? _androidNetworkAuthorization.value.networkConfig?.virtualIp
           : null,
-      clearVirtualIp: !operation.targetEnabled,
+      clearVirtualIp: false,
     );
   }
 
@@ -1752,7 +1752,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           : null,
       notice: next?.notice,
       error: next?.error,
-      clearVirtualIp: !(next?.networkEnabled ?? operation.targetEnabled),
+      clearVirtualIp: false,
     );
   }
 
