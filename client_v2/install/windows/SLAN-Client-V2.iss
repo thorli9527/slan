@@ -311,7 +311,7 @@ var
 begin
   if ExecHidden(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter) { Enable-NetAdapter -Name ''SLAN LAN Adapter'' -Confirm:$false -ErrorAction SilentlyContinue | Out-Null; $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter -and $adapter.AdminStatus -eq ''Up'') { exit 0 } }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter) { exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
     ewWaitUntilTerminated
   ) then begin
     exit;

@@ -56,7 +56,10 @@ function Get-AdapterCheck {
   if (-not $adapter) {
     return New-Check 'adapter' $false "adapter $Name missing"
   }
-  New-Check 'adapter' ($adapter.AdminStatus -eq 'Up') "status=$($adapter.AdminStatus); ifIndex=$($adapter.ifIndex)"
+  # A signed-out or disabled SLAN network intentionally leaves Wintun disabled
+  # or disconnected. Installation only requires the adapter to exist; network
+  # activation is responsible for enabling it and assigning the device IP.
+  New-Check 'adapter' $true "status=$($adapter.Status); adminStatus=$($adapter.AdminStatus); ifIndex=$($adapter.ifIndex)"
 }
 
 function Get-UninstallEntryCheck {
