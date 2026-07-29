@@ -36,10 +36,10 @@ class SignedInStatusPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: EdgeInsets.fromLTRB(14, desktop ? 12 : 10, 14, 11),
+      padding: EdgeInsets.fromLTRB(16, desktop ? 13 : 10, 16, 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Column(
@@ -51,7 +51,7 @@ class SignedInStatusPanel extends StatelessWidget {
               Expanded(
                 child: CompactIdentity(userLabel: userLabel),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               _NetworkControl(
                 desktop: desktop,
                 state: state,
@@ -60,20 +60,20 @@ class SignedInStatusPanel extends StatelessWidget {
             ],
           ),
           if (desktop && onAcceptInvite != null) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Row(
               key: const Key('network-docking-actions'),
               children: [
                 CircleAvatar(
                   key: const Key('network-docking-avatar'),
-                  radius: 12,
+                  radius: 11,
                   backgroundColor: theme.colorScheme.primaryContainer,
                   foregroundColor: theme.colorScheme.onPrimaryContainer,
-                  child: const Icon(Icons.link_rounded, size: 15),
+                  child: const Icon(Icons.link_rounded, size: 14),
                 ),
-                const SizedBox(width: 9),
+                const SizedBox(width: 10),
                 SizedBox(
-                  width: 76,
+                  width: 74,
                   child: Text(
                     '网络对接',
                     style: theme.textTheme.labelMedium?.copyWith(
@@ -81,7 +81,7 @@ class SignedInStatusPanel extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
                 TextButton(
                   key: const Key('accept-network-invite'),
                   style: _networkDockingButtonStyle(),
@@ -91,7 +91,7 @@ class SignedInStatusPanel extends StatelessWidget {
               ],
             ),
           ],
-          const SizedBox(height: 8),
+          SizedBox(height: desktop ? 6 : 8),
           CompactInfoRow(
             valueKey: const Key('network-ip-value'),
             icon: Icons.router_rounded,
@@ -121,8 +121,8 @@ class SignedInStatusPanel extends StatelessWidget {
 
   ButtonStyle _networkDockingButtonStyle() {
     return TextButton.styleFrom(
-      minimumSize: const Size(0, 30),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      minimumSize: const Size(0, 28),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       visualDensity: VisualDensity.compact,
       textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
     );
@@ -179,7 +179,7 @@ class _NetworkControl extends StatelessWidget {
   Widget build(BuildContext context) {
     if (desktop) {
       return SizedBox(
-        width: 56,
+        width: 48,
         child: _NetworkSwitch(state: state, onToggle: onToggle),
       );
     }
@@ -247,8 +247,8 @@ class _NetworkSwitch extends StatelessWidget {
               ? '停用网络'
               : '启用网络',
       child: SizedBox(
-        width: 56,
-        height: 34,
+        width: 48,
+        height: 30,
         child: Stack(
           alignment: Alignment.centerRight,
           children: [
@@ -264,7 +264,7 @@ class _NetworkSwitch extends StatelessWidget {
                 ),
               ),
             Transform.scale(
-              scale: 0.76,
+              scale: 0.68,
               alignment: Alignment.centerRight,
               child: Switch(
                 key: const Key('network-switch'),

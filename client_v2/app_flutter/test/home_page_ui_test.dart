@@ -140,6 +140,39 @@ void main() {
     }
   });
 
+  testWidgets('desktop signed-in layout fits the native content area',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      await tester.binding.setSurfaceSize(const Size(480, 230));
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: true,
+          userLabel: 'long.desktop.account@staticlss.com',
+          virtualIp: '10.0.1.137',
+          networkEnabled: true,
+          syncing: false,
+          switchEnabled: true,
+        ),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      final console = find.byKey(const Key('open-web-console'));
+      final logout = find.text('退出登录');
+      expect(console, findsOneWidget);
+      expect(logout, findsOneWidget);
+      expect(tester.getBottomRight(console).dy, lessThanOrEqualTo(230));
+      expect(tester.getBottomRight(logout).dy, lessThanOrEqualTo(230));
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      await tester.binding.setSurfaceSize(null);
+    }
+  });
+
   testWidgets('network invite dialog validates and submits trimmed code',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;

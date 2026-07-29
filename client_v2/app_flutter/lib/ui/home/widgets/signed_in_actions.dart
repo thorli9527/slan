@@ -31,7 +31,7 @@ class SignedInActions extends StatelessWidget {
       if (showConsole)
         Expanded(
           child: SizedBox(
-            height: desktop ? 44 : 38,
+            height: desktop ? 42 : 38,
             child: FilledButton.icon(
               key: const Key('open-web-console'),
               onPressed: onOpenConsole,
@@ -41,14 +41,18 @@ class SignedInActions extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.open_in_browser_rounded, size: 18),
-              label: Text(desktop ? '打开 Web Console' : 'Web Console'),
+              label: Text(
+                desktop ? '打开 Web Console' : 'Web Console',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
         ),
-      if (showConsole) const SizedBox(width: 10),
+      if (showConsole) const SizedBox(width: 12),
       Expanded(
         child: SizedBox(
-          height: desktop ? 44 : 38,
+          height: desktop ? 42 : 38,
           child: OutlinedButton.icon(
             onPressed: onLogout,
             icon: const Icon(Icons.logout_rounded, size: 18),

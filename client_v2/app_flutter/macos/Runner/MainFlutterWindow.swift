@@ -5,9 +5,10 @@ class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     self.contentViewController = flutterViewController
-    self.setContentSize(NSSize(width: 460, height: 220))
-    self.minSize = NSSize(width: 460, height: 220)
-    self.maxSize = NSSize(width: 460, height: 220)
+    let contentSize = NSSize(width: 480, height: 230)
+    self.setContentSize(contentSize)
+    self.minSize = contentSize
+    self.maxSize = contentSize
     self.styleMask.remove([.miniaturizable, .resizable])
     self.standardWindowButton(.miniaturizeButton)?.isHidden = true
     self.standardWindowButton(.zoomButton)?.isHidden = true

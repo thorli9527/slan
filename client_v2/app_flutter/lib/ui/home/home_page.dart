@@ -89,14 +89,14 @@ class _HomePageState extends State<HomePage> {
               alignment: Alignment.topCenter,
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(
-                  _isDesktopLike ? 28 : 20,
-                  _isDesktopLike ? 22 : 12,
-                  _isDesktopLike ? 28 : 20,
-                  24,
+                  _isDesktopLike ? 18 : 20,
+                  _isDesktopLike ? 16 : 12,
+                  _isDesktopLike ? 18 : 20,
+                  _isDesktopLike ? 16 : 24,
                 ),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxWidth: _isDesktopLike ? 860 : 560,
+                    maxWidth: _isDesktopLike ? 520 : 560,
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -105,7 +105,7 @@ class _HomePageState extends State<HomePage> {
                       if (state.signedIn) ...[
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
-                        const SizedBox(height: 14),
+                        SizedBox(height: _isDesktopLike ? 12 : 14),
                         SignedInActions(
                           desktop: _isDesktopLike,
                           showConsole: _showWebConsoleAction,

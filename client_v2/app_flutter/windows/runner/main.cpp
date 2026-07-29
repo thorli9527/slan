@@ -68,7 +68,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   window.SetTrayMode(true);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(460, 220);
+  // This size includes the native title bar. Keep enough client height for the
+  // status panel and both primary actions without clipping at common DPI scales.
+  Win32Window::Size size(480, 270);
   if (!window.Create(kWindowTitle, origin, size)) {
     ::CoUninitialize();
     ::ReleaseMutex(single_instance_mutex);
