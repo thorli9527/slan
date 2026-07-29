@@ -311,7 +311,7 @@ var
 begin
   if ExecHidden(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter) { exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(60); do { $adapter=Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq ''SLAN LAN Adapter'' -or $_.InterfaceDescription -like ''*Wintun*'' -or $_.InterfaceDescription -like ''*WireGuard*Tunnel*'' -or $_.InterfaceDescription -like ''*WireGuardNT*'' } | Select-Object -First 1; if ($adapter -and $adapter.Status -eq ''Up'') { exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
     ewWaitUntilTerminated
   ) then begin
     exit;
@@ -338,7 +338,12 @@ begin
       );
     end;
   end;
-  RaiseException('Failed to install SLAN Wintun adapter. Please allow administrator permission and reinstall.');
+  RaiseException('Failed to install SLAN Wintun adapter.' + #13 + #10 +
+    'The adapter was not detected within 30 seconds.' + #13 + #10 + #13 + #10 +
+    'Please try:' + #13 + #10 +
+    '  1. Run the installer as Administrator (right-click -> Run as administrator)' + #13 + #10 +
+    '  2. If it still fails, check Device Manager for any Wintun adapter errors' + #13 + #10 +
+    '  3. Reboot and run the installer again.');
 end;
 
 procedure ClearClientV2AppData();
