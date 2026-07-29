@@ -401,7 +401,8 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
         if runtime.utun.is_some() && runtime.relay_config.as_ref() == relay_config {
-            eprintln!("macos configure_relay skipped unchanged config");
+            repair_runtime_network_state(&runtime)?;
+            eprintln!("macos configure_relay reused unchanged config after route verification");
             return Ok(());
         }
         let previous_relay_config = runtime.relay_config.clone();
@@ -487,7 +488,6 @@ impl PlatformNetwork for MacosPlatformNetwork {
         runtime.resolver_split_domains.clear();
         runtime.resolver_records.clear();
         runtime.relay_config = None;
-        drop(runtime);
 
         drop(utun);
         if let Some(interface_name) = interface_name.as_deref() {
@@ -501,6 +501,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
             let _ = run_command("/sbin/ifconfig", &[interface_name, "down"]);
         }
         flush_macos_dns_cache();
+        drop(runtime);
         Ok(())
     }
 
@@ -1003,15 +1004,7 @@ fn tunnel_mtu_for_relay(config: Option<&RelayDataPlaneConfig>) -> u16 {
 }
 
 fn clear_utun_ipv4_addresses(interface_name: &str) -> Result<()> {
-    let output = Command::new("/sbin/ifconfig")
-        .arg(interface_name)
-        .output()
-        .with_context(|| format!("inspect {interface_name} IPv4 addresses"))?;
-    if !output.status.success() {
-        return Ok(());
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    for address in parse_ifconfig_ipv4_addresses(&text) {
+    for address in inspect_interface_ipv4_addresses(interface_name)? {
         let address = address.to_string();
         let _ = run_command(
             "/sbin/ifconfig",
@@ -1019,6 +1012,19 @@ fn clear_utun_ipv4_addresses(interface_name: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn inspect_interface_ipv4_addresses(interface_name: &str) -> Result<Vec<Ipv4Addr>> {
+    let output = Command::new("/sbin/ifconfig")
+        .arg(interface_name)
+        .output()
+        .with_context(|| format!("inspect {interface_name} IPv4 addresses"))?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    Ok(parse_ifconfig_ipv4_addresses(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 fn parse_ifconfig_ipv4_addresses(text: &str) -> Vec<Ipv4Addr> {
@@ -1062,6 +1068,34 @@ fn sync_utun_routes(
     }
     for route in next.iter().filter(|route| !previous.contains(route)) {
         add_utun_route(interface_name, route)?;
+    }
+    Ok(())
+}
+
+fn repair_runtime_network_state(runtime: &MacosRuntime) -> Result<()> {
+    let interface_name = runtime
+        .interface_name
+        .as_deref()
+        .ok_or_else(|| anyhow!("macos utun interface is not ready"))?;
+    if let (Some(ip), Some(prefix_len)) = (&runtime.virtual_ip, runtime.prefix_len) {
+        let configured = inspect_interface_ipv4_addresses(interface_name)?;
+        let address = ip.parse::<Ipv4Addr>()?;
+        if !configured.contains(&address) {
+            eprintln!(
+                "SLAN_MACOS_REPAIR_IP interface={} virtual_ip={}/{}",
+                interface_name, ip, prefix_len
+            );
+            configure_utun_ip(interface_name, address, prefix_len)?;
+        }
+    }
+    for route in runtime.routes.iter().chain(&runtime.resolver_routes) {
+        if !utun_route_is_owned_by(interface_name, route)? {
+            eprintln!(
+                "SLAN_MACOS_REPAIR_ROUTE interface={} destination={}",
+                interface_name, route.destination
+            );
+            add_utun_route(interface_name, route)?;
+        }
     }
     Ok(())
 }
@@ -1110,6 +1144,13 @@ fn delete_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
     }
     let (target, prefix_len) = parse_route_destination(destination)?;
     let route_kind = if prefix_len == 32 { "-host" } else { "-net" };
+    if !utun_route_is_owned_by(interface_name, route)? {
+        eprintln!(
+            "SLAN_MACOS_ROUTE_DELETE_SKIPPED interface={} destination={} reason=route_not_owned",
+            interface_name, destination
+        );
+        return Ok(());
+    }
     delete_route_target(route_kind, target).or_else(|error| {
         let message = error.to_string();
         if message.contains("not in table") {
@@ -1117,6 +1158,37 @@ fn delete_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
         } else {
             Err(error).with_context(|| format!("delete route {destination} via {interface_name}"))
         }
+    })
+}
+
+fn utun_route_is_owned_by(interface_name: &str, route: &RouteSpec) -> Result<bool> {
+    let destination = route.destination.trim();
+    if destination.is_empty() {
+        return Ok(false);
+    }
+    let (target, _) = parse_route_destination(destination)?;
+    Ok(route_interface_for_target(target)?.as_deref() == Some(interface_name))
+}
+
+fn route_interface_for_target(target: Ipv4Addr) -> Result<Option<String>> {
+    let output = Command::new("/sbin/route")
+        .args(["-n", "get", &target.to_string()])
+        .output()
+        .with_context(|| format!("inspect route for {target}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(parse_route_interface(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn parse_route_interface(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once(':')?;
+        (key.trim() == "interface")
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
     })
 }
 
@@ -3450,6 +3522,18 @@ mod tests {
             parse_ifconfig_ipv4_addresses(output),
             vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2),]
         );
+    }
+
+    #[test]
+    fn parses_route_interface() {
+        let output = r#"   route to: 10.0.1.137
+destination: 10.0.1.137
+  interface: utun6
+      flags: <UP,HOST,DONE,STATIC>
+"#;
+
+        assert_eq!(parse_route_interface(output).as_deref(), Some("utun6"));
+        assert_eq!(parse_route_interface("route unavailable"), None);
     }
 
     #[test]

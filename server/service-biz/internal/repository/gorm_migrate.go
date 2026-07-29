@@ -168,7 +168,12 @@ func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
 	if s.db.Dialector.Name() != "postgres" {
 		return nil
 	}
-	if err := s.db.Exec(`
+	// Backfill group references without deleting existing memberships. Membership
+	// removal belongs to the device-group use case, which also publishes the
+	// corresponding network snapshot and client control event. Deleting rows here
+	// on every service start silently disconnects legacy or temporarily unmapped
+	// devices and leaves enabled clients with stale routes.
+	return s.db.Exec(`
 		INSERT INTO gorm_network_device_group_reference_records (network_id, group_id, created_at, updated_at)
 		SELECT DISTINCT membership.network_id, group_id.value, EXTRACT(EPOCH FROM NOW())::BIGINT, EXTRACT(EPOCH FROM NOW())::BIGINT
 		FROM gorm_network_device_records membership
@@ -179,21 +184,6 @@ func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
 		CROSS JOIN LATERAL json_array_elements_text(assignment.group_ids::json) AS group_id(value)
 		JOIN gorm_device_group_records device_group ON device_group.group_id = group_id.value AND device_group.user_id = network.owner_id
 		ON CONFLICT (network_id, group_id) DO NOTHING
-	`).Error; err != nil {
-		return err
-	}
-	return s.db.Exec(`
-		DELETE FROM gorm_network_device_records membership
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM gorm_network_device_group_reference_records reference
-			JOIN gorm_device_group_assignment_records assignment ON assignment.device_id = membership.device_id
-			JOIN gorm_device_group_records device_group
-			  ON device_group.group_id = reference.group_id
-			 AND device_group.user_id = assignment.user_id
-			WHERE reference.network_id = membership.network_id
-			  AND assignment.group_ids::jsonb ? reference.group_id
-		)
 	`).Error
 }
 
