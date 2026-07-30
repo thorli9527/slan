@@ -144,7 +144,7 @@ void main() {
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
-      await tester.binding.setSurfaceSize(const Size(480, 270));
+      await tester.binding.setSurfaceSize(const Size(480, 190));
       final bridge = _UiTestBridge(
         initialState: const ClientViewState(
           signedIn: true,
@@ -164,8 +164,32 @@ void main() {
       final logout = find.text('退出登录');
       expect(console, findsOneWidget);
       expect(logout, findsOneWidget);
-      expect(tester.getBottomRight(console).dy, lessThanOrEqualTo(270));
-      expect(tester.getBottomRight(logout).dy, lessThanOrEqualTo(270));
+      expect(tester.getBottomRight(console).dy, lessThanOrEqualTo(190));
+      expect(tester.getBottomRight(logout).dy, lessThanOrEqualTo(190));
+      expect(190 - tester.getBottomRight(logout).dy, lessThanOrEqualTo(36));
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      await tester.binding.setSurfaceSize(null);
+    }
+  });
+
+  testWidgets('desktop signed-out layout stays compact', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      await tester.binding.setSurfaceSize(const Size(480, 190));
+      final bridge = _UiTestBridge(
+        initialState: ClientViewState.initial(),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      final login = find.byKey(const Key('desktop-browser-login'));
+      expect(login, findsOneWidget);
+      expect(tester.getBottomRight(login).dy, lessThanOrEqualTo(190));
+      expect(190 - tester.getBottomRight(login).dy, lessThanOrEqualTo(16));
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;

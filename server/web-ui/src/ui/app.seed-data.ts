@@ -8,7 +8,6 @@ import {
   MemberRow,
   NavGroup,
   SecurityRuleTemplate,
-  UserAliasRow,
   WorkspaceDeviceInviteRow,
   WorkspaceRow,
 } from './app.models';
@@ -52,7 +51,6 @@ export const NAV_GROUPS: NavGroup[] = [
           { id: 'deviceGroups', label: '分组管理', desc: '部门和团队分组' },
         ],
       },
-      { id: 'userAliases', label: '用户别名', desc: '邮箱显示别名' },
     ],
   },
   {
@@ -101,12 +99,6 @@ export const INITIAL_WORKSPACES: WorkspaceRow[] = [
 export const INITIAL_MEMBERS: MemberRow[] = [
   { user: 'alice@staticlss.com', alias: 'Alice', role: 'owner', status: 'active' },
   { user: 'bob@staticlss.com', alias: 'Bob', role: 'member', status: 'pending' },
-];
-
-export const INITIAL_USER_ALIASES: UserAliasRow[] = [
-  { email: 'bob@staticlss.com', alias: 'Bob' },
-  { email: 'ops@staticlss.com', alias: 'Ops' },
-  { email: 'dev@staticlss.com', alias: 'Dev' },
 ];
 
 export const INITIAL_DNS_ZONES: DNSZoneRow[] = [

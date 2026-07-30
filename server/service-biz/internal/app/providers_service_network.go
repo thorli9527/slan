@@ -5,7 +5,7 @@ import servicepkg "github.com/slan/service-biz/internal/service"
 func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 	repos := deps.networkRepositories()
 	ids := deps.networkIDs()
-	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig())
+	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig(), repos.EventDeliveries)
 	devicePublisher := servicepkg.NewDeviceControlPublisher(deps.mqttConfig())
 	return NetworkServices{
 		CoreAccess: servicepkg.NetworkCoreService{

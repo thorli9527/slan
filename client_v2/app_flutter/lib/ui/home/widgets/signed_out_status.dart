@@ -15,7 +15,10 @@ class SignedOutStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      padding: EdgeInsets.symmetric(
+        horizontal: 18,
+        vertical: desktop ? 12 : 18,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: const Color(0xffe2d6cf)),
@@ -27,8 +30,8 @@ class SignedOutStatus extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: desktop ? 38 : 42,
+                height: desktop ? 38 : 42,
                 decoration: const BoxDecoration(
                   color: Color(0xfffff1e9),
                   borderRadius: BorderRadius.all(Radius.circular(14)),
@@ -38,7 +41,7 @@ class SignedOutStatus extends StatelessWidget {
                   color: Color(0xffb85c2f),
                 ),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: desktop ? 10 : 12),
               Expanded(
                 child: Text(
                   '登录后启用组网',
@@ -49,7 +52,7 @@ class SignedOutStatus extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: desktop ? 7 : 10),
           Text(
             desktop
                 ? '桌面端会通过浏览器完成登录，然后自动回到客户端同步设备状态。'

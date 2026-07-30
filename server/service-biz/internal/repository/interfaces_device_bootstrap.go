@@ -12,3 +12,7 @@ type DeviceBootstrapRepository interface {
 	GetDeviceBootstrapKeyByToken(ctx context.Context, token string) (model.DeviceBootstrapKey, bool, error)
 	SaveDeviceBootstrapKey(ctx context.Context, key model.DeviceBootstrapKey) error
 }
+
+type DeviceBootstrapCleanupRepository interface {
+	DeleteExpiredDeviceBootstrapKeys(ctx context.Context, expiresBefore int64) (int64, error)
+}

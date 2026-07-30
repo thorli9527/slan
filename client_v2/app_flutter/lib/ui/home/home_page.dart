@@ -90,9 +90,9 @@ class _HomePageState extends State<HomePage> {
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(
                   _isDesktopLike ? 18 : 20,
-                  _isDesktopLike ? 14 : 12,
+                  _isDesktopLike ? 10 : 12,
                   _isDesktopLike ? 18 : 20,
-                  _isDesktopLike ? 12 : 24,
+                  _isDesktopLike ? 10 : 24,
                 ),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
@@ -105,7 +105,7 @@ class _HomePageState extends State<HomePage> {
                       if (state.signedIn) ...[
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
-                        SizedBox(height: _isDesktopLike ? 10 : 14),
+                        SizedBox(height: _isDesktopLike ? 8 : 14),
                         SignedInActions(
                           desktop: _isDesktopLike,
                           showConsole: _showWebConsoleAction,
@@ -121,7 +121,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ] else ...[
                         SignedOutStatus(desktop: _isDesktopLike),
-                        const SizedBox(height: 14),
+                        SizedBox(height: _isDesktopLike ? 10 : 14),
                         if (_usesPasswordLogin)
                           PasswordLoginForm(
                             emailController: _emailController,

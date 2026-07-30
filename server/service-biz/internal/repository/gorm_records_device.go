@@ -23,6 +23,7 @@ type gormDeviceUserRelationRecord struct {
 	RelationID string `gorm:"primaryKey;size:64"`
 	DeviceID   string `gorm:"size:64;uniqueIndex:uidx_device_user_relation;index"`
 	UserID     string `gorm:"size:64;uniqueIndex:uidx_device_user_relation;index"`
+	Alias      string `gorm:"size:255"`
 	Role       string `gorm:"size:32;index"`
 	SourceType string `gorm:"size:32;index"`
 	SourceID   string `gorm:"size:64;index"`

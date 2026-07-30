@@ -11,8 +11,6 @@ export const WEB_API = {
   completeDeviceLogin: (deviceId: string) => `/api/web/auth/device-login-devices/${encodeURIComponent(deviceId)}/complete`,
   userPassword: (userId: string) => `/api/web/users/${encodeURIComponent(userId)}/password`,
   userEntitlement: (userId: string) => `/api/web/users/${encodeURIComponent(userId)}/entitlement`,
-  userAliases: '/api/web/user-aliases',
-  userAliasesForUser: (userId = '') => userId ? `/api/web/users/${encodeURIComponent(userId)}/user-aliases` : '/api/web/user-aliases',
   devicesVisible: (userId = '') => userId ? `/api/web/users/${encodeURIComponent(userId)}/devices/visible` : '/api/web/devices/visible',
   deviceGroups: (userId: string) => `/api/web/users/${encodeURIComponent(userId)}/device-groups`,
   deviceGroup: (userId: string, groupId: string, actorUserId = '') => `/api/web/users/${encodeURIComponent(userId)}/device-groups/${encodeURIComponent(groupId)}${actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : ''}`,

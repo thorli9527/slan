@@ -39,7 +39,7 @@ func saveDeviceUserRelation(db *gorm.DB, relation model.DeviceUserRelation) erro
 	}
 	row := deviceUserRelationRecordFromModel(relation)
 	return upsertByColumns(db, &row, []string{"device_id", "user_id"}, []string{
-		"relation_id", "role", "source_type", "source_id", "status", "created_by", "created_at", "updated_at", "revoked_by", "revoked_at",
+		"relation_id", "alias", "role", "source_type", "source_id", "status", "created_by", "created_at", "updated_at", "revoked_by", "revoked_at",
 	})
 }
 

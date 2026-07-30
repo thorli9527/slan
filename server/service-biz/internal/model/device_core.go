@@ -34,6 +34,7 @@ type DeviceUserRelation struct {
 	RelationID string `json:"relationId"`
 	DeviceID   string `json:"deviceId"`
 	UserID     string `json:"userId"`
+	Alias      string `json:"alias,omitempty"`
 	Role       string `json:"role"`
 	SourceType string `json:"sourceType"`
 	SourceID   string `json:"sourceId,omitempty"`

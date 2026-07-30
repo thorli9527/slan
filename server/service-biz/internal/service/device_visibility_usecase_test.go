@@ -28,6 +28,11 @@ func (s deviceVisibilityTestDevices) GetDevice(_ context.Context, deviceID strin
 	return item, ok, nil
 }
 
+func (s deviceVisibilityTestDevices) SaveDevice(_ context.Context, device model.Device) error {
+	s.items[device.DeviceID] = device
+	return nil
+}
+
 type deviceVisibilityTestRelations struct {
 	repository.DeviceRelationRepository
 	relations []model.DeviceUserRelation
@@ -41,6 +46,26 @@ func (s deviceVisibilityTestRelations) ListDeviceRelationsByUser(_ context.Conte
 		}
 	}
 	return items, nil
+}
+
+func (s *deviceVisibilityTestRelations) GetDeviceUserRelation(_ context.Context, deviceID, userID string) (model.DeviceUserRelation, bool, error) {
+	for _, relation := range s.relations {
+		if relation.DeviceID == deviceID && relation.UserID == userID {
+			return relation, true, nil
+		}
+	}
+	return model.DeviceUserRelation{}, false, nil
+}
+
+func (s *deviceVisibilityTestRelations) SaveDeviceUserRelation(_ context.Context, updated model.DeviceUserRelation) error {
+	for i, relation := range s.relations {
+		if relation.DeviceID == updated.DeviceID && relation.UserID == updated.UserID {
+			s.relations[i] = updated
+			return nil
+		}
+	}
+	s.relations = append(s.relations, updated)
+	return nil
 }
 
 func TestListVisibleManagedDevicesIncludesAcceptedInvitesForInviter(t *testing.T) {
@@ -57,7 +82,7 @@ func TestListVisibleManagedDevicesIncludesAcceptedInvitesForInviter(t *testing.T
 		{UserID: "inviter", DeviceID: "owned-device", Role: model.DeviceRelationRoleOwner, Status: model.DeviceRelationStatusActive},
 	}}
 
-	items, err := listVisibleManagedDevices(context.Background(), devices, relations, "inviter")
+	items, err := listVisibleManagedDevices(context.Background(), devices, &relations, "inviter")
 	if err != nil {
 		t.Fatalf("list visible devices: %v", err)
 	}
@@ -87,5 +112,55 @@ func TestUserDeviceDeletionIsRejectedForOwnerAndNonOwner(t *testing.T) {
 		DeviceID: "device-1", ActorUserID: "other",
 	}); err != ErrForbidden {
 		t.Fatalf("non-owner delete error = %v, want %v", err, ErrForbidden)
+	}
+}
+
+func TestSharedUserUpdatesOnlyTheirDeviceAlias(t *testing.T) {
+	devices := deviceVisibilityTestDevices{items: map[string]model.Device{
+		"device-1": {DeviceID: "device-1", OwnerID: "owner", Alias: "Owner alias"},
+	}}
+	relations := &deviceVisibilityTestRelations{relations: []model.DeviceUserRelation{
+		{RelationID: "owner-relation", DeviceID: "device-1", UserID: "owner", Role: model.DeviceRelationRoleOwner, Status: model.DeviceRelationStatusActive},
+		{RelationID: "shared-relation", DeviceID: "device-1", UserID: "shared-user", Role: model.DeviceRelationRoleShared, Status: model.DeviceRelationStatusActive},
+	}}
+	service := DeviceProvisioningService{deviceCoreDependencies: deviceCoreDependencies{
+		Devices: devices, Relations: relations,
+	}}
+
+	device, alias, err := service.updateDeviceAliasEntity(context.Background(), UpdateDeviceAliasInput{
+		DeviceID: "device-1", ActorUserID: "shared-user", Alias: "My private alias",
+	})
+	if err != nil {
+		t.Fatalf("update shared alias: %v", err)
+	}
+	if alias != "My private alias" || device.Alias != "Owner alias" || devices.items["device-1"].Alias != "Owner alias" {
+		t.Fatalf("shared alias changed device alias: alias=%q device=%q stored=%q", alias, device.Alias, devices.items["device-1"].Alias)
+	}
+	stored, ok, err := relations.GetDeviceUserRelation(context.Background(), "device-1", "shared-user")
+	if err != nil || !ok || stored.Alias != "My private alias" {
+		t.Fatalf("shared relation alias not saved: relation=%+v ok=%t err=%v", stored, ok, err)
+	}
+}
+
+func TestVisibleDevicesUseCurrentUsersPrivateAlias(t *testing.T) {
+	devices := deviceVisibilityTestDevices{items: map[string]model.Device{
+		"device-1": {DeviceID: "device-1", OwnerID: "owner", Alias: "Owner alias"},
+	}}
+	relations := &deviceVisibilityTestRelations{relations: []model.DeviceUserRelation{
+		{DeviceID: "device-1", UserID: "shared-user", Alias: "Shared alias", Role: model.DeviceRelationRoleShared, Status: model.DeviceRelationStatusActive},
+	}}
+	service := DeviceCatalogService{deviceCoreDependencies: deviceCoreDependencies{
+		Devices: devices, Relations: relations,
+	}}
+
+	items, err := service.ListVisibleDevices(context.Background(), "shared-user")
+	if err != nil {
+		t.Fatalf("list visible devices: %v", err)
+	}
+	if len(items) != 1 || items[0].Alias != "Shared alias" {
+		t.Fatalf("visible aliases = %+v, want shared alias", items)
+	}
+	if devices.items["device-1"].Alias != "Owner alias" {
+		t.Fatalf("visible alias changed owner alias to %q", devices.items["device-1"].Alias)
 	}
 }

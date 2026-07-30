@@ -275,6 +275,14 @@ impl ControlTaskQueue {
         self.persist()
     }
 
+    pub fn mark_unacknowledged(&mut self, task_id: &str) -> Result<()> {
+        if let Some(task) = self.tasks.iter_mut().find(|task| task.id == task_id) {
+            task.acknowledged_at_ms = None;
+            task.updated_at_ms = current_timestamp_ms();
+        }
+        self.persist()
+    }
+
     fn update_task(
         &mut self,
         task_id: &str,
@@ -591,6 +599,12 @@ mod tests {
         let acks = queue.pending_downstream_acks();
         assert_eq!(acks.len(), 1);
         assert_eq!(acks[0].delivery_id.as_deref(), Some("delivery-failed"));
+
+        queue
+            .mark_unacknowledged(&succeeded.id)
+            .expect("reopen succeeded ack");
+        let acks = queue.pending_downstream_acks();
+        assert_eq!(acks.len(), 2);
     }
 
     #[test]

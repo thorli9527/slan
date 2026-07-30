@@ -347,9 +347,11 @@ fn run_service_server() -> Result<()> {
     let listener = TcpListener::bind(&bind_address)
         .with_context(|| format!("bind client-core-service on {bind_address}"))?;
     let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl);
-    if let Some(session) = load_valid_registered_session()
-        .filter(|session| session.session_kind == "user" && !session.access_token.trim().is_empty())
-    {
+    let startup_session = load_valid_registered_session();
+    let auto_activate_installed_device = startup_session
+        .as_ref()
+        .is_some_and(installed_device_session_ready);
+    if let Some(session) = startup_session.filter(runtime_session_ready) {
         let _ = initial_runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
     } else if let Some(state) = apply_pending_console_login(&mut initial_runtime) {
         if let Some(error) = state
@@ -410,7 +412,11 @@ fn run_service_server() -> Result<()> {
         &state_notifier,
     );
     spawn_relay_data_plane_maintenance_worker(runtime.clone(), Arc::clone(&state_notifier));
-    spawn_startup_network_activation(runtime.clone(), Arc::clone(&state_notifier));
+    spawn_startup_network_activation(
+        runtime.clone(),
+        Arc::clone(&state_notifier),
+        auto_activate_installed_device,
+    );
     println!("client-core-service listening on {bind_address}");
 
     loop {
@@ -704,8 +710,9 @@ fn request_is_watch(line: &str) -> bool {
 fn spawn_startup_network_activation(
     runtime: RuntimeActorHandle,
     state_notifier: Arc<RuntimeEventHub>,
+    auto_activate_installed_device: bool,
 ) {
-    let should_activate = runtime.snapshot().state.signed_in;
+    let should_activate = auto_activate_installed_device && runtime.snapshot().state.signed_in;
     if !should_activate {
         return;
     }
@@ -739,6 +746,27 @@ fn spawn_startup_network_activation(
             ));
         }
     });
+}
+
+fn runtime_session_ready(session: &PersistedSession) -> bool {
+    match session.session_kind.as_str() {
+        "user" => !session.access_token.trim().is_empty(),
+        "device" => installed_device_session_ready(session),
+        _ => false,
+    }
+}
+
+fn installed_device_session_ready(session: &PersistedSession) -> bool {
+    session.session_kind == "device"
+        && session
+            .device_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && (!session.access_token.trim().is_empty()
+            || session
+                .device_token
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()))
 }
 
 fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
@@ -1491,11 +1519,9 @@ fn handle_start(
     let expected_device_id = snapshot.device_id.clone();
     let expected_signed_in = snapshot.signed_in;
     let prepared = load_valid_registered_session();
-    let user_session_ready = prepared.as_ref().is_some_and(|session| {
-        session.session_kind == "user" && !session.access_token.trim().is_empty()
-    });
-    let prepared_runtime = prepare_runtime_refresh(user_session_ready || snapshot.signed_in);
-    if !user_session_ready {
+    let registered_session_ready = prepared.as_ref().is_some_and(runtime_session_ready);
+    let prepared_runtime = prepare_runtime_refresh(registered_session_ready || snapshot.signed_in);
+    if !registered_session_ready {
         if let Err(error) = disable_platform_network_serialized() {
             log_service_error(format!(
                 "client-core-service startup platform disable failed: {error:#}"
@@ -1511,14 +1537,8 @@ fn handle_start(
         if runtime_login_context_matches(runtime, expected_device_id.as_deref(), expected_signed_in)
         {
             match prepared {
-                Some(session)
-                    if session.session_kind == "user"
-                        && !session.access_token.trim().is_empty() =>
-                {
+                Some(session) if runtime_session_ready(&session) => {
                     runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()))?;
-                }
-                Some(session) if session.session_kind == "device" => {
-                    runtime.apply_logout_state();
                 }
                 None => {
                     runtime.apply_logout_state();
@@ -1681,9 +1701,6 @@ where
 {
     persist_session(&prepared.session)?;
     apply_prepared_session_projection(current_session_runtime_epoch(), prepared)?;
-    if prepared.session.session_kind == "device" {
-        return Ok(runtime.apply_logout_state());
-    }
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             prepared.session.clone().into(),

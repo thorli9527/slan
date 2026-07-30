@@ -6,12 +6,11 @@ import { AppComponentAuth } from './app.component.auth';
 import { DevicePageComponent } from './device/device-page.component';
 import { NetworkPageComponent } from './network/network-page.component';
 import { OverviewPageComponent } from './overview/overview-page.component';
-import { UserAliasPageComponent } from './user-alias/user-alias-page.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule, OverviewPageComponent, DevicePageComponent, UserAliasPageComponent, NetworkPageComponent],
+  imports: [CommonModule, FormsModule, OverviewPageComponent, DevicePageComponent, NetworkPageComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
   encapsulation: ViewEncapsulation.None,

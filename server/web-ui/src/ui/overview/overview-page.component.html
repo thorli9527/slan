@@ -73,26 +73,26 @@
     <div class="panel-title">
       <div>
         <h2>设备 Token</h2>
-        <p>管理当前用户设备的设备 token；支持逐个立即失效。</p>
+        <p>当前有效 {{ vm.activeDeviceTokenCount() }} / 共 {{ vm.deviceTokenRows().length }}</p>
       </div>
     </div>
-    <p *ngIf="vm.currentUserDevices.length === 0">当前还没有设备，因此暂无可管理的设备 token。</p>
-    <div *ngFor="let device of vm.currentUserDevices" class="device-token-block">
-      <div class="device-token-header">
-        <h3>{{ device.alias || device.deviceId }}</h3>
-        <code>{{ device.deviceId }}</code>
-      </div>
-      <table class="compact-table">
-        <thead><tr><th>模式</th><th>状态</th><th>过期时间</th><th>刷新过期</th><th>创建时间</th><th>操作</th></tr></thead>
+    <div class="device-token-table-wrap">
+      <table class="compact-table device-token-table">
+        <thead><tr><th>设备</th><th>Token</th><th>模式</th><th>状态</th><th>访问过期</th><th>续期过期</th><th>创建时间</th><th>操作</th></tr></thead>
         <tbody>
-          <tr *ngFor="let item of vm.deviceManagedSessions(device)">
-            <td>{{ item.sessionMode || '-' }}</td>
-            <td>{{ item.status }}</td>
-            <td>{{ vm.formatTime(item.expiresAt) }}</td>
-            <td>{{ vm.formatTime(item.refreshExpiry) }}</td>
-            <td>{{ vm.formatTime(item.createdAt) }}</td>
-            <td class="table-actions">
-              <button class="table-icon-button danger" type="button" *ngIf="item.status === 'active'" title="立即失效" aria-label="立即失效" (click)="vm.revokeDeviceManagedSession(device, item)">
+          <tr *ngFor="let row of vm.deviceTokenRows()">
+            <td class="device-token-device">
+              <strong>{{ row.device.alias || row.device.deviceId }}</strong>
+              <code>{{ row.device.deviceId }}</code>
+            </td>
+            <td><code class="session-id" [title]="row.session.sessionId">{{ row.session.sessionId }}</code></td>
+            <td>{{ vm.deviceTokenModeLabel(row.session.sessionMode) }}</td>
+            <td><span class="status" [class.online]="vm.deviceTokenStatus(row.session) === 'active'">{{ vm.deviceTokenStatusLabel(row.session) }}</span></td>
+            <td>{{ vm.deviceTokenExpiryText(row.session.expiresAt) }}</td>
+            <td>{{ vm.deviceTokenExpiryText(row.session.refreshExpiry) }}</td>
+            <td>{{ vm.formatTime(row.session.createdAt) }}</td>
+            <td>
+              <button class="table-icon-button danger" type="button" *ngIf="vm.deviceTokenStatus(row.session) === 'active'" title="立即失效" aria-label="立即失效" (click)="vm.revokeDeviceManagedSession(row.device, row.session)">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M4 7h16"></path>
                   <path d="M9 7V5h6v2"></path>
@@ -101,12 +101,10 @@
                   <path d="M14 11v5"></path>
                 </svg>
               </button>
-              <span *ngIf="item.status !== 'active'">-</span>
+              <span *ngIf="vm.deviceTokenStatus(row.session) !== 'active'">-</span>
             </td>
           </tr>
-          <tr *ngIf="vm.deviceManagedSessions(device).length === 0">
-            <td colspan="6">暂无设备 token</td>
-          </tr>
+          <tr *ngIf="vm.deviceTokenRows().length === 0"><td colspan="8">暂无设备 Token</td></tr>
         </tbody>
       </table>
     </div>

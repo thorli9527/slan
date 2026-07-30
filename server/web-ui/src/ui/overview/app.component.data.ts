@@ -12,7 +12,6 @@ import {
   ApiDNSZone,
   ApiSecurityGroup,
   ApiSecurityRule,
-  ApiUserAlias,
   ApiWorkspace,
   ApiWorkspaceDevice,
   ApiDeviceQuota,
@@ -26,7 +25,6 @@ import {
   SecurityGroupRow,
   SecurityRuleRow,
   SecurityRuleTemplate,
-  UserAliasRow,
   WorkspaceDeviceInviteRow,
   WorkspacePanel,
   WorkspaceRow,
@@ -69,13 +67,6 @@ export abstract class AppComponentData extends AppComponentState {
       this.workspaceRouteMode = 'list';
       return;
     }
-    if (path === '/user-aliases') {
-      this.closeInlinePopovers();
-      this.closeOverlayDialogs();
-      this.active = 'userAliases';
-      this.workspaceRouteMode = 'list';
-      return;
-    }
     const match = path.match(/^\/space\/([^/]+)(?:\/(.+))?$/);
     if (match) {
       this.closeInlinePopovers();
@@ -102,10 +93,9 @@ export abstract class AppComponentData extends AppComponentState {
 
   protected override async loadDashboard(userId = ''): Promise<void> {
     try {
-      const [devices, workspaces, aliases, invites, bootstrap, sessions, quota] = await Promise.all([
+      const [devices, workspaces, invites, bootstrap, sessions, quota] = await Promise.all([
         this.api.get<{ items: ApiDevice[] }>(WEB_API.devicesVisible(userId)),
         this.api.get<{ items: ApiWorkspace[] }>(WEB_API.networks(userId)),
-        this.api.get<{ items: ApiUserAlias[] }>(WEB_API.userAliasesForUser(userId)),
         this.api.get<{ items: WorkspaceDeviceInviteRow[] }>(WEB_API.deviceInvites(userId)),
         this.api.get<{ items: ApiDeviceBootstrapKey[] }>(WEB_API.deviceBootstrapKeys(userId)),
         userId ? this.api.get<{ items: ApiManagedUserSession[] }>(WEB_API.userSessions(userId)) : Promise.resolve({ items: [] }),
@@ -113,7 +103,6 @@ export abstract class AppComponentData extends AppComponentState {
       ]);
       this.devices = (devices.items ?? []).map((device) => this.mapDevice(device));
       this.deviceQuota = quota;
-      this.userAliases = (aliases.items ?? []).map((item) => ({ email: item.email, alias: item.alias }));
       this.workspaceDeviceInvites = invites.items ?? [];
       this.deviceBootstrapKeys = bootstrap.items ?? [];
       this.userSessions = sessions.items ?? [];
@@ -135,7 +124,6 @@ export abstract class AppComponentData extends AppComponentState {
       if (!this.isDemoMode) {
         this.devices = [];
         this.deviceQuota = null;
-        this.userAliases = [];
         this.workspaceDeviceInvites = [];
         this.deviceBootstrapKeys = [];
         this.userSessions = [];
@@ -354,6 +342,7 @@ export abstract class AppComponentData extends AppComponentState {
       ip: device.globalIp,
       owner: device.ownerEmail || device.ownerId,
       status: device.status,
+      createdAt: device.createdAt,
     };
   }
 

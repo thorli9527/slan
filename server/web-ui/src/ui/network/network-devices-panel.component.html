@@ -9,26 +9,29 @@
     <table class="compact-table network-devices-table">
       <colgroup>
         <col class="device-id-column" />
-        <col class="owner-column" />
+        <col class="os-column" />
         <col class="alias-column" />
         <col class="ip-column" />
+        <col class="owner-column" />
         <col class="status-column" />
+        <col class="created-at-column" />
         <col class="action-column" />
       </colgroup>
-      <thead><tr><th>设备</th><th>归属</th><th>别名</th><th>IP</th><th>状态</th></tr></thead>
+      <thead><tr><th>设备 ID</th><th>操作系统/版本</th><th>别名</th><th>IP</th><th>用户</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let device of vm.workspaceDevices">
           <td class="device-id-cell">
-            <button class="text-link" type="button" [title]="'查看设备: ' + (device.alias || device.deviceId)" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">查看详情</button>
-            <strong>{{ device.alias || device.deviceId }}</strong>
-            <code>{{ device.deviceId }}</code>
+            <code [title]="device.deviceId">{{ device.deviceId }}</code>
           </td>
-          <td>{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
+          <td>{{ device.platform }} {{ device.osVersion }}</td>
           <td>{{ device.alias || '-' }}</td>
-          <td><code>{{ device.ip }}</code></td>
+          <td><code>{{ device.ip || '-' }}</code></td>
+          <td [title]="vm.workspaceDeviceOwnerLabel(device)">{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
           <td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
+          <td>{{ vm.formatTime(device.createdAt) }}</td>
+          <td><button class="text-link" type="button" [title]="'查看设备: ' + (device.alias || device.deviceId)" (click)="vm.openDeviceExposureDialog(device)">查看详情</button></td>
         </tr>
-        <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="5">暂无设备，请先为网络引用一个包含设备的分组。</td></tr>
+        <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="8">暂无设备，请先为网络引用一个包含设备的分组。</td></tr>
       </tbody>
     </table>
   </div>

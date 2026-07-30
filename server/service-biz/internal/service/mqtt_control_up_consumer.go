@@ -30,6 +30,7 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 	topicRoot := mqttTopicRoot(s.Config)
 	topics := map[string]byte{
 		fmt.Sprintf("%s/devices/+/control/up", topicRoot):    1,
+		fmt.Sprintf("%s/devices/+/control/ack", topicRoot):   1,
 		fmt.Sprintf("%s/devices/+/heartbeat", topicRoot):     0,
 		fmt.Sprintf("%s/devices/+/runtime-state", topicRoot): 0,
 	}
@@ -93,6 +94,8 @@ func (s MQTTWebhookService) HandleUpstreamMessage(ctx context.Context, topic str
 	switch {
 	case strings.HasSuffix(topic, "/control/up"):
 		return s.HandleControlUpMessage(ctx, topic, payload)
+	case strings.HasSuffix(topic, "/control/ack"):
+		return s.handleNetworkEventDeliveryAck(ctx, topic, payload)
 	case strings.HasSuffix(topic, "/heartbeat"):
 		return s.handlePresenceMessage(ctx, topic, payload, true)
 	case strings.HasSuffix(topic, "/runtime-state"):
@@ -100,6 +103,43 @@ func (s MQTTWebhookService) HandleUpstreamMessage(ctx context.Context, topic str
 	default:
 		return fmt.Errorf("unsupported mqtt upstream topic: %s", topic)
 	}
+}
+
+func (s MQTTWebhookService) handleNetworkEventDeliveryAck(ctx context.Context, topic string, payload []byte) error {
+	if s.EventDeliveries == nil {
+		return nil
+	}
+	var ack struct {
+		DeliveryID string `json:"deliveryId"`
+		Status     string `json:"status"`
+	}
+	if err := json.Unmarshal(payload, &ack); err != nil {
+		return fmt.Errorf("decode control ack: %w", err)
+	}
+	deviceID := deviceIDFromControlAckTopic(topic)
+	if deviceID == "" || strings.TrimSpace(ack.DeliveryID) == "" {
+		return fmt.Errorf("invalid control ack topic=%s deliveryId=%s", topic, ack.DeliveryID)
+	}
+	item, ok, err := s.EventDeliveries.GetNetworkEventDelivery(ctx, strings.TrimSpace(ack.DeliveryID), deviceID)
+	if err != nil || !ok {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(ack.Status), "succeeded") {
+		return nil
+	}
+	now := currentTime(s.Now).Unix()
+	item.Status = "acknowledged"
+	item.AcknowledgedAt = now
+	item.UpdatedAt = now
+	return s.EventDeliveries.SaveNetworkEventDelivery(ctx, item)
+}
+
+func deviceIDFromControlAckTopic(topic string) string {
+	parts := strings.Split(strings.Trim(strings.TrimSpace(topic), "/"), "/")
+	if len(parts) != 5 || parts[1] != "devices" || parts[3] != "control" || parts[4] != "ack" {
+		return ""
+	}
+	return parts[2]
 }
 
 func (s MQTTWebhookService) handlePresenceMessage(ctx context.Context, topic string, payload []byte, heartbeat bool) error {

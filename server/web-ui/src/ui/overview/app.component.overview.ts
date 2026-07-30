@@ -25,11 +25,6 @@ export abstract class AppComponentOverview extends AppComponentSecurity {
       this.navigateTo('/devices/groups');
       return;
     }
-    if (id === 'userAliases') {
-      this.workspaceRouteMode = 'list';
-      this.navigateTo('/user-aliases');
-      return;
-    }
     if (id === 'workspaces') {
       this.workspaceRouteMode = 'list';
       this.navigateTo('/spaces');
@@ -115,6 +110,64 @@ export abstract class AppComponentOverview extends AppComponentSecurity {
 
   deviceManagedSessions(device: DeviceRow): ApiManagedDeviceSession[] {
     return this.deviceSessionsByDeviceId[device.deviceId] ?? [];
+  }
+
+  deviceTokenRows(): Array<{ device: DeviceRow; session: ApiManagedDeviceSession }> {
+    return this.currentUserDevices
+      .flatMap((device) => this.deviceManagedSessions(device).map((session) => ({ device, session })))
+      .sort((left, right) => {
+        const statusOrder = Number(this.deviceTokenStatus(left.session) !== 'active') - Number(this.deviceTokenStatus(right.session) !== 'active');
+        return statusOrder || right.session.createdAt - left.session.createdAt;
+      });
+  }
+
+  activeDeviceTokenCount(): number {
+    return this.deviceTokenRows().filter(({ session }) => this.deviceTokenStatus(session) === 'active').length;
+  }
+
+  deviceTokenStatus(item: ApiManagedDeviceSession): string {
+    if (item.status === 'revoked' || item.revokedAt) {
+      return 'revoked';
+    }
+    if (item.expiresAt > 0 && item.expiresAt <= Math.floor(Date.now() / 1000)) {
+      return 'expired';
+    }
+    return item.status || 'active';
+  }
+
+  deviceTokenStatusLabel(item: ApiManagedDeviceSession): string {
+    switch (this.deviceTokenStatus(item)) {
+      case 'active': return '有效';
+      case 'expired': return '已过期';
+      case 'revoked': return '已失效';
+      default: return item.status || '-';
+    }
+  }
+
+  deviceTokenModeLabel(mode?: string): string {
+    switch ((mode || '').toLowerCase()) {
+      case 'long': return '长期';
+      case 'short': return '短期';
+      case 'device': return '设备';
+      default: return mode || '-';
+    }
+  }
+
+  deviceTokenExpiryText(value?: number): string {
+    if (!value) {
+      return '-';
+    }
+    const remain = value - Math.floor(Date.now() / 1000);
+    if (remain <= 0) {
+      return `${this.formatTime(value)} / 已过期`;
+    }
+    if (remain < 3600) {
+      return `${this.formatTime(value)} / ${Math.ceil(remain / 60)} 分钟`;
+    }
+    if (remain < 86400) {
+      return `${this.formatTime(value)} / ${Math.ceil(remain / 3600)} 小时`;
+    }
+    return `${this.formatTime(value)} / ${Math.ceil(remain / 86400)} 天`;
   }
 
   async revokeDeviceManagedSession(device: DeviceRow, item: ApiManagedDeviceSession): Promise<void> {

@@ -89,13 +89,6 @@ export type ClientDownload = {
   updatedAt: number;
 };
 
-export type ApiUserAlias = {
-  ownerUserId: string;
-  email: string;
-  alias: string;
-  updatedAt: number;
-};
-
 export type ApiDeviceOwner = {
   ownerRecordId: string;
   deviceId: string;
@@ -314,6 +307,7 @@ export type DeviceRow = {
   ip: string;
   owner: string;
   status: string;
+  createdAt?: number;
 };
 
 export type DeviceGroupRow = {
@@ -337,7 +331,6 @@ export type NetworkRow = {
 };
 
 export type MemberRow = { user: string; alias: string; role: string; status: string };
-export type UserAliasRow = { email: string; alias: string };
 export type DNSZoneRow = { zoneId?: string; networkId: string; zone: string; recordType: string; value: string; status: string; workspaceId: string };
 export type DNSRow = {
   recordId?: string;

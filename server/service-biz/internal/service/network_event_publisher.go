@@ -8,7 +8,9 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
+	"github.com/slan/service-biz/internal/repository"
 )
 
 type NetworkEventPublisher interface {
@@ -16,14 +18,19 @@ type NetworkEventPublisher interface {
 }
 
 type MqttNetworkEventPublisher struct {
-	config mqttkit.Config
+	config     mqttkit.Config
+	deliveries repository.NetworkEventDeliveryStore
 }
 
-func NewMqttNetworkEventPublisher(cfg mqttkit.Config) *MqttNetworkEventPublisher {
+func NewMqttNetworkEventPublisher(cfg mqttkit.Config, deliveries ...repository.NetworkEventDeliveryStore) *MqttNetworkEventPublisher {
 	if !cfg.Enabled || strings.TrimSpace(cfg.BrokerURL) == "" {
 		return nil
 	}
-	return &MqttNetworkEventPublisher{config: cfg}
+	publisher := &MqttNetworkEventPublisher{config: cfg}
+	if len(deliveries) > 0 {
+		publisher.deliveries = deliveries[0]
+	}
+	return publisher
 }
 
 func (p *MqttNetworkEventPublisher) PublishNetworkEvent(
@@ -52,8 +59,54 @@ func (p *MqttNetworkEventPublisher) PublishNetworkEvent(
 	if err != nil {
 		return fmt.Errorf("encode network event: %w", err)
 	}
+	if err := p.trackMembershipEvent(ctx, event, payload); err != nil {
+		return fmt.Errorf("track network membership event: %w", err)
+	}
 	topic := fmt.Sprintf("%s/networks/%s/broadcast", mqttTopicRoot(p.config), networkID)
 	return p.publishWithRetry(ctx, brokerURL, credential, topic, payload)
+}
+
+func (p *MqttNetworkEventPublisher) trackMembershipEvent(ctx context.Context, event NetworkEventEnvelope, payload []byte) error {
+	if p.deliveries == nil || (event.EventType != NetworkEventMemberAdded && event.EventType != NetworkEventMemberRemoved) {
+		return nil
+	}
+	members, err := p.deliveries.ListNetworkDevices(ctx, event.NetworkID)
+	if err != nil {
+		return err
+	}
+	targets := make(map[string]struct{}, len(members)+1)
+	for _, member := range members {
+		if networkMemberActive(member) {
+			targets[strings.TrimSpace(member.DeviceID)] = struct{}{}
+		}
+	}
+	if event.EventType == NetworkEventMemberRemoved {
+		var removed NetworkEventMemberRemovedPayload
+		if raw, marshalErr := json.Marshal(event.Payload); marshalErr == nil && json.Unmarshal(raw, &removed) == nil {
+			targets[strings.TrimSpace(removed.DeviceID)] = struct{}{}
+		}
+	}
+	now := time.UnixMilli(event.OccurredAt).Unix()
+	for target := range targets {
+		if target == "" {
+			continue
+		}
+		if _, exists, getErr := p.deliveries.GetNetworkEventDelivery(ctx, event.EventID, target); getErr != nil {
+			return getErr
+		} else if exists {
+			continue
+		}
+		item := model.NetworkEventDelivery{
+			EventID: event.EventID, TargetDeviceID: target, NetworkID: event.NetworkID,
+			EventType: string(event.EventType), ConfigVersion: int64(event.Version), Payload: string(payload),
+			Status: "pending", Attempts: 1, NextRetryAt: now + 60, ExpiresAt: now + 300,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		if err := p.deliveries.SaveNetworkEventDelivery(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *MqttNetworkEventPublisher) publishWithRetry(
