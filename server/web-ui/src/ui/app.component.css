@@ -1186,18 +1186,19 @@ code {
 .network-devices-table {
   table-layout: fixed;
   width: 100%;
+  min-width: 1390px;
 }
 
 .network-devices-table .device-id-column {
   width: 300px;
 }
 
-.network-devices-table .owner-column {
-  width: 180px;
+.network-devices-table .os-column {
+  width: 150px;
 }
 
 .network-devices-table .alias-column {
-  width: 210px;
+  width: 180px;
 }
 
 .network-devices-table .ip-column {
@@ -1205,11 +1206,19 @@ code {
 }
 
 .network-devices-table .status-column {
-  width: 110px;
+  width: 90px;
+}
+
+.network-devices-table .owner-column {
+  width: 180px;
+}
+
+.network-devices-table .created-at-column {
+  width: 160px;
 }
 
 .network-devices-table .action-column {
-  width: 100px;
+  width: 110px;
 }
 
 .network-devices-table th,
@@ -1224,38 +1233,23 @@ code {
   overflow: visible;
 }
 
-.device-id-cell .text-link {
-  display: inline-block;
+.device-id-cell code {
+  display: block;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: bottom;
   white-space: nowrap;
 }
 
-.device-id-cell {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.device-id-cell strong {
-  overflow: hidden;
-  color: #111827;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-id-cell code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.managed-devices-table-wrap {
+  width: 100%;
+  overflow-x: auto;
 }
 
 .managed-devices-table {
   table-layout: fixed;
   width: 100%;
+  min-width: 1410px;
 }
 
 .managed-devices-table .device-id-column {
@@ -1280,6 +1274,10 @@ code {
 
 .managed-devices-table .status-column {
   width: 100px;
+}
+
+.managed-devices-table .created-at-column {
+  width: 160px;
 }
 
 .managed-devices-table .action-column {
@@ -1487,24 +1485,41 @@ code {
   flex-wrap: wrap;
 }
 
-.device-token-block {
+.device-token-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.device-token-table {
+  min-width: 1080px;
+  table-layout: fixed;
+}
+
+.device-token-table th:nth-child(1) { width: 190px; }
+.device-token-table th:nth-child(2) { width: 160px; }
+.device-token-table th:nth-child(3) { width: 66px; }
+.device-token-table th:nth-child(4) { width: 76px; }
+.device-token-table th:nth-child(5),
+.device-token-table th:nth-child(6) { width: 205px; }
+.device-token-table th:nth-child(7) { width: 150px; }
+.device-token-table th:nth-child(8) { width: 52px; }
+
+.device-token-device {
   display: grid;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(15, 23, 42, .08);
+  gap: 2px;
 }
 
-.device-token-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.device-token-device strong,
+.device-token-device code,
+.device-token-table .session-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.device-token-header h3,
-.device-token-header code {
-  margin: 0;
+.device-token-device code {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .rules-columns {

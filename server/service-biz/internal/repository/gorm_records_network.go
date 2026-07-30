@@ -20,6 +20,22 @@ type gormNetworkConfigVersionRecord struct {
 	UpdatedAt int64  `gorm:"not null"`
 }
 
+type gormNetworkEventDeliveryRecord struct {
+	EventID        string `gorm:"primaryKey;size:128"`
+	TargetDeviceID string `gorm:"primaryKey;size:64;index"`
+	NetworkID      string `gorm:"size:64;index"`
+	EventType      string `gorm:"size:64;index"`
+	ConfigVersion  int64  `gorm:"not null"`
+	Payload        string `gorm:"type:text;not null"`
+	Status         string `gorm:"size:32;index"`
+	Attempts       int    `gorm:"not null"`
+	NextRetryAt    int64  `gorm:"not null;index"`
+	ExpiresAt      int64  `gorm:"not null;index"`
+	AcknowledgedAt int64  `gorm:"not null"`
+	CreatedAt      int64  `gorm:"not null"`
+	UpdatedAt      int64  `gorm:"not null"`
+}
+
 type gormNetworkDeviceRecord struct {
 	ID                 uint64              `gorm:"primaryKey;autoIncrement"`
 	NetworkID          string              `gorm:"size:64;uniqueIndex:uidx_gorm_network_device_records_network_device"`

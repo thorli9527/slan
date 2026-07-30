@@ -804,6 +804,7 @@ fn try_ingest_network_event(
                 "client-core-service ignored unchanged inactive network version networkId={} version={}",
                 envelope.network_id, envelope.version
             ));
+            record_network_event_ack(task_queue, &envelope.event_id)?;
             return Ok(true);
         }
         let local_device_id = session
@@ -841,6 +842,7 @@ fn try_ingest_network_event(
             envelope.network_id,
             active_network_id.unwrap_or_default()
         ));
+        record_network_event_ack(task_queue, &envelope.event_id)?;
         return Ok(true);
     }
     let local_device_id = session
@@ -950,11 +952,15 @@ fn try_ingest_network_event(
             let mut queue = task_queue
                 .lock()
                 .map_err(|_| "control task queue mutex poisoned".to_string())?;
-            queue
-                .enqueue_downstream_unacked(
+            let task = queue
+                .enqueue_downstream(
                     crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
+                    envelope.event_id.clone(),
                     false,
                 )
+                .map_err(|err| err.to_string())?;
+            queue
+                .mark_unacknowledged(&task.id)
                 .map_err(|err| err.to_string())?;
         }
         let state = crate::drain_pending_control_tasks(runtime, task_queue);
@@ -970,6 +976,7 @@ fn try_ingest_network_event(
             business_data,
         );
     } else {
+        record_network_event_ack(task_queue, &envelope.event_id)?;
         publish_state_business_event_with_extra(
             state_notifier,
             BUSINESS_CONTROL_SYNC_CHANGED,
@@ -978,6 +985,24 @@ fn try_ingest_network_event(
         );
     }
     Ok(true)
+}
+
+fn record_network_event_ack(
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    event_id: &str,
+) -> Result<(), String> {
+    let mut queue = task_queue
+        .lock()
+        .map_err(|_| "control task queue mutex poisoned".to_string())?;
+    let task = queue
+        .enqueue_downstream(
+            crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
+            event_id.to_string(),
+            false,
+        )
+        .map_err(|err| err.to_string())?;
+    queue.mark_succeeded(&task.id).map_err(|err| err.to_string())
+        .and_then(|_| queue.mark_unacknowledged(&task.id).map_err(|err| err.to_string()))
 }
 
 fn network_event_targets_active_runtime(

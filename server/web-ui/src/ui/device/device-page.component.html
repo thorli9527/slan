@@ -16,7 +16,8 @@
       <span>剩余额度 <strong>{{ vm.currentDeviceRemaining }}</strong> / {{ vm.currentDeviceTotalLimit }}</span>
     </div>
     <p class="form-error" *ngIf="vm.deviceListMessage">{{ vm.deviceListMessage }}</p>
-    <table *ngIf="vm.devicePanel === 'list'" class="managed-devices-table">
+    <div *ngIf="vm.devicePanel === 'list'" class="managed-devices-table-wrap">
+    <table class="managed-devices-table">
       <colgroup>
         <col class="device-id-column" />
         <col class="os-column" />
@@ -24,11 +25,12 @@
         <col class="ip-column" />
         <col class="owner-column" />
         <col class="status-column" />
+        <col class="created-at-column" />
         <col class="action-column" />
       </colgroup>
-      <thead><tr><th>设备 ID</th><th>操作系统/版本</th><th>别名</th><th>IP</th><th>用户</th><th>状态</th><th>操作</th></tr></thead>
+      <thead><tr><th>设备 ID</th><th>操作系统/版本</th><th>别名</th><th>IP</th><th>用户</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>
-        <tr *ngFor="let device of vm.currentUserDevices">
+        <tr *ngFor="let device of vm.deviceManagementDevices">
           <td class="device-id-cell">
             <code>{{ device.deviceId }}</code>
           </td>
@@ -36,7 +38,7 @@
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
               <span>{{ device.alias }}</span>
-              <button *ngIf="vm.isCurrentUserDeviceOwner(device)" class="tag-icon-button" type="button" title="修改别名" (click)="vm.openDeviceAliasDialog(device)">
+              <button class="tag-icon-button" type="button" title="修改我的设备别名" (click)="vm.openDeviceAliasDialog(device)">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
                   <circle cx="8.5" cy="8.5" r="1.4"></circle>
@@ -59,6 +61,7 @@
           <td><code>{{ device.ip }}</code></td>
           <td>{{ vm.userLabel(device.owner) }}</td>
           <td><span class="status online">{{ device.status }}</span></td>
+          <td>{{ vm.formatTime(device.createdAt) }}</td>
           <td class="table-actions">
             <button class="text-link" type="button" (click)="vm.openDeviceGroupPickerDialog(device)">绑定分组</button>
             <button *ngIf="vm.isCurrentUserDeviceOwner(device)" class="text-link" type="button" (click)="vm.openDeviceExposureDialog(device)">对外引用</button>
@@ -66,46 +69,12 @@
             <button *ngIf="vm.isReferencedDevice(device)" class="link-danger" type="button" (click)="vm.removeDevice(device)">删除</button>
           </td>
         </tr>
-        <tr *ngIf="vm.currentUserDevices.length === 0">
-          <td colspan="7">暂无设备，注册或接入一台设备后会显示在这里。</td>
+        <tr *ngIf="vm.deviceManagementDevices.length === 0">
+          <td colspan="8">暂无设备，注册或接入一台设备后会显示在这里。</td>
         </tr>
       </tbody>
     </table>
-
-    <section *ngIf="vm.devicePanel === 'list'" class="device-groups-section">
-      <div class="section-title">
-        <div>
-          <h3>接入安装 Key</h3>
-          <p>用于无登录设备接入当前账户；一次性使用，并受过期/撤销状态约束。</p>
-        </div>
-      </div>
-      <table class="compact-table">
-        <thead><tr><th>设备别名</th><th>状态</th><th>过期时间</th><th>创建时间</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr *ngFor="let item of vm.currentDeviceBootstrapKeys">
-            <td>{{ item.deviceAlias || '-' }}</td>
-            <td>{{ vm.bootstrapStatusLabel(item) }}</td>
-            <td>{{ vm.bootstrapExpiryText(item) }}</td>
-            <td>{{ vm.formatTime(item.createdAt) }}</td>
-            <td class="table-actions">
-              <button class="table-icon-button danger" type="button" *ngIf="vm.effectiveBootstrapStatus(item) === 'active'" title="撤销引导密钥" aria-label="撤销引导密钥" (click)="vm.revokeBootstrapKey(item)">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 7h16"></path>
-                  <path d="M9 7V5h6v2"></path>
-                  <path d="M8 7l1 12h6l1-12"></path>
-                  <path d="M10 11v5"></path>
-                  <path d="M14 11v5"></path>
-                </svg>
-              </button>
-              <span *ngIf="vm.effectiveBootstrapStatus(item) !== 'active'">-</span>
-            </td>
-          </tr>
-          <tr *ngIf="vm.currentDeviceBootstrapKeys.length === 0">
-            <td colspan="5">暂无接入安装 Key</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+    </div>
 
     <section *ngIf="vm.devicePanel === 'groups'" class="device-groups-section">
       <div class="section-title">

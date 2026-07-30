@@ -15,7 +15,10 @@ func AllowTopicAccess(cfg Config, principal, deviceID, topic string, subscribe b
 	}
 	if principal == "server" {
 		if subscribe {
-			return topic == topicRoot(cfg)+"/devices/#" || isControlUpTopic(cfg, topic) || topic == topicRoot(cfg)+"/server/control/up"
+			return topic == topicRoot(cfg)+"/devices/#" ||
+				isControlUpTopic(cfg, topic) ||
+				isControlAckTopic(cfg, topic) ||
+				topic == topicRoot(cfg)+"/server/control/up"
 		}
 		return isControlDownTopic(cfg, topic) || isNetworkBroadcastTopic(cfg, topic)
 	}
@@ -113,6 +116,12 @@ func isControlDownTopic(cfg Config, topic string) bool {
 	suffix := strings.TrimPrefix(topic, topicRoot(cfg)+"/devices/")
 	parts := strings.Split(suffix, "/")
 	return len(parts) == 3 && parts[0] != "" && parts[1] == "control" && parts[2] == "down"
+}
+
+func isControlAckTopic(cfg Config, topic string) bool {
+	suffix := strings.TrimPrefix(topic, topicRoot(cfg)+"/devices/")
+	parts := strings.Split(suffix, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] == "control" && parts[2] == "ack"
 }
 
 func isNetworkBroadcastTopic(cfg Config, topic string) bool {

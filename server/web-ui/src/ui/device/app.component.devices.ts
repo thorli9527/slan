@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { AppComponentUserAlias } from '../user-alias/app.component.user-alias';
+import { AppComponentNetworks } from '../network/app.component.networks';
 import {
   ApiDevice,
   ApiDeviceBootstrapKey,
@@ -7,7 +7,6 @@ import {
   ApiDNSZone,
   ApiSecurityGroup,
   ApiSecurityRule,
-  ApiUserAlias,
   ApiWorkspace,
   ApiWorkspaceDevice,
   DeviceExposureRow,
@@ -21,7 +20,6 @@ import {
   SecurityGroupRow,
   SecurityRuleRow,
   SecurityRuleTemplate,
-  UserAliasRow,
   WorkspaceDeviceInviteRow,
   WorkspacePanel,
   WorkspaceRow,
@@ -29,7 +27,7 @@ import {
 import { WEB_API } from '../api-paths';
 import { compactUuid } from '../app.utils';
 import { ApiHttpError } from '../app-api.service';
-export abstract class AppComponentDevices extends AppComponentUserAlias {
+export abstract class AppComponentDevices extends AppComponentNetworks {
   setDevicePanel(panel: 'list' | 'groups'): void {
     this.devicePanel = panel;
     this.deviceListMessage = '';

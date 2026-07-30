@@ -354,7 +354,7 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "SLAN Client");
   }
 
-  gtk_window_set_default_size(window, 480, 310);
+  gtk_window_set_default_size(window, 480, 190);
   gtk_window_set_resizable(window, FALSE);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

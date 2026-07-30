@@ -21,7 +21,17 @@ func (s DeviceCatalogService) ListVisibleDevices(ctx context.Context, ownerID st
 	if err != nil {
 		return nil, err
 	}
-	return deviceViews(items), nil
+	views := deviceViews(items)
+	aliases, err := s.visibleDeviceAliases(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range views {
+		if alias := aliases[views[i].DeviceID]; alias != "" {
+			views[i].Alias = alias
+		}
+	}
+	return views, nil
 }
 
 func (s DeviceCatalogService) GetDevice(ctx context.Context, deviceID string) (DeviceView, error) {
@@ -41,11 +51,19 @@ func (s DeviceProvisioningService) RegisterDevice(ctx context.Context, input Reg
 }
 
 func (s DeviceProvisioningService) UpdateDeviceAlias(ctx context.Context, input UpdateDeviceAliasInput) (DeviceProfileView, error) {
-	device, err := s.updateDeviceAliasEntity(ctx, input)
+	device, alias, err := s.updateDeviceAliasEntity(ctx, input)
 	if err != nil {
 		return DeviceProfileView{}, err
 	}
-	return buildDeviceProfile(ctx, s.Users, s.Networks, device)
+	view, err := buildDeviceProfile(ctx, s.Users, s.Networks, device)
+	if err != nil {
+		return DeviceProfileView{}, err
+	}
+	if alias != "" {
+		view.Device.Alias = alias
+		view.GlobalName = networkGlobalName(device.DeviceID, alias, device.Name)
+	}
+	return view, nil
 }
 
 func (s DeviceRuntimeAccessService) UpdateDeviceRuntime(ctx context.Context, input UpdateDeviceRuntimeInput) (DeviceProfileView, error) {
@@ -56,20 +74,38 @@ func (s DeviceRuntimeAccessService) UpdateDeviceRuntime(ctx context.Context, inp
 	return buildDeviceProfile(ctx, s.Users, s.Networks, device)
 }
 
-func (s DeviceProvisioningService) updateDeviceAliasEntity(ctx context.Context, input UpdateDeviceAliasInput) (model.Device, error) {
+func (s DeviceProvisioningService) updateDeviceAliasEntity(ctx context.Context, input UpdateDeviceAliasInput) (model.Device, string, error) {
 	input = normalizeUpdateDeviceAliasInput(input)
-	if input.DeviceID == "" {
-		return model.Device{}, ErrInvalidArgument
+	if input.DeviceID == "" || input.ActorUserID == "" {
+		return model.Device{}, "", ErrInvalidArgument
 	}
-	device, err := requireOwnedManagedDevice(ctx, s.Users, s.Devices, input.ActorUserID, input.DeviceID)
+	device, err := getManagedDevice(ctx, s.Devices, input.DeviceID)
 	if err != nil {
-		return model.Device{}, err
+		return model.Device{}, "", err
+	}
+	relation, ok, err := s.Relations.GetDeviceUserRelation(ctx, input.DeviceID, input.ActorUserID)
+	if err != nil {
+		return model.Device{}, "", err
+	}
+	if !ok || relation.Status != model.DeviceRelationStatusActive {
+		return model.Device{}, "", ErrForbidden
+	}
+	if relation.Role == model.DeviceRelationRoleShared {
+		relation.Alias = input.Alias
+		relation.UpdatedAt = deviceNow(s.Now).Unix()
+		if err := s.Relations.SaveDeviceUserRelation(ctx, relation); err != nil {
+			return model.Device{}, "", err
+		}
+		return device, relation.Alias, nil
+	}
+	if relation.Role != model.DeviceRelationRoleOwner || device.OwnerID != input.ActorUserID {
+		return model.Device{}, "", ErrForbidden
 	}
 	device = applyUpdateDeviceAlias(device, input.Alias, deviceNow(s.Now).Unix())
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {
-		return model.Device{}, err
+		return model.Device{}, "", err
 	}
-	return device, nil
+	return device, device.Alias, nil
 }
 
 func (s DeviceRuntimeAccessService) updateDeviceRuntimeEntity(ctx context.Context, input UpdateDeviceRuntimeInput) (model.Device, error) {
@@ -241,7 +277,35 @@ func (s DeviceCatalogService) ListVisibleDeviceProfiles(ctx context.Context, own
 	if err != nil {
 		return nil, err
 	}
-	return buildDeviceProfiles(ctx, s.Users, s.Networks, items)
+	views, err := buildDeviceProfiles(ctx, s.Users, s.Networks, items)
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := s.visibleDeviceAliases(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range views {
+		if alias := aliases[views[i].Device.DeviceID]; alias != "" {
+			views[i].Device.Alias = alias
+			views[i].GlobalName = networkGlobalName(views[i].Device.DeviceID, alias, views[i].Device.Name)
+		}
+	}
+	return views, nil
+}
+
+func (s DeviceCatalogService) visibleDeviceAliases(ctx context.Context, userID string) (map[string]string, error) {
+	relations, err := s.Relations.ListDeviceRelationsByUser(ctx, normalizeDeviceOwnerID(userID))
+	if err != nil {
+		return nil, err
+	}
+	aliases := make(map[string]string, len(relations))
+	for _, relation := range relations {
+		if relation.Status == model.DeviceRelationStatusActive && relation.Alias != "" {
+			aliases[relation.DeviceID] = relation.Alias
+		}
+	}
+	return aliases, nil
 }
 
 func (s DeviceCatalogService) GetDeviceProfile(ctx context.Context, deviceID string) (DeviceProfileView, error) {

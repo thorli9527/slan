@@ -12,7 +12,6 @@ import {
   INITIAL_DNS_ZONES,
   DEVICE_GROUP_PRESETS,
   INITIAL_MEMBERS,
-  INITIAL_USER_ALIASES,
   INITIAL_WORKSPACE_DEVICE_INVITES,
   INITIAL_WORKSPACE_DEVICE_IDS,
   INITIAL_WORKSPACES,
@@ -30,7 +29,6 @@ import {
   ApiDNSZone,
   ApiSecurityGroup,
   ApiSecurityRule,
-  ApiUserAlias,
   ApiWorkspace,
   ApiWorkspaceDevice,
   ApiDeviceQuota,
@@ -46,7 +44,6 @@ import {
   SecurityGroupRow,
   SecurityRuleRow,
   SecurityRuleTemplate,
-  UserAliasRow,
   WorkspaceDeviceInviteRow,
   WorkspacePanel,
   WorkspaceRow,
@@ -82,12 +79,10 @@ export abstract class AppComponentState {
     this.showWorkspaceNameTagDialog = false;
     this.showWorkspacePolicyTagDialog = false;
     this.showSecurityGroupNameTagDialog = false;
-    this.showUserAliasDialog = false;
     this.showDeviceAliasDialog = false;
     this.showZoneTagDialog = false;
     this.editingWorkspace = null;
     this.editingSecurityGroup = null;
-    this.editingUserAlias = null;
     this.editingDevice = null;
     this.editingZone = null;
   }
@@ -312,11 +307,9 @@ export abstract class AppComponentState {
   showWorkspaceNameTagDialog = false;
   showWorkspacePolicyTagDialog = false;
   showSecurityGroupNameTagDialog = false;
-  showUserAliasDialog = false;
   editingDevice: DeviceRow | null = null;
   editingWorkspace: WorkspaceRow | null = null;
   editingSecurityGroup: SecurityGroupRow | null = null;
-  editingUserAlias: UserAliasRow | null = null;
   bindDeviceQuery = '';
   securityGroupDialogMessage = '';
   deviceAliasValue = '';
@@ -325,7 +318,6 @@ export abstract class AppComponentState {
   workspaceDefaultValue = false;
   securityGroupNameValue = '';
   securityGroupDescriptionValue = '';
-  userAliasValue = '';
   showZoneDialog = false;
   showZoneTagDialog = false;
   zoneDialogMessage = '';
@@ -375,7 +367,6 @@ export abstract class AppComponentState {
   };
   workspaces: WorkspaceRow[] = INITIAL_WORKSPACES.map((item) => ({ ...item }));
   members: MemberRow[] = INITIAL_MEMBERS.map((item) => ({ ...item }));
-  userAliases: UserAliasRow[] = INITIAL_USER_ALIASES.map((item) => ({ ...item }));
   dnsZones: DNSZoneRow[] = INITIAL_DNS_ZONES.map((item) => ({ ...item }));
   dnsRecords: DNSRow[] = INITIAL_DNS_RECORDS.map((item) => ({ ...item }));
   securityRules: SecurityRuleRow[] = [];
@@ -471,6 +462,12 @@ export abstract class AppComponentState {
 
   get currentUserDevices(): DeviceRow[] {
     return this.devices;
+  }
+
+  get deviceManagementDevices(): DeviceRow[] {
+    return [...this.currentUserDevices].sort((left, right) =>
+      (right.createdAt ?? 0) - (left.createdAt ?? 0) || left.deviceId.localeCompare(right.deviceId),
+    );
   }
 
   enabledDeviceCount(): number {
@@ -676,26 +673,6 @@ export abstract class AppComponentState {
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
-  get managedUserAliases(): UserAliasRow[] {
-    const emails = new Set<string>();
-    const visibleDeviceIds = new Set<string>();
-    for (const deviceIds of Object.values(this.workspaceDeviceIdsByWorkspace)) {
-      deviceIds.forEach((deviceId) => visibleDeviceIds.add(deviceId));
-    }
-    this.devices
-      .filter((device) => this.currentOwnerKeys().has(device.owner.trim().toLowerCase()) || visibleDeviceIds.has(device.deviceId))
-      .forEach((device) => emails.add(device.owner));
-    this.members.forEach((member) => emails.add(member.user));
-    this.deviceExposures
-      .filter((item) => this.currentUserDevices.some((device) => device.deviceId === item.deviceId))
-      .forEach((item) => emails.add(item.user));
-    const current = (this.currentUser || this.authEmail).trim().toLowerCase();
-    return Array.from(emails)
-      .filter((email) => email.trim().toLowerCase() !== current)
-      .sort()
-      .map((email) => this.userAliases.find((item) => item.email === email) ?? { email, alias: '' });
-  }
-
   get selectedDeviceUsages(): Array<{ workspaceName: string; owner: string; joinMethod: string }> {
     if (!this.selectedExposureDevice) {
       return [];
@@ -756,18 +733,12 @@ export abstract class AppComponentState {
     if (value.trim().toLowerCase() === current) {
       return 'owner';
     }
-    return this.userAliases.find((item) => item.email.toLowerCase() === value.trim().toLowerCase())?.alias || value;
+    return value;
   }
 
   displayUserText(value: string): string {
     const current = (this.currentUser || this.authEmail).trim();
-    let output = current ? value.replaceAll(current, 'owner') : value;
-    for (const item of this.userAliases) {
-      if (item.alias.trim()) {
-        output = output.replaceAll(item.email, item.alias.trim());
-      }
-    }
-    return output;
+    return current ? value.replaceAll(current, 'owner') : value;
   }
 
   workspaceDeviceJoinMethod(workspaceId: string, deviceId: string): string {

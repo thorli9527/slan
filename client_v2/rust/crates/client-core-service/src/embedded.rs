@@ -1824,6 +1824,7 @@ fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static s
     let message_type = value.get("type").and_then(Value::as_str)?;
     let delivery_id = value
         .get("messageId")
+        .or_else(|| value.get("eventId"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?
@@ -3581,7 +3582,7 @@ mod tests {
     fn embedded_downstream_ack_identity_maps_network_event_to_reconcile_network_state() {
         let value = serde_json::json!({
             "type": "network_event",
-            "messageId": "event-msg-1",
+            "eventId": "event-msg-1",
             "networkId": "net-1",
             "version": 7,
             "eventType": "snapshot",

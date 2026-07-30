@@ -361,7 +361,7 @@ export class AppComponentAuth extends AppComponentOverview {
 
   private homePathFromCurrentRoute(): string {
     const path = window.location.pathname;
-    if (path.startsWith('/space/') || path === '/devices' || path === '/user-aliases' || path === '/spaces') {
+    if (path.startsWith('/space/') || path === '/devices' || path === '/spaces') {
       return path;
     }
     return '/overview';

@@ -28,3 +28,10 @@ func (s *GormStore) SaveDeviceBootstrapKey(_ context.Context, key model.DeviceBo
 	row := bootstrapKeyRecordFromModel(key)
 	return upsertByColumns(s.db, &row, []string{"key_id"}, []string{"user_id", "name", "token", "status", "expires_at", "used_at", "used_by_device_id", "created_at", "updated_at", "revoked_at"})
 }
+
+func (s *GormStore) DeleteExpiredDeviceBootstrapKeys(ctx context.Context, expiresBefore int64) (int64, error) {
+	result := s.db.WithContext(ctx).
+		Where("expires_at > 0 AND expires_at <= ?", expiresBefore).
+		Delete(&gormBootstrapKeyRecord{})
+	return result.RowsAffected, result.Error
+}

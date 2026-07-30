@@ -5,7 +5,7 @@ import servicepkg "github.com/slan/service-biz/internal/service"
 func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 	repos := deps.deviceRepositories()
 	ids := deps.deviceIDs()
-	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig())
+	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig(), deps.networkRepositories().EventDeliveries)
 	return DeviceServices{
 		DeviceManagement: servicepkg.NewDeviceCoreService(repos.Users, repos.Devices, repos.Relations, repos.Networks, deps.mqttConfig(), ids.NewDeviceID, nil),
 		BootstrapAuth: servicepkg.NewDeviceBootstrapService(

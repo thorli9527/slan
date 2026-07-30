@@ -146,6 +146,10 @@ func (s DeviceBootstrapService) RevokeDeviceBootstrapKey(ctx context.Context, in
 	return s.Keys.RevokeDeviceBootstrapKey(ctx, input)
 }
 
+func (s DeviceBootstrapService) CleanupExpiredDeviceBootstrapKeys(ctx context.Context) (int64, error) {
+	return s.Keys.CleanupExpiredDeviceBootstrapKeys(ctx)
+}
+
 func (s DeviceBootstrapService) BootstrapDeviceSession(ctx context.Context, input BootstrapDeviceSessionInput) (DeviceSessionBootstrapView, error) {
 	return s.Sessions.BootstrapDeviceSession(ctx, input)
 }

@@ -77,11 +77,12 @@ func bindDeviceRepositories(store *repository.GormStore) DeviceRepositories {
 
 func bindNetworkRepositories(store *repository.GormStore) NetworkRepositories {
 	return NetworkRepositories{
-		Users:     store,
-		Devices:   store,
-		Relations: store,
-		Networks:  store,
-		Ops:       store,
+		Users:           store,
+		Devices:         store,
+		Relations:       store,
+		Networks:        store,
+		Ops:             store,
+		EventDeliveries: store,
 	}
 }
 
@@ -107,7 +108,8 @@ func bindWireRepositories(store *repository.GormStore) WireRepositories {
 
 func bindMQTTRepositories(store *repository.GormStore) MQTTRepositories {
 	return MQTTRepositories{
-		Networks: store,
+		Networks:        store,
+		EventDeliveries: store,
 	}
 }
 

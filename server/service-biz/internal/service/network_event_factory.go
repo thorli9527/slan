@@ -6,13 +6,14 @@ import (
 	"strings"
 
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
+	"github.com/slan/service-biz/internal/repository"
 )
 
-func NewNetworkEventPublisher(cfg mqttkit.Config) NetworkEventPublisher {
+func NewNetworkEventPublisher(cfg mqttkit.Config, deliveries ...repository.NetworkEventDeliveryStore) NetworkEventPublisher {
 	if !cfg.Enabled || strings.TrimSpace(cfg.BrokerURL) == "" {
 		return nil
 	}
-	return NewMqttNetworkEventPublisher(cfg)
+	return NewMqttNetworkEventPublisher(cfg, deliveries...)
 }
 
 func mqttBrokerURLForClient(raw string) (string, error) {

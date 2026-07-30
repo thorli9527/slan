@@ -19,10 +19,45 @@ func main() {
 	}
 	if routeSetPublishesNetworkVersions(routeSet) {
 		go startNetworkVersionPublisher(server)
+		go startNetworkEventDeliveryRetry(server)
+		go startExpiredBootstrapKeyCleanup(server)
 	}
 	log.Printf("service-biz listening on %s routeSet=%s", addr, routeSet)
 	if err := http.ListenAndServe(addr, server.RoutesFor(routeSet)); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func startExpiredBootstrapKeyCleanup(server *serviceapp.Server) {
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		deleted, err := server.Container().Services.Devices.BootstrapAuth.CleanupExpiredDeviceBootstrapKeys(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("expired device bootstrap key cleanup failed: %v", err)
+			return
+		}
+		log.Printf("expired device bootstrap key cleanup deleted=%d", deleted)
+	}
+	cleanup()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		cleanup()
+	}
+}
+
+func startNetworkEventDeliveryRetry(server *serviceapp.Server) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		result, err := server.Container().Services.Messaging.BrokerWebhook.RetryNetworkEventDeliveries(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("network event delivery retry partial failure: %v", err)
+		}
+		log.Printf("network event delivery retry scanned=%d republished=%d fallbackPublished=%d", result.Scanned, result.Republished, result.FallbackPublished)
 	}
 }
 

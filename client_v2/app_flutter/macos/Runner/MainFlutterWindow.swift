@@ -5,7 +5,10 @@ class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     self.contentViewController = flutterViewController
-    let contentSize = NSSize(width: 480, height: 310)
+    // The Flutter desktop home is a compact utility surface. Keep the native
+    // content area matched to it so signed-in and signed-out states do not
+    // leave a large unused region below their actions.
+    let contentSize = NSSize(width: 480, height: 190)
     self.setContentSize(contentSize)
     self.minSize = contentSize
     self.maxSize = contentSize

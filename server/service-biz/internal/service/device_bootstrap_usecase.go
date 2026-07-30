@@ -1,6 +1,14 @@
 package service
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/slan/service-biz/internal/repository"
+)
+
+const expiredBootstrapKeyRetention = 48 * time.Hour
 
 func (s DeviceBootstrapKeyService) CreateDeviceBootstrapKey(ctx context.Context, input CreateDeviceBootstrapKeyInput) (DeviceBootstrapKeyView, error) {
 	input = normalizeCreateDeviceBootstrapKeyInput(input)
@@ -43,6 +51,15 @@ func (s DeviceBootstrapKeyService) RevokeDeviceBootstrapKey(ctx context.Context,
 		return DeviceBootstrapKeyView{}, err
 	}
 	return bootstrapKeyView(key), nil
+}
+
+func (s DeviceBootstrapKeyService) CleanupExpiredDeviceBootstrapKeys(ctx context.Context) (int64, error) {
+	cutoff := deviceNow(s.Now).Add(-expiredBootstrapKeyRetention).Unix()
+	cleanup, ok := s.Devices.(repository.DeviceBootstrapCleanupRepository)
+	if !ok {
+		return 0, fmt.Errorf("device bootstrap cleanup repository is not configured")
+	}
+	return cleanup.DeleteExpiredDeviceBootstrapKeys(ctx, cutoff)
 }
 
 func (s DeviceBootstrapSessionService) BootstrapDeviceSession(ctx context.Context, input BootstrapDeviceSessionInput) (DeviceSessionBootstrapView, error) {
