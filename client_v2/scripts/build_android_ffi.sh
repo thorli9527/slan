@@ -39,7 +39,7 @@ if [[ ! -f "$TOOLCHAIN_BIN/${TARGET}${API_LEVEL}-clang${CLANG_EXT}" ]]; then
   echo "Android NDK clang is missing: $TOOLCHAIN_BIN/${TARGET}${API_LEVEL}-clang${CLANG_EXT}" >&2
   exit 1
 fi
-
+ 
 rustup target add "$TARGET"
 
 (

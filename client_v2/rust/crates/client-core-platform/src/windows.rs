@@ -4428,9 +4428,6 @@ fn disable_adapter(interface_name: &str) -> Result<()> {
         "$name = '{}'; \
          $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
          if ($adapter) {{ \
-           Set-NetIPInterface -InterfaceAlias $name -AddressFamily IPv4 -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null; \
-           Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; \
-           Set-DnsClientServerAddress -InterfaceAlias $name -ResetServerAddresses -ErrorAction SilentlyContinue | Out-Null; \
            Disable-NetAdapter -Name $name -Confirm:$false -ErrorAction SilentlyContinue | Out-Null; \
          }}",
         escape_powershell_single_quoted(interface_name),

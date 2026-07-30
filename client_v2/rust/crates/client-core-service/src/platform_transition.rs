@@ -511,15 +511,15 @@ fn next_operation_id() -> u64 {
     NEXT_PLATFORM_OPERATION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Phase 1 (fast): install/enable adapter only — no IP/routes/DNS configuration.
+/// Returns quickly so the UI can show "network enabled" before the heavier
+/// IP/routes/DNS/relay configuration runs in phase 2 ([configure_network_full]).
 pub(crate) fn activate_network(
     platform: &PlatformNetworkImpl,
     activation: PlatformNetworkActivation<'_>,
 ) -> Result<()> {
-    // Fast path: if the adapter is already configured with the correct IP,
-    // skip the expensive install/configure steps (~12s saved per redundant cycle).
-    // This prevents timeout when multiple activation cycles are queued.
-    // IMPORTANT: also verify the adapter actually has the IP — the runtime state
-    // cache can be stale if the adapter lost its IP (driver reset, system event, etc).
+    // Fast path: if the adapter is already up with the correct IP,
+    // skip the install step entirely (~1-2s saved).
     let cache_matches = platform.read_runtime_state().ok().is_some_and(|state| {
         state.network_enabled
             && state
@@ -527,11 +527,11 @@ pub(crate) fn activate_network(
                 .as_deref()
                 .is_some_and(|ip| ip == activation.virtual_ip)
     });
-    let adapter_has_ip = cache_matches
+    let adapter_verified = cache_matches
         && platform
             .verify_adapter_ip(activation.virtual_ip)
             .unwrap_or(false);
-    if adapter_has_ip {
+    if adapter_verified {
         crate::log_service_error(format!(
             "activate_network: fast path — adapter verified with {}",
             activation.virtual_ip
@@ -539,21 +539,31 @@ pub(crate) fn activate_network(
     } else {
         if cache_matches {
             crate::log_service_error(format!(
-                "activate_network: cache says {} but adapter verification failed — reconfiguring",
+                "activate_network: cache says {} but adapter verification failed — reinstalling",
                 activation.virtual_ip
             ));
         }
+        // Phase 1 only: install/enable the Wintun adapter.  IP, routes, DNS
+        // and relay are configured asynchronously in configure_network_full.
         platform.install_adapter()?;
-        platform.configure_ip(activation.virtual_ip, activation.prefix_len)?;
     }
-    // Resolver, routes and relay state belong to the current network plan, not
-    // to the adapter IP. They must be refreshed even when the IP fast path is used.
+    platform.mark_network_enabled(activation.virtual_ip)?;
+    record_network_enabled(activation.virtual_ip);
+    Ok(())
+}
+
+/// Phase 2: configure IP, routes, DNS and relay after the adapter is up.
+/// Called after [activate_network] + state commit so the UI already shows
+/// "enabled" while the heavier configuration runs in the background.
+pub(crate) fn configure_network_full(
+    platform: &PlatformNetworkImpl,
+    activation: PlatformNetworkActivation<'_>,
+) -> Result<()> {
+    platform.configure_ip(activation.virtual_ip, activation.prefix_len)?;
     platform.configure_resolver(activation.resolver)?;
     platform.configure_resolver_map(activation.resolver_zones, activation.resolver_records)?;
     platform.configure_routes(activation.routes)?;
     platform.configure_relay(activation.relay_config)?;
-    platform.mark_network_enabled(activation.virtual_ip)?;
-    record_network_enabled(activation.virtual_ip);
     Ok(())
 }
 

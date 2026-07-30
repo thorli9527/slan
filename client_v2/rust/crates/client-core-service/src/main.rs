@@ -4076,7 +4076,19 @@ fn execute_platform_network_activation(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("device unavailable: missing assigned virtual IP"))?;
-    platform_transition::activate_network(
+    let activation = PlatformNetworkActivation {
+        virtual_ip,
+        prefix_len: plan.prefix_len,
+        resolver: &plan.resolver,
+        resolver_zones: &plan.resolver_zones,
+        resolver_records: &plan.resolver_records,
+        routes: &plan.routes,
+        relay_config: plan.relay_config.as_ref(),
+    };
+    // Phase 1: install/enable adapter (fast).
+    platform_transition::activate_network(platform, activation)?;
+    // Phase 2: configure IP, routes, DNS, relay.
+    platform_transition::configure_network_full(
         platform,
         PlatformNetworkActivation {
             virtual_ip,
@@ -4133,48 +4145,141 @@ fn execute_runtime_network_activation(
         return Ok(runtime.snapshot().state);
     }
     let network_was_enabled = runtime.snapshot().state.network_enabled;
-    let snapshots = runtime.snapshots();
-    let executed = match transition.prepared {
-        Ok(plan) => platform_transition::run_serialized_correlated(
-            command_kind.clone(),
-            correlation_id.clone(),
-            move |platform| {
-                if !activation_context_matches(&snapshots.latest().state, &plan.session)
-                    || !persisted_activation_context_matches(&plan.session)
-                {
-                    anyhow::bail!("stale platform network activation");
-                }
-                execute_platform_network_activation_safely(platform, &plan).map(|_| plan)
-            },
-        ),
-        Err(error) => Err(error),
-    };
-    let committed = runtime.call_named(
-        command_kind.clone(),
-        correlation_id.clone(),
-        move |runtime| {
-            let executed = executed.and_then(|plan| {
-                if !persisted_activation_context_matches(&plan.session) {
-                    anyhow::bail!(
-                        "stale network activation plan: persisted session changed during platform apply"
-                    );
-                }
-                Ok(plan)
-            });
-            Ok(commit_control_network_activation_result(runtime, executed))
-        },
-    )?;
-    if committed.rollback_platform {
-        log_service_error("client-core-service rolled back failed network activation commit");
-        if network_was_enabled {
-            log_service_error(
-                "client-core-service preserved existing network after activation commit rollback",
+    // Two-phase activation:
+    //   Phase 1 — install/enable adapter only (fast, ~0.5-2s).
+    //   Commit state → UI shows "network enabled" immediately.
+    //   Phase 2 — configure IP, routes, DNS, relay (slower, runs after commit).
+    let phase2_result = match transition.prepared {
+        Ok(plan) => {
+            let plan_for_phase2 = plan.clone();
+            let snapshots_p1 = runtime.snapshots();
+            let phase1 = platform_transition::run_serialized_correlated(
+                format!("{command_kind}.phase1"),
+                correlation_id.clone(),
+                move |platform| {
+                    if !activation_context_matches(&snapshots_p1.latest().state, &plan.session)
+                        || !persisted_activation_context_matches(&plan.session)
+                    {
+                        anyhow::bail!("stale platform network activation");
+                    }
+                    let virtual_ip = plan
+                        .session
+                        .virtual_ip
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .ok_or_else(|| anyhow::anyhow!("device unavailable: missing assigned virtual IP"))?;
+                    platform_transition::activate_network(
+                        platform,
+                        PlatformNetworkActivation {
+                            virtual_ip,
+                            prefix_len: plan.prefix_len,
+                            resolver: &plan.resolver,
+                            resolver_zones: &plan.resolver_zones,
+                            resolver_records: &plan.resolver_records,
+                            routes: &plan.routes,
+                            relay_config: plan.relay_config.as_ref(),
+                        },
+                    )?;
+                    Ok(plan)
+                },
             );
-        } else {
+            // Commit phase 1 state so the UI updates immediately.
+            let committed = runtime.call_named(
+                format!("{command_kind}.phase1"),
+                correlation_id.clone(),
+                move |runtime| {
+                    let phase1 = phase1.and_then(|plan| {
+                        if !persisted_activation_context_matches(&plan.session) {
+                            anyhow::bail!("stale network activation plan: persisted session changed during phase 1");
+                        }
+                        Ok(plan)
+                    });
+                    Ok(commit_control_network_activation_result(runtime, phase1))
+                },
+            )?;
+            if committed.rollback_platform {
+                log_service_error("client-core-service rolled back failed phase 1 commit");
+                if network_was_enabled {
+                    log_service_error("client-core-service preserved existing network after phase 1 rollback");
+                } else {
+                    let _ = disable_platform_network_serialized();
+                }
+                return Ok(committed.state);
+            }
+            // Phase 2: configure IP, routes, DNS, relay (UI already shows "enabled").
+            // If the user disabled the network while phase 2 was queued, skip silently
+            // to prevent the stale phase 2 from re-enabling the adapter.
+            let snapshots_p2 = runtime.snapshots();
+            Some(platform_transition::run_serialized_correlated(
+                format!("{command_kind}.phase2"),
+                correlation_id.clone(),
+                move |platform| {
+                    // Guard: if the network has been disabled since phase 1, skip.
+                    if let Ok(state) = platform.read_runtime_state() {
+                        if !state.network_enabled {
+                            log_service_error(
+                                "configure_network_full: skipped — network disabled since phase 1",
+                            );
+                            return Ok(());
+                        }
+                    }
+                    if !activation_context_matches(&snapshots_p2.latest().state, &plan_for_phase2.session)
+                        || !persisted_activation_context_matches(&plan_for_phase2.session)
+                    {
+                        anyhow::bail!("stale platform network activation phase 2");
+                    }
+                    let virtual_ip = plan_for_phase2
+                        .session
+                        .virtual_ip
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .ok_or_else(|| anyhow::anyhow!("device unavailable: missing assigned virtual IP"))?;
+                    platform_transition::configure_network_full(
+                        platform,
+                        PlatformNetworkActivation {
+                            virtual_ip,
+                            prefix_len: plan_for_phase2.prefix_len,
+                            resolver: &plan_for_phase2.resolver,
+                            resolver_zones: &plan_for_phase2.resolver_zones,
+                            resolver_records: &plan_for_phase2.resolver_records,
+                            routes: &plan_for_phase2.routes,
+                            relay_config: plan_for_phase2.relay_config.as_ref(),
+                        },
+                    )
+                },
+            ))
+        }
+        Err(error) => {
+            // Phase 1 failed at plan-preparation level — commit the error so the
+            // UI shows it, then return.
+            let committed = runtime.call_named(
+                command_kind.clone(),
+                correlation_id.clone(),
+                move |runtime| {
+                    Ok(commit_control_network_activation_result(runtime, Err(error)))
+                },
+            )?;
+            if committed.rollback_platform && !network_was_enabled {
+                let _ = disable_platform_network_serialized();
+            }
+            return Ok(committed.state);
+        }
+    };
+    // Check phase 2 result — if it failed and network is still supposed to be
+    // enabled, roll back by disabling the adapter.  If the user (or a later
+    // operation) already disabled the network, skip the rollback.
+    if let Some(Err(ref phase2_err)) = phase2_result {
+        log_service_error(format!(
+            "client-core-service phase 2 network configuration failed: {phase2_err:#}"
+        ));
+        let currently_enabled = platform_transition::snapshot().runtime_state.network_enabled;
+        if currently_enabled {
             let _ = disable_platform_network_serialized();
         }
     }
-    Ok(committed.state)
+    Ok(runtime.snapshot().state)
 }
 
 fn activation_context_matches(state: &ClientViewState, session: &PersistedSession) -> bool {
