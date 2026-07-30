@@ -135,8 +135,8 @@ use crate::runtime_actor::RuntimeActorHandle;
 use crate::runtime_event_hub::RuntimeEventHub;
 use crate::session_store::{
     app_data_dir, clear_pending_console_login, current_session_runtime_epoch, current_timestamp_ms,
-    ensure_session_node_binding, load_pending_console_login, load_session,
-    load_valid_registered_session, lock_session_runtime_epoch, persist_session,
+    ensure_session_node_binding, installation_bootstrap_configured, load_pending_console_login,
+    load_session, load_valid_registered_session, lock_session_runtime_epoch, persist_session,
     prepare_client_login_session, prepare_session_device_registered,
     prepare_session_from_control_plane, remove_user_session_preserving_device,
     report_runtime_state, revoke_remote_sessions, session_auth_invalid_error,
@@ -169,6 +169,8 @@ const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
 static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
 const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const SESSION_AUTH_INVALID_GRACE: Duration = Duration::from_secs(5 * 60);
+const INSTALLATION_BOOTSTRAP_RETRY_MIN: Duration = Duration::from_secs(5);
+const INSTALLATION_BOOTSTRAP_RETRY_MAX: Duration = Duration::from_secs(60);
 const LOCAL_REQUEST_CONCURRENCY_LIMIT: usize = 64;
 const LOCAL_WATCH_CONCURRENCY_LIMIT: usize = 8;
 
@@ -348,6 +350,8 @@ fn run_service_server() -> Result<()> {
         .with_context(|| format!("bind client-core-service on {bind_address}"))?;
     let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl);
     let startup_session = load_valid_registered_session();
+    let retry_installation_bootstrap =
+        startup_session.is_none() && installation_bootstrap_configured();
     let auto_activate_installed_device = startup_session
         .as_ref()
         .is_some_and(installed_device_session_ready);
@@ -416,6 +420,11 @@ fn run_service_server() -> Result<()> {
         runtime.clone(),
         Arc::clone(&state_notifier),
         auto_activate_installed_device,
+    );
+    spawn_installation_bootstrap_worker(
+        runtime.clone(),
+        Arc::clone(&state_notifier),
+        retry_installation_bootstrap,
     );
     println!("client-core-service listening on {bind_address}");
 
@@ -746,6 +755,100 @@ fn spawn_startup_network_activation(
             ));
         }
     });
+}
+
+fn spawn_installation_bootstrap_worker(
+    runtime: RuntimeActorHandle,
+    state_notifier: Arc<RuntimeEventHub>,
+    bootstrap_pending: bool,
+) {
+    if !bootstrap_pending {
+        return;
+    }
+    thread::spawn(move || {
+        let mut retry_delay = INSTALLATION_BOOTSTRAP_RETRY_MIN;
+        loop {
+            let before = runtime.snapshot();
+            if before.state.network_enabled {
+                return;
+            }
+            let Some(session) = load_valid_registered_session() else {
+                log_service_error(format!(
+                    "client-core-service installation bootstrap pending; retrying in {}s",
+                    retry_delay.as_secs()
+                ));
+                thread::sleep(retry_delay);
+                retry_delay = next_installation_bootstrap_retry(retry_delay);
+                continue;
+            };
+            if !installed_device_session_ready(&session) {
+                // A user login completed while the installation bootstrap was
+                // retrying. It owns the runtime from this point forward.
+                return;
+            }
+            if !before.state.signed_in {
+                let session_for_commit = session.clone();
+                let committed = runtime.call_named_if_revision(
+                    "startup.installation.bootstrap.commit",
+                    session.device_id.clone(),
+                    before.revision,
+                    move |runtime| {
+                        runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(
+                            session_for_commit.into(),
+                        ))?;
+                        Ok(runtime.state().clone())
+                    },
+                );
+                match committed {
+                    Ok(Some(_)) => {}
+                    Ok(None) => continue,
+                    Err(error) => {
+                        log_service_error(format!(
+                            "client-core-service installation bootstrap commit failed: {error:#}"
+                        ));
+                        thread::sleep(retry_delay);
+                        continue;
+                    }
+                }
+            }
+            let transition = prepare_runtime_network_activation(&runtime, session.clone());
+            let state = execute_runtime_network_activation(
+                &runtime,
+                "startup.installation.network.activate",
+                session.device_id.clone(),
+                transition,
+            )
+            .unwrap_or_else(|error| state_with_error(&runtime.snapshot().state, error.to_string()));
+            if state.error.is_none() && state.network_enabled {
+                report_runtime_state(&state);
+                publish_state_business_event(
+                    &state_notifier,
+                    BUSINESS_NETWORK_RUNTIME_CHANGED,
+                    &state,
+                );
+                log_service_error(format!(
+                    "client-core-service installation bootstrap completed: deviceId={} virtualIp={}",
+                    state.device_id.as_deref().unwrap_or_default(),
+                    state.virtual_ip.as_deref().unwrap_or_default()
+                ));
+                return;
+            }
+            log_service_error(format!(
+                "client-core-service installation network activation failed: {}; retrying in {}s",
+                state
+                    .error
+                    .as_deref()
+                    .unwrap_or("network did not become enabled"),
+                retry_delay.as_secs()
+            ));
+            thread::sleep(retry_delay);
+            retry_delay = next_installation_bootstrap_retry(retry_delay);
+        }
+    });
+}
+
+fn next_installation_bootstrap_retry(current: Duration) -> Duration {
+    (current * 2).min(INSTALLATION_BOOTSTRAP_RETRY_MAX)
 }
 
 fn runtime_session_ready(session: &PersistedSession) -> bool {

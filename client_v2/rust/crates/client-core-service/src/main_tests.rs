@@ -51,6 +51,20 @@ use std::{
 };
 
 #[test]
+fn installation_bootstrap_retry_uses_bounded_exponential_backoff() {
+    let mut delay = super::INSTALLATION_BOOTSTRAP_RETRY_MIN;
+    assert_eq!(delay, std::time::Duration::from_secs(5));
+    delay = super::next_installation_bootstrap_retry(delay);
+    assert_eq!(delay, std::time::Duration::from_secs(10));
+    delay = super::next_installation_bootstrap_retry(std::time::Duration::from_secs(40));
+    assert_eq!(delay, super::INSTALLATION_BOOTSTRAP_RETRY_MAX);
+    assert_eq!(
+        super::next_installation_bootstrap_retry(delay),
+        super::INSTALLATION_BOOTSTRAP_RETRY_MAX
+    );
+}
+
+#[test]
 fn browser_login_does_not_replace_an_existing_user_session() {
     let mut signed_in = ClientViewState::default();
     signed_in.signed_in = true;

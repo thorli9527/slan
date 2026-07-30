@@ -198,14 +198,14 @@ fn normalize_session_mqtt_topic_prefix(session: &mut PersistedSession) {
 
 pub(crate) fn load_valid_registered_session() -> Option<PersistedSession> {
     let Ok(session) = load_session() else {
-        return bootstrap_session_from_env().ok();
+        return bootstrap_session_from_env_logged();
     };
     if session.access_token.trim().is_empty() {
         if prelogin_session_is_usable(&session) {
             return Some(session);
         }
         let _ = remove_session();
-        return bootstrap_session_from_env().ok();
+        return bootstrap_session_from_env_logged();
     }
     match prepare_session_device_registered(session.clone()) {
         Ok(prepared) => {
@@ -219,11 +219,27 @@ pub(crate) fn load_valid_registered_session() -> Option<PersistedSession> {
         Err(error) if session_auth_invalid_error(&error) => {
             eprintln!("client-core-service session invalid; clearing local session: {error:#}");
             let _ = remove_session();
-            bootstrap_session_from_env().ok()
+            bootstrap_session_from_env_logged()
         }
         Err(error) => {
             eprintln!("client-core-service startup device registration skipped: {error:#}");
             Some(session)
+        }
+    }
+}
+
+pub(crate) fn installation_bootstrap_configured() -> bool {
+    read_bootstrap_env_value("SLAN_INSTALLATION_KEY").is_some()
+}
+
+fn bootstrap_session_from_env_logged() -> Option<PersistedSession> {
+    match bootstrap_session_from_env() {
+        Ok(session) => Some(session),
+        Err(error) => {
+            if installation_bootstrap_configured() {
+                eprintln!("client-core-service installation bootstrap failed: {error:#}");
+            }
+            None
         }
     }
 }
