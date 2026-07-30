@@ -2,21 +2,19 @@ use super::{
     android_data_plane_relay_candidate, apply_prepared_runtime_refresh,
     browser_login_requires_preparation, commit_control_network_activation, commit_logout,
     commit_network_deactivation, commit_prepared_login, connect_plan_content_matches,
-    data_plane_relay_candidate, diagnostic_connect_plan_summaries,
+    connectivity_recovery_allowed, data_plane_relay_candidate, diagnostic_connect_plan_summaries,
     filter_relay_sessions_for_transport, invalidate_runtime_session, local_status_active_path,
-    connectivity_reconfigure_requires_data_plane_reset, maintenance_gap_is_resume,
-    method_business_event_type, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
-    path_diagnose_health, path_diagnose_resolver, peer_network_id,
-    peer_path_configs, peer_reachability_reconfigure_reason,
+    maintenance_gap_is_resume, method_business_event_type, parse_rfc3339_utc_ms,
+    path_diagnose_active_path_counts, path_diagnose_health, path_diagnose_resolver,
+    peer_network_id, peer_path_configs, peer_reachability_reconfigure_reason,
     platform_resolver_config, publish_method_business_event,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
-    relay_reconfigure_bypasses_retry_window,
-    relay_retry_backoff_ms,
+    relay_reconfigure_bypasses_retry_window, relay_retry_backoff_ms,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
-    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type, request_is_watch,
-    rotate_log_file, routes_with_peer_virtual_ips, select_relay_sessions_for_candidate,
-    status_is_managed_disabled,
+    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
+    request_is_watch, rotate_log_file, routes_with_peer_virtual_ips,
+    select_relay_sessions_for_candidate, status_is_managed_disabled,
     valid_direct_candidate_address, ControlPeer, LocalRequestMetrics, PersistedConnectPlan,
     PersistedConnectPlanPath, PersistedConnectPlanStore, PreparedControlNetworkActivation,
     RelayMaintenanceState, LOCAL_REQUEST_CONCURRENCY_LIMIT, LOCAL_WATCH_CONCURRENCY_LIMIT,
@@ -1475,24 +1473,19 @@ fn relay_maintenance_reconfigures_when_connect_plan_is_newer() {
 
 #[test]
 fn connectivity_supervisor_detects_a_resume_sized_scheduler_gap() {
-    assert!(!maintenance_gap_is_resume(std::time::Duration::from_secs(49)));
-    assert!(maintenance_gap_is_resume(std::time::Duration::from_secs(50)));
+    assert!(!maintenance_gap_is_resume(std::time::Duration::from_secs(
+        49
+    )));
+    assert!(maintenance_gap_is_resume(std::time::Duration::from_secs(
+        50
+    )));
 }
 
 #[test]
-fn connectivity_recovery_resets_stale_sockets_only_for_connectivity_failures() {
-    assert!(connectivity_reconfigure_requires_data_plane_reset(
-        "system_resume"
-    ));
-    assert!(connectivity_reconfigure_requires_data_plane_reset(
-        "network_path_changed"
-    ));
-    assert!(connectivity_reconfigure_requires_data_plane_reset(
-        "peer_reachability_majority_stalled"
-    ));
-    assert!(!connectivity_reconfigure_requires_data_plane_reset(
-        "ticket_expiring"
-    ));
+fn connectivity_recovery_coalesces_duplicate_signals_during_cooldown() {
+    assert!(connectivity_recovery_allowed(100_000, 0));
+    assert!(!connectivity_recovery_allowed(129_999, 100_000));
+    assert!(connectivity_recovery_allowed(130_000, 100_000));
     assert!(relay_reconfigure_bypasses_retry_window(
         "network_path_changed"
     ));

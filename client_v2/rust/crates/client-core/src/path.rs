@@ -114,6 +114,9 @@ pub struct PathPolicy {
     /// 失败路径重新参与升级探测前需要等待的探测轮数。
     #[serde(default = "default_failed_path_cooldown_probes")]
     pub failed_path_cooldown_probes: u32,
+    /// 当前路径仍健康时，新路径至少需要领先的综合分值。
+    #[serde(default = "default_switch_hysteresis_score")]
+    pub switch_hysteresis_score: u32,
 }
 
 impl Default for PathPolicy {
@@ -131,6 +134,7 @@ impl Default for PathPolicy {
             failover_after_ms: default_failover_after_ms(),
             upgrade_successes: default_upgrade_successes(),
             failed_path_cooldown_probes: default_failed_path_cooldown_probes(),
+            switch_hysteresis_score: default_switch_hysteresis_score(),
         }
     }
 }
@@ -364,16 +368,11 @@ impl PathTracker {
         self.failed_path_cooldowns
             .insert(key.clone(), self.policy.failed_path_cooldown_probes.max(1));
         self.probe_successes.remove(&key);
-        self.direct_path_failed_at
-            .insert(key, (now_ms, error));
+        self.direct_path_failed_at.insert(key, (now_ms, error));
     }
 
     /// 返回指定 peer 的点对点路径是否在冷却中（因探测失败被降级）。
-    pub fn is_direct_path_in_cooldown(
-        &self,
-        peer_node_id: &str,
-        path_kind: PathKind,
-    ) -> bool {
+    pub fn is_direct_path_in_cooldown(&self, peer_node_id: &str, path_kind: PathKind) -> bool {
         self.failed_path_cooldowns
             .contains_key(&(peer_node_id.to_string(), path_kind))
     }
@@ -418,12 +417,30 @@ pub fn select_active_path(
             return Some(current);
         }
     }
-    for preferred in preferred_path_order(policy) {
-        if path_is_ready(candidates, preferred) {
-            return Some(preferred);
+    let best = candidates
+        .iter()
+        .filter(|candidate| candidate.state == PathState::Ready)
+        .min_by(|left, right| compare_path_candidates(left, right));
+    let Some(best) = best else {
+        return current.filter(|kind| path_is_ready(candidates, *kind));
+    };
+    if let Some(current_kind) = current {
+        if let Some(current_candidate) = candidates
+            .iter()
+            .filter(|candidate| {
+                candidate.kind == current_kind && candidate.state == PathState::Ready
+            })
+            .min_by(|left, right| compare_path_candidates(left, right))
+        {
+            if best.kind != current_kind
+                && path_candidate_score(best).saturating_add(policy.switch_hysteresis_score)
+                    >= path_candidate_score(current_candidate)
+            {
+                return Some(current_kind);
+            }
         }
     }
-    current.filter(|kind| path_is_ready(candidates, *kind))
+    Some(best.kind)
 }
 
 pub fn path_should_upgrade(policy: &PathPolicy, current: PathKind, candidate: PathKind) -> bool {
@@ -452,17 +469,12 @@ pub fn preferred_path_order(policy: &PathPolicy) -> Vec<PathKind> {
     values
 }
 
-/// 按传输层级和实时链路质量比较候选；Ordering::Less 表示更优。
+/// 按综合链路质量比较候选；Ordering::Less 表示更优。
 pub fn compare_path_candidates(left: &PathCandidate, right: &PathCandidate) -> Ordering {
-    left.kind
-        .priority()
-        .cmp(&right.kind.priority())
-        .then_with(|| path_state_rank(left.state).cmp(&path_state_rank(right.state)))
-        .then_with(|| {
-            left.path_score
-                .unwrap_or(u32::MAX)
-                .cmp(&right.path_score.unwrap_or(u32::MAX))
-        })
+    path_state_rank(left.state)
+        .cmp(&path_state_rank(right.state))
+        .then_with(|| path_candidate_score(left).cmp(&path_candidate_score(right)))
+        .then_with(|| left.kind.priority().cmp(&right.kind.priority()))
         .then_with(|| {
             left.rtt_ms
                 .unwrap_or(u32::MAX)
@@ -480,6 +492,24 @@ pub fn compare_path_candidates(left: &PathCandidate, right: &PathCandidate) -> O
                 .unwrap_or_default()
                 .cmp(right.address.as_deref().unwrap_or_default())
         })
+}
+
+/// 路径基础成本与客户端/服务端观测质量的综合评分，越低越优。
+pub fn path_candidate_score(candidate: &PathCandidate) -> u32 {
+    let base: u32 = match candidate.kind {
+        PathKind::LanUdp => 0,
+        PathKind::Ipv6Udp => 20,
+        PathKind::DirectUdp => 40,
+        PathKind::RelayUdp => 140,
+        PathKind::DerpTcpTls443 => 280,
+    };
+    let quality = candidate.path_score.unwrap_or_else(|| {
+        candidate
+            .rtt_ms
+            .map(|rtt| rtt.saturating_mul(4) / 5)
+            .unwrap_or(0)
+    });
+    base.saturating_add(quality)
 }
 
 pub fn sort_path_candidates(candidates: &mut [PathCandidate]) {
@@ -508,14 +538,17 @@ pub fn update_peer_active_path(
     else {
         return;
     };
-    path.active_path = Some(active_path);
+    let previous_path = path.active_path.replace(active_path);
     for candidate in &mut path.candidates {
         if candidate.kind == active_path {
             candidate.state = PathState::Ready;
             candidate.last_error = None;
-        } else if candidate.kind != PathKind::RelayUdp {
+        } else if previous_path == Some(candidate.kind) {
             candidate.state = PathState::Degraded;
             candidate.last_error = Some("downgraded after consecutive send failures".to_string());
+        } else if candidate.state == PathState::Ready {
+            candidate.state = PathState::Standby;
+            candidate.last_error = None;
         }
     }
 }
@@ -610,6 +643,10 @@ fn default_failed_path_cooldown_probes() -> u32 {
     2
 }
 
+fn default_switch_hysteresis_score() -> u32 {
+    25
+}
+
 fn default_candidate_state() -> PathState {
     PathState::Standby
 }
@@ -691,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_sort_keeps_transport_tier_then_uses_quality() {
+    fn candidate_sort_combines_transport_cost_and_quality() {
         let mut slow_lan = candidate(PathKind::LanUdp, PathState::Ready);
         slow_lan.rtt_ms = Some(80);
         let mut fast_direct = candidate(PathKind::DirectUdp, PathState::Ready);
@@ -704,10 +741,44 @@ mod tests {
 
         sort_path_candidates(&mut candidates);
 
-        assert_eq!(candidates[0].kind, PathKind::LanUdp);
-        assert_eq!(candidates[1].kind, PathKind::DirectUdp);
+        assert_eq!(candidates[0].kind, PathKind::DirectUdp);
+        assert_eq!(candidates[1].kind, PathKind::LanUdp);
         assert_eq!(candidates[2].path_score, Some(40));
         assert_eq!(candidates[3].path_score, Some(200));
+    }
+
+    #[test]
+    fn selection_keeps_current_path_inside_hysteresis_margin() {
+        let mut lan = candidate(PathKind::LanUdp, PathState::Ready);
+        lan.rtt_ms = Some(60);
+        let mut direct = candidate(PathKind::DirectUdp, PathState::Ready);
+        direct.rtt_ms = Some(5);
+
+        assert_eq!(
+            select_active_path(
+                &PathPolicy::default(),
+                Some(PathKind::LanUdp),
+                &[lan, direct]
+            ),
+            Some(PathKind::LanUdp)
+        );
+    }
+
+    #[test]
+    fn selection_allows_relay_to_replace_severely_degraded_direct_path() {
+        let mut direct = candidate(PathKind::DirectUdp, PathState::Ready);
+        direct.path_score = Some(500);
+        let mut relay = candidate(PathKind::RelayUdp, PathState::Ready);
+        relay.path_score = Some(20);
+
+        assert_eq!(
+            select_active_path(
+                &PathPolicy::default(),
+                Some(PathKind::DirectUdp),
+                &[direct, relay],
+            ),
+            Some(PathKind::RelayUdp)
+        );
     }
 
     #[test]
@@ -775,6 +846,26 @@ mod tests {
                 && candidate.state == PathState::Degraded
                 && candidate.last_error.is_some()
         }));
+    }
+
+    #[test]
+    fn update_peer_active_path_keeps_other_healthy_candidate_as_standby() {
+        let mut paths = vec![PeerPathRuntime {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec![],
+            active_path: Some(PathKind::DirectUdp),
+            candidates: vec![
+                candidate(PathKind::DirectUdp, PathState::Ready),
+                candidate(PathKind::RelayUdp, PathState::Ready),
+                candidate(PathKind::DerpTcpTls443, PathState::Ready),
+            ],
+        }];
+
+        update_peer_active_path(&mut paths, "node-a", PathKind::RelayUdp);
+
+        assert_eq!(paths[0].candidates[0].state, PathState::Degraded);
+        assert_eq!(paths[0].candidates[1].state, PathState::Ready);
+        assert_eq!(paths[0].candidates[2].state, PathState::Standby);
     }
 
     #[test]

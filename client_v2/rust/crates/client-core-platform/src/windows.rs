@@ -18,8 +18,8 @@ use std::{
 use anyhow::{bail, Context, Result};
 use client_core::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-    ipv4_destination, ipv4_source, ipv4_transport_checksum_valid,
-    mark_peer_path_probe_success, normalize_ipv4_transport_checksums, normalize_virtual_ip,
+    ipv4_destination, ipv4_source, ipv4_transport_checksum_valid, mark_peer_path_probe_success,
+    normalize_ipv4_transport_checksums, normalize_virtual_ip,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
@@ -177,7 +177,9 @@ fn windows_resolver_runtime() -> &'static Mutex<WindowsResolverRuntime> {
 impl PlatformNetwork for WindowsPlatformNetwork {
     fn install_adapter(&self) -> Result<()> {
         ensure_adapter_present(DEFAULT_INTERFACE_NAME)?;
-        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let mut runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         runtime.adapter_present = true;
         persist_state(&NetworkRuntimeState {
             adapter_present: true,
@@ -188,6 +190,25 @@ impl PlatformNetwork for WindowsPlatformNetwork {
     fn configure_ip(&self, virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         ensure_installed_adapter_ready(DEFAULT_INTERFACE_NAME)
             .context("ensure installed Wintun adapter before IP")?;
+        let runtime_ip_matches = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned")
+            .virtual_ip
+            .as_deref()
+            == Some(virtual_ip);
+        let cached_ip_matches = load_cached_runtime_state()
+            .ok()
+            .and_then(|state| state.virtual_ip)
+            .as_deref()
+            == Some(virtual_ip);
+        if (runtime_ip_matches || cached_ip_matches)
+            && verify_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip).is_ok()
+        {
+            debug_log(&format!(
+                "configure_ip: fast path — Wintun already owns {virtual_ip}, skipping address rewrite"
+            ));
+            return Ok(());
+        }
         configure_adapter_ip(
             DEFAULT_INTERFACE_NAME,
             virtual_ip,
@@ -196,7 +217,9 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         .context("configure Wintun adapter IP")?;
         verify_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip)
             .context("verify Wintun adapter IP")?;
-        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let mut runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         runtime.adapter_present = true;
         runtime.network_enabled = true;
         runtime.virtual_ip = Some(virtual_ip.to_string());
@@ -210,14 +233,18 @@ impl PlatformNetwork for WindowsPlatformNetwork {
 
     fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()> {
         // Fast path: skip if routes haven't changed (prevents adapter toggle from repeated netsh calls).
-        let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         if runtime.routes == routes {
             debug_log("configure_routes: fast path — routes unchanged, skipping");
             return Ok(());
         }
         drop(runtime);
         configure_routes(DEFAULT_INTERFACE_NAME, routes).context("configure Wintun routes")?;
-        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let mut runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         runtime.routes = routes.to_vec();
         persist_state(&load_cached_runtime_state().unwrap_or_default())
     }
@@ -261,14 +288,18 @@ impl PlatformNetwork for WindowsPlatformNetwork {
 
     fn configure_relay(&self, config: Option<&RelayDataPlaneConfig>) -> Result<()> {
         // Fast path: skip if relay config hasn't changed.
-        let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         if runtime.relay_config.as_ref() == config {
             debug_log("configure_relay: fast path — relay config unchanged, skipping");
             return Ok(());
         }
         drop(runtime);
         configure_wintun_data_plane(config).context("configure Wintun relay data plane")?;
-        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let mut runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         runtime.relay_config = config.cloned();
         Ok(())
     }
@@ -285,7 +316,9 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         }
         let _ = run_powershell("Clear-DnsClientCache -ErrorAction SilentlyContinue");
         disable_result?;
-        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let mut runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         runtime.network_enabled = false;
         runtime.virtual_ip = None;
         runtime.routes.clear();
@@ -302,7 +335,9 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         // Read from in-memory runtime cache — same pattern as macOS/Linux.
         // This avoids shelling out to netsh/PowerShell every 10 seconds,
         // which caused frequent timeouts and unreliable adapter state detection.
-        let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
         let cached = load_cached_runtime_state().unwrap_or_default();
         // A service/runtime restart resets the process-local cache while the
         // adapter and persisted desired state remain active. Treat that state
@@ -311,8 +346,8 @@ impl PlatformNetwork for WindowsPlatformNetwork {
             .virtual_ip
             .clone()
             .or_else(|| cached.virtual_ip.clone());
-        let network_enabled = runtime.network_enabled
-            || (cached.network_enabled && recovered_virtual_ip.is_some());
+        let network_enabled =
+            runtime.network_enabled || (cached.network_enabled && recovered_virtual_ip.is_some());
         if !network_enabled {
             debug_log(&format!(
                 "read_runtime_state: network_enabled=false adapter_present={} virtual_ip={:?} cached_enabled={}",
@@ -439,7 +474,9 @@ fn ensure_installed_adapter_ready(interface_name: &str) -> Result<()> {
     if let Ok(status) = run_powershell(&check_script) {
         let status = status.trim();
         if status == "Up" {
-            debug_log(&format!("ensure_installed_adapter_ready: fast path — adapter already Up, skipping"));
+            debug_log(&format!(
+                "ensure_installed_adapter_ready: fast path — adapter already Up, skipping"
+            ));
             return Ok(());
         }
     }
@@ -453,9 +490,13 @@ fn ensure_installed_adapter_ready(interface_name: &str) -> Result<()> {
          Write-Output \"before=$before after=$after\"",
         escape_powershell_single_quoted(interface_name),
     );
-    debug_log(&format!("ensure_installed_adapter_ready: enabling '{interface_name}'"));
+    debug_log(&format!(
+        "ensure_installed_adapter_ready: enabling '{interface_name}'"
+    ));
     let result = run_powershell(&script);
-    debug_log(&format!("ensure_installed_adapter_ready: result={result:?}"));
+    debug_log(&format!(
+        "ensure_installed_adapter_ready: result={result:?}"
+    ));
     let output = result?;
     if adapter_enable_requires_session_restart(&output) {
         restart_wintun_session().context("restart Wintun session after adapter enable")?;
@@ -920,15 +961,19 @@ impl RelayUdpTransport {
         let mut attach_failures = 0_u64;
         let mut last_attach_error = None;
         // Diagnostic: log relay attach start
-        let udp_sessions: Vec<_> = sessions.iter()
+        let udp_sessions: Vec<_> = sessions
+            .iter()
             .filter(|s| relay_path_kind_from_ticket(s) == Some(PathKind::RelayUdp))
             .collect();
         let log_line = format!(
             "[relay-attach-start] relay_address={} total_sessions={} udp_sessions={}\n",
-            relay_address, sessions.len(), udp_sessions.len()
+            relay_address,
+            sessions.len(),
+            udp_sessions.len()
         );
         if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true).append(true)
+            .create(true)
+            .append(true)
             .open("C:\\ProgramData\\SLAN\\relay-debug.log")
         {
             use std::io::Write;
@@ -971,7 +1016,8 @@ impl RelayUdpTransport {
                         session.peer_node_id, session.session_id, session_relay_address, error
                     );
                     if let Ok(mut file) = std::fs::OpenOptions::new()
-                        .create(true).append(true)
+                        .create(true)
+                        .append(true)
                         .open("C:\\ProgramData\\SLAN\\relay-debug.log")
                     {
                         use std::io::Write;
@@ -1335,7 +1381,12 @@ impl WindowsPathManager {
                             )
                         })
                         .unwrap_or_else(|| {
-                            self.fallback_or_missing(&route, PathKind::DerpTcpTls443, payload, frame)
+                            self.fallback_or_missing(
+                                &route,
+                                PathKind::DerpTcpTls443,
+                                payload,
+                                frame,
+                            )
                         })
                 } else {
                     self.fallback_or_missing(&route, PathKind::RelayUdp, payload, frame)
@@ -1347,9 +1398,17 @@ impl WindowsPathManager {
                         .derp_tcp_index
                         .map(|peer_index| self.derp_tcp.send_to_peer(peer_index, frame, payload))
                         .map(|result| {
-                            self.fallback_after_send_failure(&route, active_path, payload, frame, result)
+                            self.fallback_after_send_failure(
+                                &route,
+                                active_path,
+                                payload,
+                                frame,
+                                result,
+                            )
                         })
-                        .unwrap_or_else(|| self.fallback_or_missing(&route, active_path, payload, frame))
+                        .unwrap_or_else(|| {
+                            self.fallback_or_missing(&route, active_path, payload, frame)
+                        })
                 } else if route.relay_udp_index.is_some() {
                     // DERP TCP transport has no peers but relay UDP does.
                     route
@@ -1461,14 +1520,11 @@ impl WindowsPathManager {
         peer_node_id: &str,
         failed_path: PathKind,
     ) -> Option<PathKind> {
-        self.tracker
-            .preferred_paths()
-            .into_iter()
-            .find(|path| {
-                *path != failed_path
-                    && self.path_available_for_node(peer_node_id, *path)
-                    && path_candidate_is_ready(&self.peer_paths, peer_node_id, *path)
-            })
+        self.tracker.preferred_paths().into_iter().find(|path| {
+            *path != failed_path
+                && self.path_available_for_node(peer_node_id, *path)
+                && path_candidate_is_ready(&self.peer_paths, peer_node_id, *path)
+        })
     }
 
     fn update_peer_paths(&mut self, peer_paths: &[PeerPathRuntime]) {
@@ -1895,10 +1951,8 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
         let mut consecutive_data_plane_failures = 0_u32;
         let failover_after_ms = stats.path_policy.failover_after_ms;
         // 跟踪每个 peer 的 direct UDP 探测状态：(last_probe_sent_ms, pending_response)
-        let mut direct_probe_tracker: std::collections::HashMap<
-            String,
-            (u64, bool, PathKind),
-        > = std::collections::HashMap::new();
+        let mut direct_probe_tracker: std::collections::HashMap<String, (u64, bool, PathKind)> =
+            std::collections::HashMap::new();
         persist_relay_stats(&mut stats);
         while !thread_stop.load(Ordering::SeqCst) {
             path_manager.update_peer_paths(&selected_peer_paths);
@@ -1913,14 +1967,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 for (peer_node_id, (last_sent, pending, path_kind)) in
                     direct_probe_tracker.iter_mut()
                 {
-                    if *pending
-                        && now_ms.saturating_sub(*last_sent) >= failover_after_ms
-                    {
+                    if *pending && now_ms.saturating_sub(*last_sent) >= failover_after_ms {
                         *pending = false;
-                        let should_failover = path_manager.record_send_failure(
-                            peer_node_id,
-                            *path_kind,
-                        );
+                        let should_failover =
+                            path_manager.record_send_failure(peer_node_id, *path_kind);
                         // 降级直连路径候选状态
                         for peer_path in selected_peer_paths.iter_mut() {
                             if peer_path.peer_node_id == *peer_node_id {
@@ -1928,27 +1978,26 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                     if candidate.kind == *path_kind {
                                         candidate.state = PathState::Degraded;
                                         candidate.last_error = Some(
-                                            "direct udp probe timeout — no pong received".to_string(),
+                                            "direct udp probe timeout — no pong received"
+                                                .to_string(),
                                         );
                                     }
                                 }
                             }
                         }
                         if should_failover {
-                            path_manager.tracker.set_active_path(
-                                peer_node_id.clone(),
-                                PathKind::RelayUdp,
-                            );
+                            path_manager
+                                .tracker
+                                .set_active_path(peer_node_id.clone(), PathKind::RelayUdp);
                             update_peer_active_path(
                                 &mut selected_peer_paths,
                                 peer_node_id,
                                 PathKind::RelayUdp,
                             );
                             stats.active_path = path_manager.active_path_summary();
-                            if let Some(peer_stats) = peer_stats_mut_by_node_id(
-                                &mut stats.peers,
-                                peer_node_id,
-                            ) {
+                            if let Some(peer_stats) =
+                                peer_stats_mut_by_node_id(&mut stats.peers, peer_node_id)
+                            {
                                 peer_stats.path_downgrades =
                                     peer_stats.path_downgrades.saturating_add(1);
                                 peer_stats.last_path_change = Some(format!(
@@ -1978,10 +2027,8 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                     // 记录每个 peer 的探测发送时间和路径
                     for peer in &direct_udp.peers {
                         if peer.path_kind.is_direct_udp() {
-                            direct_probe_tracker.insert(
-                                peer.peer_node_id.clone(),
-                                (now_ms, true, peer.path_kind),
-                            );
+                            direct_probe_tracker
+                                .insert(peer.peer_node_id.clone(), (now_ms, true, peer.path_kind));
                         }
                     }
                 }
@@ -2188,8 +2235,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             let dest = ipv4_destination(&payload).unwrap_or_default();
                             let relay_peer_count = path_manager.relay_udp_peer_count();
                             let derp_peer_count = path_manager.derp_tcp_peer_count();
-                            let relay_peer_ips: Vec<String> = path_manager.relay_udp_peer_ips(&peer_node_id);
-                            let derp_peer_ips: Vec<String> = path_manager.derp_tcp_peer_ips(&peer_node_id);
+                            let relay_peer_ips: Vec<String> =
+                                path_manager.relay_udp_peer_ips(&peer_node_id);
+                            let derp_peer_ips: Vec<String> =
+                                path_manager.derp_tcp_peer_ips(&peer_node_id);
                             let log_line = format!(
                                 "[no-transport] peer={} path={} dest={} relay_peers={} relay_ips={} derp_peers={} derp_ips={}\n",
                                 peer_node_id, path_kind.as_str(), dest, relay_peer_count, relay_peer_ips.join(","), derp_peer_count, derp_peer_ips.join(",")
@@ -2785,8 +2834,7 @@ fn reset_direct_candidates_to_probing(
             if candidate.kind.is_direct_udp() {
                 let should_reset = match direct_peers {
                     Some(peers) => peers.iter().any(|peer| {
-                        peer.peer_node_id == path.peer_node_id
-                            && peer.path_kind == candidate.kind
+                        peer.peer_node_id == path.peer_node_id && peer.path_kind == candidate.kind
                     }),
                     None => true,
                 };
@@ -2840,11 +2888,15 @@ fn attach_udp_relay_session(
     let payload = serde_json::to_vec(&attach).context("encode Wintun relay attach")?;
     // Diagnostic: log the attach payload size and transport value
     if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true).append(true)
+        .create(true)
+        .append(true)
         .open("C:\\ProgramData\\SLAN\\relay-debug.log")
     {
         use std::io::Write;
-        let transport_value = attach.get("transport").and_then(|v| v.as_str()).unwrap_or("MISSING");
+        let transport_value = attach
+            .get("transport")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MISSING");
         // Log full ticket fields for signature verification
         let ticket = &session.ticket;
         let log_line = format!(
@@ -2864,31 +2916,31 @@ fn attach_udp_relay_session(
             continue;
         }
         match socket.recv(&mut response) {
-            Ok(len) => {
-                match verify_relay_attach_ack(&response[..len], &session.session_id) {
-                    Ok(_) => {
-                        last_error = None;
-                        break;
-                    }
-                    Err(verify_error) => {
-                        let resp_preview = String::from_utf8_lossy(&response[..len.min(1000)]).to_string();
-                        if let Ok(mut file) = std::fs::OpenOptions::new()
-                            .create(true).append(true)
-                            .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-                        {
-                            use std::io::Write;
-                            let log_line = format!(
+            Ok(len) => match verify_relay_attach_ack(&response[..len], &session.session_id) {
+                Ok(_) => {
+                    last_error = None;
+                    break;
+                }
+                Err(verify_error) => {
+                    let resp_preview =
+                        String::from_utf8_lossy(&response[..len.min(1000)]).to_string();
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+                    {
+                        use std::io::Write;
+                        let log_line = format!(
                                 "[relay-attach-ack-fail] peer={} addr={} attempt={} resp={} error={:?}\n",
                                 session.peer_node_id, relay_address, attempt, resp_preview, verify_error
                             );
-                            let _ = file.write_all(log_line.as_bytes());
-                        }
-                        last_error = Some(verify_error.context(format!(
+                        let _ = file.write_all(log_line.as_bytes());
+                    }
+                    last_error = Some(verify_error.context(format!(
                             "verify relay attach ack from {relay_address} attempt {attempt}/{RELAY_ATTACH_ATTEMPTS}"
                         )));
-                    }
                 }
-            }
+            },
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock
                     || error.kind() == std::io::ErrorKind::TimedOut =>
@@ -2909,7 +2961,8 @@ fn attach_udp_relay_session(
     if let Some(error) = last_error {
         let inner_msg = format!("{error:?}");
         if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true).append(true)
+            .create(true)
+            .append(true)
             .open("C:\\ProgramData\\SLAN\\relay-debug.log")
         {
             use std::io::Write;
@@ -3394,24 +3447,22 @@ fn send_relay_udp_frame(peer: &AttachedRelayPeer, frame: &[u8]) -> bool {
     if peer.path_kind != PathKind::RelayUdp {
         return false;
     }
-    encode_relay_forward(peer, frame).is_some_and(|payload| {
-        match peer.socket.send(&payload) {
-            Ok(_) => true,
-            Err(error) => {
-                let log_line = format!(
-                    "[relay-udp] send forward to relay failed: {error} (session={})\n",
-                    peer.session_id
-                );
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-                {
-                    use std::io::Write;
-                    let _ = file.write_all(log_line.as_bytes());
-                }
-                false
+    encode_relay_forward(peer, frame).is_some_and(|payload| match peer.socket.send(&payload) {
+        Ok(_) => true,
+        Err(error) => {
+            let log_line = format!(
+                "[relay-udp] send forward to relay failed: {error} (session={})\n",
+                peer.session_id
+            );
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+            {
+                use std::io::Write;
+                let _ = file.write_all(log_line.as_bytes());
             }
+            false
         }
     })
 }
@@ -4233,7 +4284,9 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
         escape_powershell_single_quoted(interface_name),
         prefix_len,
     );
-    debug_log(&format!("configure_adapter_ip: setting {virtual_ip}/{prefix_len} on '{interface_name}'"));
+    debug_log(&format!(
+        "configure_adapter_ip: setting {virtual_ip}/{prefix_len} on '{interface_name}'"
+    ));
     run_powershell(&script).context("set Wintun adapter IP via PowerShell")?;
     debug_log("configure_adapter_ip: PowerShell static IP configuration verified");
     // Verify via ipconfig.
@@ -4242,7 +4295,9 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
         debug_log("configure_adapter_ip: OK (ipconfig verified)");
         return Ok(());
     }
-    debug_log(&format!("configure_adapter_ip: ipconfig does not contain {virtual_ip}, trying Get-NetIPAddress"));
+    debug_log(&format!(
+        "configure_adapter_ip: ipconfig does not contain {virtual_ip}, trying Get-NetIPAddress"
+    ));
     // Fallback: verify via Get-NetIPAddress.
     let verify_script = format!(
         "(Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ','",
@@ -4262,7 +4317,9 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
 }
 
 fn verify_adapter_ip(interface_name: &str, virtual_ip: &str) -> Result<()> {
-    debug_log(&format!("verify_adapter_ip: checking '{interface_name}' for {virtual_ip}"));
+    debug_log(&format!(
+        "verify_adapter_ip: checking '{interface_name}' for {virtual_ip}"
+    ));
     // Use PowerShell for all verification — netsh is unreliable on Wintun adapters.
     // The address must be Preferred. A Tentative address exists in the store but
     // cannot be selected as a source address or carry overlay traffic.
@@ -4314,10 +4371,13 @@ fn configure_routes(interface_name: &str, routes: &[RouteSpec]) -> Result<()> {
     if routes.is_empty() {
         return Ok(());
     }
-    debug_log(&format!("configure_routes: {} routes for '{interface_name}'", routes.len()));
+    debug_log(&format!(
+        "configure_routes: {} routes for '{interface_name}'",
+        routes.len()
+    ));
     // Use netsh with interface index for reliable Wintun route configuration.
-    let idx = get_interface_index(interface_name)
-        .context("get adapter interface index for routes")?;
+    let idx =
+        get_interface_index(interface_name).context("get adapter interface index for routes")?;
     debug_log(&format!("configure_routes: ifIndex={idx}"));
     for route in routes {
         let destination = route.destination.trim();
@@ -4334,14 +4394,20 @@ fn configure_routes(interface_name: &str, routes: &[RouteSpec]) -> Result<()> {
         };
         // Remove existing route first (ignore errors if it doesn't exist).
         let _ = run_netsh(&[
-            "interface", "ipv4", "delete", "route",
+            "interface",
+            "ipv4",
+            "delete",
+            "route",
             &netsh_dest,
             &idx,
             gateway,
         ]);
         // Add the new route.
         run_netsh(&[
-            "interface", "ipv4", "add", "route",
+            "interface",
+            "ipv4",
+            "add",
+            "route",
             &netsh_dest,
             &idx,
             gateway,
@@ -4353,28 +4419,34 @@ fn configure_routes(interface_name: &str, routes: &[RouteSpec]) -> Result<()> {
 
 fn configure_adapter_mtu(interface_name: &str, mtu: u16) -> Result<()> {
     // Fast path: skip if MTU hasn't changed (prevents adapter toggle from repeated netsh calls).
-    let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+    let runtime = windows_network_runtime()
+        .lock()
+        .expect("windows network runtime lock poisoned");
     if runtime.mtu == Some(mtu) {
-        debug_log(&format!("configure_adapter_mtu: fast path — mtu={mtu} unchanged, skipping"));
+        debug_log(&format!(
+            "configure_adapter_mtu: fast path — mtu={mtu} unchanged, skipping"
+        ));
         return Ok(());
     }
     drop(runtime);
     // Use netsh with interface index for reliable Wintun MTU configuration.
-    let idx = get_interface_index(interface_name)
-        .context("get adapter interface index for MTU")?;
+    let idx = get_interface_index(interface_name).context("get adapter interface index for MTU")?;
     run_netsh(&[
-        "interface", "ipv4", "set", "subinterface",
+        "interface",
+        "ipv4",
+        "set",
+        "subinterface",
         &idx,
         &format!("mtu={mtu}"),
         "store=active",
     ])
     .map(|_| ())
     .with_context(|| {
-        format!(
-            "SLAN local network adapter '{interface_name}' MTU set failed (target={mtu})"
-        )
+        format!("SLAN local network adapter '{interface_name}' MTU set failed (target={mtu})")
     })?;
-    let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+    let mut runtime = windows_network_runtime()
+        .lock()
+        .expect("windows network runtime lock poisoned");
     runtime.mtu = Some(mtu);
     Ok(())
 }
@@ -4487,7 +4559,9 @@ fn debug_log(message: &str) {
     let Ok(program_data) = std::env::var("ProgramData") else {
         return;
     };
-    let path = PathBuf::from(program_data).join("SLAN").join("slan-debug.log");
+    let path = PathBuf::from(program_data)
+        .join("SLAN")
+        .join("slan-debug.log");
     let _ = fs::create_dir_all(path.parent().unwrap());
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -4610,7 +4684,11 @@ fn parse_cidr_for_netsh(cidr: &str) -> (String, String) {
     let parts: Vec<&str> = cidr.splitn(2, '/').collect();
     (
         parts.first().copied().unwrap_or(cidr).to_string(),
-        parts.get(1).copied().unwrap_or("255.255.255.255").to_string(),
+        parts
+            .get(1)
+            .copied()
+            .unwrap_or("255.255.255.255")
+            .to_string(),
     )
 }
 
@@ -4619,10 +4697,9 @@ mod tests {
     use super::{
         adapter_enable_requires_session_restart, detach_udp_relay_sessions,
         direct_udp_control_packet, direct_udp_control_payload,
-        direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
-        escape_netsh_arg, is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply,
-        mark_ready_transports, normalize_direct_udp_address, output_contains_exact_ipv4,
-        parse_cidr_for_netsh,
+        direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at, escape_netsh_arg,
+        is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply, mark_ready_transports,
+        normalize_direct_udp_address, output_contains_exact_ipv4, parse_cidr_for_netsh,
         prefix_len_to_subnet_mask, refresh_relay_ticket_timing, relay_error_message,
         relay_runtime_paths_from_config, relay_udp_address_for_session, send_frame_to_peer,
         validate_relay_peer_session, validate_relay_peer_session_for_path, AttachedRelayPeer,
@@ -4643,7 +4720,9 @@ mod tests {
         assert!(!adapter_enable_requires_session_restart(
             "before=Up after=Up"
         ));
-        assert!(!adapter_enable_requires_session_restart("unexpected output"));
+        assert!(!adapter_enable_requires_session_restart(
+            "unexpected output"
+        ));
     }
     use client_core::{
         ipv4_destination,

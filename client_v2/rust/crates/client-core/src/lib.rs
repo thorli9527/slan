@@ -22,8 +22,8 @@ pub use packet::{
 };
 pub use path::{
     compare_path_candidates, mark_path_ready_for_node, mark_path_ready_for_nodes,
-    mark_peer_path_probe_success, normalize_relay_transport, path_should_upgrade,
-    preferred_path_order, relay_path_kind_for_transport, select_active_path,
+    mark_peer_path_probe_success, normalize_relay_transport, path_candidate_score,
+    path_should_upgrade, preferred_path_order, relay_path_kind_for_transport, select_active_path,
     selected_runtime_paths, sort_path_candidates, update_peer_active_path, PathCandidate, PathKind,
     PathPolicy, PathState, PathTracker, PeerPathConfig, PeerPathRuntime,
 };

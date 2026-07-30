@@ -567,10 +567,13 @@ pub(crate) fn configure_network_full(
     Ok(())
 }
 
-pub(crate) fn reset_data_plane(platform: &PlatformNetworkImpl) -> Result<()> {
+pub(crate) fn replace_data_plane(
+    platform: &PlatformNetworkImpl,
+    relay_config: Option<&RelayDataPlaneConfig>,
+) -> Result<()> {
     platform
-        .configure_relay(None)
-        .context("reset platform data plane")
+        .configure_relay(relay_config)
+        .context("replace platform data plane")
 }
 
 pub(crate) fn disable_network(platform: &PlatformNetworkImpl) -> Result<()> {

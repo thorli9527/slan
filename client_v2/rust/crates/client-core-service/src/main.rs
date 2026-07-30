@@ -170,7 +170,8 @@ const RELAY_RESPONSE_GAP_DEGRADED_PACKETS: u64 = 10;
 const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
 const CONNECTIVITY_RESUME_GAP: Duration = Duration::from_secs(50);
 const NETWORK_PATH_POLL_INTERVAL: Duration = Duration::from_secs(3);
-const NETWORK_PATH_STABLE_SAMPLES: u8 = 2;
+const NETWORK_PATH_STABLE_SAMPLES: u8 = 3;
+const CONNECTIVITY_RECOVERY_COOLDOWN_MS: u64 = 30 * 1000;
 const PEER_STALL_RECONFIGURE_INTERVALS: u32 = 3;
 static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
 static CONNECTIVITY_SIGNAL_SENDER: OnceLock<Mutex<Option<SyncSender<ConnectivitySignal>>>> =
@@ -4269,6 +4270,66 @@ fn execute_platform_network_activation_safely(
     Ok(platform_was_enabled)
 }
 
+/// Refresh peer transports without touching the tunnel interface, assigned IP,
+/// routes, or DNS. Connectivity maintenance must remain a soft recovery path:
+/// rebuilding host networking here creates a local transmit-failure window even
+/// when only an upstream endpoint or relay session changed.
+fn execute_runtime_transport_recovery(
+    runtime: &RuntimeActorHandle,
+    reason: &str,
+    correlation_id: Option<String>,
+    transition: PreparedRuntimeNetworkActivation,
+) -> Result<ClientViewState> {
+    let plan = match transition.prepared {
+        Ok(plan) => plan,
+        Err(error) => {
+            let committed = runtime.call_named(
+                "relay.transport.recovery.prepare",
+                correlation_id,
+                move |runtime| {
+                    Ok(commit_control_network_activation_result(
+                        runtime,
+                        Err(error),
+                    ))
+                },
+            )?;
+            return Ok(committed.state);
+        }
+    };
+    if !activation_context_matches(&runtime.snapshot().state, &plan.session)
+        || !persisted_activation_context_matches(&plan.session)
+    {
+        log_service_error(
+            "client-core-service skipped stale transport recovery before platform apply",
+        );
+        return Ok(runtime.snapshot().state);
+    }
+    let relay_config = plan.relay_config.clone();
+    let platform_result = platform_transition::run_serialized_correlated(
+        "relay.transport.recovery.apply",
+        correlation_id.clone(),
+        move |platform| platform_transition::replace_data_plane(platform, relay_config.as_ref()),
+    );
+    if let Err(error) = platform_result {
+        log_service_error(format!(
+            "client-core-service transport recovery failed reason={reason}: {error:#}"
+        ));
+        return Ok(state_with_error(
+            &runtime.snapshot().state,
+            error.to_string(),
+        ));
+    }
+    let committed = runtime.call_named(
+        "relay.transport.recovery.commit",
+        correlation_id,
+        move |runtime| Ok(commit_control_network_activation_result(runtime, Ok(plan))),
+    )?;
+    log_service_error(format!(
+        "client-core-service transport recovery completed without tunnel reconfiguration: reason={reason}"
+    ));
+    Ok(committed.state)
+}
+
 fn execute_runtime_network_activation(
     runtime: &RuntimeActorHandle,
     command_kind: impl Into<String>,
@@ -4312,7 +4373,9 @@ fn execute_runtime_network_activation(
                         .as_deref()
                         .map(str::trim)
                         .filter(|v| !v.is_empty())
-                        .ok_or_else(|| anyhow::anyhow!("device unavailable: missing assigned virtual IP"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("device unavailable: missing assigned virtual IP")
+                        })?;
                     platform_transition::activate_network(
                         platform,
                         PlatformNetworkActivation {
@@ -4345,7 +4408,9 @@ fn execute_runtime_network_activation(
             if committed.rollback_platform {
                 log_service_error("client-core-service rolled back failed phase 1 commit");
                 if network_was_enabled {
-                    log_service_error("client-core-service preserved existing network after phase 1 rollback");
+                    log_service_error(
+                        "client-core-service preserved existing network after phase 1 rollback",
+                    );
                 } else {
                     let _ = disable_platform_network_serialized();
                 }
@@ -4368,8 +4433,10 @@ fn execute_runtime_network_activation(
                             return Ok(());
                         }
                     }
-                    if !activation_context_matches(&snapshots_p2.latest().state, &plan_for_phase2.session)
-                        || !persisted_activation_context_matches(&plan_for_phase2.session)
+                    if !activation_context_matches(
+                        &snapshots_p2.latest().state,
+                        &plan_for_phase2.session,
+                    ) || !persisted_activation_context_matches(&plan_for_phase2.session)
                     {
                         anyhow::bail!("stale platform network activation phase 2");
                     }
@@ -4379,7 +4446,9 @@ fn execute_runtime_network_activation(
                         .as_deref()
                         .map(str::trim)
                         .filter(|v| !v.is_empty())
-                        .ok_or_else(|| anyhow::anyhow!("device unavailable: missing assigned virtual IP"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("device unavailable: missing assigned virtual IP")
+                        })?;
                     platform_transition::configure_network_full(
                         platform,
                         PlatformNetworkActivation {
@@ -4402,7 +4471,10 @@ fn execute_runtime_network_activation(
                 command_kind.clone(),
                 correlation_id.clone(),
                 move |runtime| {
-                    Ok(commit_control_network_activation_result(runtime, Err(error)))
+                    Ok(commit_control_network_activation_result(
+                        runtime,
+                        Err(error),
+                    ))
                 },
             )?;
             if committed.rollback_platform && !network_was_enabled {
@@ -4418,7 +4490,9 @@ fn execute_runtime_network_activation(
         log_service_error(format!(
             "client-core-service phase 2 network configuration failed: {phase2_err:#}"
         ));
-        let currently_enabled = platform_transition::snapshot().runtime_state.network_enabled;
+        let currently_enabled = platform_transition::snapshot()
+            .runtime_state
+            .network_enabled;
         if currently_enabled {
             let _ = disable_platform_network_serialized();
         }
@@ -4482,12 +4556,10 @@ where
 {
     match prepared {
         Ok(plan) => match commit_control_network_activation(runtime, plan) {
-            Ok(()) => {
-                ControlNetworkActivationCommit {
-                    state: runtime.state().clone(),
-                    rollback_platform: false,
-                }
-            }
+            Ok(()) => ControlNetworkActivationCommit {
+                state: runtime.state().clone(),
+                rollback_platform: false,
+            },
             Err(error) => {
                 if error
                     .to_string()
@@ -6264,6 +6336,7 @@ struct RelayMaintenanceState {
     retry_not_before_ms: u64,
     last_tick: Option<Instant>,
     network_generation: u64,
+    last_connectivity_recovery_ms: u64,
     peer_reachability: BTreeMap<String, PeerReachabilityState>,
 }
 
@@ -6314,6 +6387,16 @@ fn spawn_relay_data_plane_maintenance_worker(
                 None => None,
             };
             if let Some(reason) = forced_reason {
+                let now_ms = current_timestamp_ms();
+                if !connectivity_recovery_allowed(now_ms, maintenance.last_connectivity_recovery_ms)
+                {
+                    log_service_error(format!(
+                        "client-core-service connectivity recovery coalesced reason={} cooldownMs={}",
+                        reason, CONNECTIVITY_RECOVERY_COOLDOWN_MS
+                    ));
+                    continue;
+                }
+                maintenance.last_connectivity_recovery_ms = now_ms;
                 maintenance.network_generation = maintenance.network_generation.saturating_add(1);
                 let mqtt_generation =
                     control_transport_worker::request_network_generation_reconnect();
@@ -6322,14 +6405,12 @@ fn spawn_relay_data_plane_maintenance_worker(
                     reason, maintenance.network_generation, mqtt_generation
                 ));
             }
-            if let Err(error) =
-                maintain_relay_data_plane(
-                    &runtime,
-                    &state_notifier,
-                    &mut maintenance,
-                    forced_reason,
-                )
-            {
+            if let Err(error) = maintain_relay_data_plane(
+                &runtime,
+                &state_notifier,
+                &mut maintenance,
+                forced_reason,
+            ) {
                 log_service_error(format!(
                     "client-core-service relay data plane maintenance skipped: {error:#}"
                 ));
@@ -6353,9 +6434,9 @@ fn signal_connectivity_change(signal: ConnectivitySignal) {
     };
     match sender.try_send(signal) {
         Ok(()) | Err(TrySendError::Full(_)) => {}
-        Err(TrySendError::Disconnected(_)) => log_service_error(
-            "client-core-service connectivity supervisor channel disconnected",
-        ),
+        Err(TrySendError::Disconnected(_)) => {
+            log_service_error("client-core-service connectivity supervisor channel disconnected")
+        }
     }
 }
 
@@ -6399,9 +6480,9 @@ fn local_network_path_fingerprint() -> Option<NetworkPathFingerprint> {
         "[2606:4700:4700::1111]:53",
         "[2001:4860:4860::8888]:53",
     ]
-        .into_iter()
-        .filter_map(local_source_address_for)
-        .collect::<BTreeSet<_>>();
+    .into_iter()
+    .filter_map(local_source_address_for)
+    .collect::<BTreeSet<_>>();
     (!source_addresses.is_empty()).then_some(NetworkPathFingerprint { source_addresses })
 }
 
@@ -6475,22 +6556,7 @@ fn maintain_relay_data_plane(
         .ok()
         .and_then(|plan| plan.session.device_id.clone())
         .or_else(|| Some(reason.to_string()));
-    if connectivity_reconfigure_requires_data_plane_reset(reason) && transition.prepared.is_ok() {
-        platform_transition::run_serialized_correlated(
-            "connectivity.data_plane.reset",
-            correlation_id.clone(),
-            platform_transition::reset_data_plane,
-        )?;
-        log_service_error(format!(
-            "client-core-service connectivity data plane reset completed: reason={reason}"
-        ));
-    }
-    let state = execute_runtime_network_activation(
-        runtime,
-        "relay.data_plane.reconfigure.commit",
-        correlation_id,
-        transition,
-    )?;
+    let state = execute_runtime_transport_recovery(runtime, reason, correlation_id, transition)?;
     if state.error.is_none() {
         maintenance.consecutive_reconfigure_failures = 0;
         maintenance.retry_not_before_ms = 0;
@@ -6608,9 +6674,7 @@ fn relay_maintenance_reconfigure_reason(
 }
 
 fn relay_reconfigure_backoff_applies(reason: &str) -> bool {
-    reason != "ticket_expired"
-        && reason != "system_resume"
-        && reason != "network_path_changed"
+    reason != "ticket_expired" && reason != "system_resume" && reason != "network_path_changed"
 }
 
 fn relay_reconfigure_bypasses_retry_window(reason: &str) -> bool {
@@ -6620,14 +6684,9 @@ fn relay_reconfigure_bypasses_retry_window(reason: &str) -> bool {
     )
 }
 
-fn connectivity_reconfigure_requires_data_plane_reset(reason: &str) -> bool {
-    matches!(
-        reason,
-        "system_resume"
-            | "network_path_changed"
-            | "peer_reachability_stalled"
-            | "peer_reachability_majority_stalled"
-    )
+fn connectivity_recovery_allowed(now_ms: u64, last_recovery_ms: u64) -> bool {
+    last_recovery_ms == 0
+        || now_ms.saturating_sub(last_recovery_ms) >= CONNECTIVITY_RECOVERY_COOLDOWN_MS
 }
 
 fn maintenance_gap_is_resume(elapsed: Duration) -> bool {
