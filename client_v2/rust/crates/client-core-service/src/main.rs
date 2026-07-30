@@ -36,10 +36,11 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, ErrorKind, Write},
-    net::{TcpListener, TcpStream},
+    net::{IpAddr, TcpListener, TcpStream, UdpSocket},
     path::Path,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
+        mpsc::{self, SyncSender, TrySendError},
         Arc, Mutex, OnceLock,
     },
     thread,
@@ -72,7 +73,8 @@ use serde_json::Value;
 use windows_service::define_windows_service;
 #[cfg(target_os = "windows")]
 use windows_service::service::{
-    ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
+    PowerEventParam, ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState,
+    ServiceStatus, ServiceType,
 };
 #[cfg(target_os = "windows")]
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
@@ -166,7 +168,13 @@ const RELAY_IDLE_RECONFIGURE_MS: u64 = 60 * 1000;
 const RELAY_NO_RX_RECONFIGURE_INTERVALS: u32 = 2;
 const RELAY_RESPONSE_GAP_DEGRADED_PACKETS: u64 = 10;
 const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
+const CONNECTIVITY_RESUME_GAP: Duration = Duration::from_secs(50);
+const NETWORK_PATH_POLL_INTERVAL: Duration = Duration::from_secs(3);
+const NETWORK_PATH_STABLE_SAMPLES: u8 = 2;
+const PEER_STALL_RECONFIGURE_INTERVALS: u32 = 3;
 static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
+static CONNECTIVITY_SIGNAL_SENDER: OnceLock<Mutex<Option<SyncSender<ConnectivitySignal>>>> =
+    OnceLock::new();
 const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const SESSION_AUTH_INVALID_GRACE: Duration = Duration::from_secs(5 * 60);
 const INSTALLATION_BOOTSTRAP_RETRY_MIN: Duration = Duration::from_secs(5);
@@ -548,6 +556,14 @@ fn run_windows_service() -> Result<()> {
                     log_service_error("client-core-service windows service stopping");
                     std::process::exit(0);
                 }
+                ServiceControl::PowerEvent(
+                    PowerEventParam::ResumeAutomatic
+                    | PowerEventParam::ResumeSuspend
+                    | PowerEventParam::ResumeCritical,
+                ) => {
+                    signal_connectivity_change(ConnectivitySignal::SystemResume);
+                    ServiceControlHandlerResult::NoError
+                }
                 _ => ServiceControlHandlerResult::NotImplemented,
             }
         })
@@ -565,7 +581,11 @@ fn set_windows_service_status(
     state: ServiceState,
 ) -> Result<()> {
     let controls = match state {
-        ServiceState::Running => ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
+        ServiceState::Running => {
+            ServiceControlAccept::STOP
+                | ServiceControlAccept::SHUTDOWN
+                | ServiceControlAccept::POWER_EVENT
+        }
         _ => ServiceControlAccept::empty(),
     };
     status_handle
@@ -912,6 +932,10 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalControlStatus => {
             return serde_json::to_string(&control_transport_status()?)
                 .context("encode local control status")
+        }
+        LocalServiceMethod::LocalConnectivityChanged => {
+            signal_connectivity_change(ConnectivitySignal::SystemResume);
+            return Ok(serde_json::json!({"accepted": true}).to_string());
         }
         LocalServiceMethod::LocalEnsureDevice => {
             return serde_json::to_string(&handle_local_ensure_device(&context.runtime)?)
@@ -6238,18 +6262,73 @@ struct RelayMaintenanceState {
     no_rx_intervals: u32,
     consecutive_reconfigure_failures: u32,
     retry_not_before_ms: u64,
+    last_tick: Option<Instant>,
+    network_generation: u64,
+    peer_reachability: BTreeMap<String, PeerReachabilityState>,
+}
+
+#[derive(Debug, Default)]
+struct PeerReachabilityState {
+    last_tun_packets_sent: u64,
+    last_relay_packets_received: u64,
+    stalled_intervals: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetworkPathFingerprint {
+    source_addresses: BTreeSet<IpAddr>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ConnectivitySignal {
+    NetworkPathChanged,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    SystemResume,
 }
 
 fn spawn_relay_data_plane_maintenance_worker(
     runtime: RuntimeActorHandle,
     state_notifier: Arc<RuntimeEventHub>,
 ) {
+    let (connectivity_tx, connectivity_rx) = mpsc::sync_channel(1);
+    *CONNECTIVITY_SIGNAL_SENDER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("connectivity signal sender mutex poisoned") = Some(connectivity_tx.clone());
+    spawn_network_path_monitor();
     thread::spawn(move || {
         let mut maintenance = RelayMaintenanceState::default();
         loop {
-            thread::sleep(RELAY_MAINTENANCE_INTERVAL);
+            let connectivity_signal = connectivity_rx
+                .recv_timeout(RELAY_MAINTENANCE_INTERVAL)
+                .ok();
+            let now = Instant::now();
+            let resume_detected = maintenance
+                .last_tick
+                .replace(now)
+                .is_some_and(|last_tick| maintenance_gap_is_resume(now.duration_since(last_tick)));
+            let forced_reason = match connectivity_signal {
+                Some(ConnectivitySignal::NetworkPathChanged) => Some("network_path_changed"),
+                Some(ConnectivitySignal::SystemResume) => Some("system_resume"),
+                None if resume_detected => Some("system_resume"),
+                None => None,
+            };
+            if let Some(reason) = forced_reason {
+                maintenance.network_generation = maintenance.network_generation.saturating_add(1);
+                let mqtt_generation =
+                    control_transport_worker::request_network_generation_reconnect();
+                log_service_error(format!(
+                    "client-core-service connectivity generation changed reason={} networkGeneration={} mqttGeneration={}",
+                    reason, maintenance.network_generation, mqtt_generation
+                ));
+            }
             if let Err(error) =
-                maintain_relay_data_plane(&runtime, &state_notifier, &mut maintenance)
+                maintain_relay_data_plane(
+                    &runtime,
+                    &state_notifier,
+                    &mut maintenance,
+                    forced_reason,
+                )
             {
                 log_service_error(format!(
                     "client-core-service relay data plane maintenance skipped: {error:#}"
@@ -6259,10 +6338,91 @@ fn spawn_relay_data_plane_maintenance_worker(
     });
 }
 
+fn signal_connectivity_change(signal: ConnectivitySignal) {
+    let Some(sender) = CONNECTIVITY_SIGNAL_SENDER.get() else {
+        log_service_error(format!(
+            "client-core-service connectivity signal arrived before supervisor: {signal:?}"
+        ));
+        return;
+    };
+    let sender = sender
+        .lock()
+        .expect("connectivity signal sender mutex poisoned");
+    let Some(sender) = sender.as_ref() else {
+        return;
+    };
+    match sender.try_send(signal) {
+        Ok(()) | Err(TrySendError::Full(_)) => {}
+        Err(TrySendError::Disconnected(_)) => log_service_error(
+            "client-core-service connectivity supervisor channel disconnected",
+        ),
+    }
+}
+
+fn spawn_network_path_monitor() {
+    thread::spawn(move || {
+        let mut applied = local_network_path_fingerprint();
+        let mut candidate = None;
+        let mut stable_samples = 0_u8;
+        loop {
+            thread::sleep(NETWORK_PATH_POLL_INTERVAL);
+            let observed = local_network_path_fingerprint();
+            if observed == applied {
+                candidate = None;
+                stable_samples = 0;
+                continue;
+            }
+            if observed == candidate {
+                stable_samples = stable_samples.saturating_add(1);
+            } else {
+                candidate = observed.clone();
+                stable_samples = 1;
+            }
+            if stable_samples < NETWORK_PATH_STABLE_SAMPLES {
+                continue;
+            }
+            let previous = std::mem::replace(&mut applied, observed.clone());
+            candidate = None;
+            stable_samples = 0;
+            log_service_error(format!(
+                "client-core-service local network path changed previous={previous:?} current={observed:?}"
+            ));
+            signal_connectivity_change(ConnectivitySignal::NetworkPathChanged);
+        }
+    });
+}
+
+fn local_network_path_fingerprint() -> Option<NetworkPathFingerprint> {
+    let source_addresses = [
+        "1.1.1.1:53",
+        "8.8.8.8:53",
+        "[2606:4700:4700::1111]:53",
+        "[2001:4860:4860::8888]:53",
+    ]
+        .into_iter()
+        .filter_map(local_source_address_for)
+        .collect::<BTreeSet<_>>();
+    (!source_addresses.is_empty()).then_some(NetworkPathFingerprint { source_addresses })
+}
+
+fn local_source_address_for(remote: &str) -> Option<IpAddr> {
+    let remote = remote.parse::<std::net::SocketAddr>().ok()?;
+    let bind_address = if remote.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
+    let socket = UdpSocket::bind(bind_address).ok()?;
+    socket.connect(remote).ok()?;
+    let address = socket.local_addr().ok()?.ip();
+    (!address.is_unspecified() && !address.is_loopback()).then_some(address)
+}
+
 fn maintain_relay_data_plane(
     runtime: &RuntimeActorHandle,
     state_notifier: &RuntimeEventHub,
     maintenance: &mut RelayMaintenanceState,
+    forced_reason: Option<&'static str>,
 ) -> Result<()> {
     let now = current_timestamp_ms();
     let before = runtime.snapshot().state;
@@ -6279,21 +6439,23 @@ fn maintain_relay_data_plane(
     {
         return Ok(());
     }
-    if runtime_relay_candidates().is_empty() {
+    if forced_reason.is_none() && runtime_relay_candidates().is_empty() {
         return Ok(());
     }
     let stats = load_relay_runtime_stats();
     let connect_plan_updated_at_ms = latest_connect_plan_updated_at_ms();
-    let reconfigure_reason = relay_maintenance_reconfigure_reason(
-        now,
-        stats.as_ref(),
-        maintenance,
-        connect_plan_updated_at_ms,
-    );
+    let reconfigure_reason = forced_reason.or_else(|| {
+        relay_maintenance_reconfigure_reason(
+            now,
+            stats.as_ref(),
+            maintenance,
+            connect_plan_updated_at_ms,
+        )
+    });
     let Some(reason) = reconfigure_reason else {
         return Ok(());
     };
-    if now < maintenance.retry_not_before_ms && reason != "ticket_expired" {
+    if now < maintenance.retry_not_before_ms && !relay_reconfigure_bypasses_retry_window(reason) {
         return Ok(());
     }
     if relay_reconfigure_backoff_applies(reason)
@@ -6313,6 +6475,16 @@ fn maintain_relay_data_plane(
         .ok()
         .and_then(|plan| plan.session.device_id.clone())
         .or_else(|| Some(reason.to_string()));
+    if connectivity_reconfigure_requires_data_plane_reset(reason) && transition.prepared.is_ok() {
+        platform_transition::run_serialized_correlated(
+            "connectivity.data_plane.reset",
+            correlation_id.clone(),
+            platform_transition::reset_data_plane,
+        )?;
+        log_service_error(format!(
+            "client-core-service connectivity data plane reset completed: reason={reason}"
+        ));
+    }
     let state = execute_runtime_network_activation(
         runtime,
         "relay.data_plane.reconfigure.commit",
@@ -6322,6 +6494,7 @@ fn maintain_relay_data_plane(
     if state.error.is_none() {
         maintenance.consecutive_reconfigure_failures = 0;
         maintenance.retry_not_before_ms = 0;
+        maintenance.peer_reachability.clear();
         report_runtime_state(&state);
     } else {
         maintenance.consecutive_reconfigure_failures = maintenance
@@ -6411,6 +6584,9 @@ fn relay_maintenance_reconfigure_reason(
     if relay_sessions_missing(stats) {
         return Some("relay_session_missing");
     }
+    if let Some(reason) = peer_reachability_reconfigure_reason(stats, maintenance) {
+        return Some(reason);
+    }
     // Missing replies may simply mean that every peer is offline. Rebuilding the
     // local adapter cannot repair that condition and previously caused a restart
     // loop roughly once per minute. Path diagnostics still report the response gap.
@@ -6433,6 +6609,88 @@ fn relay_maintenance_reconfigure_reason(
 
 fn relay_reconfigure_backoff_applies(reason: &str) -> bool {
     reason != "ticket_expired"
+        && reason != "system_resume"
+        && reason != "network_path_changed"
+}
+
+fn relay_reconfigure_bypasses_retry_window(reason: &str) -> bool {
+    matches!(
+        reason,
+        "ticket_expired" | "system_resume" | "network_path_changed"
+    )
+}
+
+fn connectivity_reconfigure_requires_data_plane_reset(reason: &str) -> bool {
+    matches!(
+        reason,
+        "system_resume"
+            | "network_path_changed"
+            | "peer_reachability_stalled"
+            | "peer_reachability_majority_stalled"
+    )
+}
+
+fn maintenance_gap_is_resume(elapsed: Duration) -> bool {
+    elapsed >= CONNECTIVITY_RESUME_GAP
+}
+
+fn peer_reachability_reconfigure_reason(
+    stats: &RelayRuntimeStats,
+    maintenance: &mut RelayMaintenanceState,
+) -> Option<&'static str> {
+    let mut attached_peers = 0_u32;
+    let mut stalled_peers = 0_u32;
+    let mut current_peers = BTreeSet::new();
+    for peer in stats
+        .peers
+        .iter()
+        .filter(|peer| peer.attached && !peer.peer_node_id.trim().is_empty())
+    {
+        attached_peers = attached_peers.saturating_add(1);
+        current_peers.insert(peer.peer_node_id.clone());
+        let state = maintenance
+            .peer_reachability
+            .entry(peer.peer_node_id.clone())
+            .or_default();
+        let sent_delta = peer
+            .tun_packets_sent
+            .saturating_sub(state.last_tun_packets_sent);
+        let received_delta = peer
+            .relay_packets_received
+            .saturating_sub(state.last_relay_packets_received);
+        state.last_tun_packets_sent = peer.tun_packets_sent;
+        state.last_relay_packets_received = peer.relay_packets_received;
+        if sent_delta > 0 && received_delta == 0 {
+            state.stalled_intervals = state.stalled_intervals.saturating_add(1);
+        } else if received_delta > 0 {
+            state.stalled_intervals = 0;
+        }
+        if state.stalled_intervals == PEER_STALL_RECONFIGURE_INTERVALS {
+            log_service_error(format!(
+                "client-core-service peer reachability stalled peerNodeId={} sentDelta={} receivedDelta={} intervals={}",
+                peer.peer_node_id,
+                sent_delta,
+                received_delta,
+                state.stalled_intervals,
+            ));
+        }
+        if state.stalled_intervals >= PEER_STALL_RECONFIGURE_INTERVALS {
+            stalled_peers = stalled_peers.saturating_add(1);
+        }
+    }
+    maintenance
+        .peer_reachability
+        .retain(|peer_node_id, _| current_peers.contains(peer_node_id));
+    if attached_peers == 0 || stalled_peers == 0 {
+        return None;
+    }
+    if attached_peers == 1 {
+        return Some("peer_reachability_stalled");
+    }
+    if stalled_peers.saturating_mul(2) >= attached_peers {
+        return Some("peer_reachability_majority_stalled");
+    }
+    None
 }
 
 fn relay_runtime_idle(now_ms: u64, stats: &RelayRuntimeStats) -> bool {

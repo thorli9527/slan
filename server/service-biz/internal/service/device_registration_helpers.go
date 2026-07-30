@@ -96,6 +96,12 @@ func registerInstalledDevice(
 		device.RXBytesTotal = existing.RXBytesTotal
 		device.TXBytesTotal = existing.TXBytesTotal
 	}
+	if !managedDeviceVirtualIP(device.VirtualIP) {
+		device.VirtualIP, err = allocateDeviceVirtualIP(devices)
+		if err != nil {
+			return model.Device{}, err
+		}
+	}
 	if err := devices.SaveDevice(ctx, device); err != nil {
 		return model.Device{}, err
 	}

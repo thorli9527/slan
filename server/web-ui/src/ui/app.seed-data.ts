@@ -62,9 +62,9 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const INITIAL_DEVICES: DeviceRow[] = [
-  { deviceId: DEFAULT_MAC_DEVICE_ID, platform: 'macOS', osVersion: '15.3', alias: '办公 Mac', ip: '10.0.0.1', owner: 'alice@staticlss.com', status: 'active' },
-  { deviceId: DEFAULT_IPHONE_DEVICE_ID, platform: 'iOS', osVersion: '18.2', alias: 'Alice iPhone', ip: '10.0.0.2', owner: 'alice@staticlss.com', status: 'active' },
-  { deviceId: DEFAULT_BOB_DEVICE_ID, platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@staticlss.com', status: 'active' },
+  { deviceId: DEFAULT_MAC_DEVICE_ID, platform: 'macOS', osVersion: '15.3', alias: '办公 Mac', ip: '10.0.0.1', owner: 'alice@staticlss.com', status: 'active', networkEnabled: true },
+  { deviceId: DEFAULT_IPHONE_DEVICE_ID, platform: 'iOS', osVersion: '18.2', alias: 'Alice iPhone', ip: '10.0.0.2', owner: 'alice@staticlss.com', status: 'active', networkEnabled: true },
+  { deviceId: DEFAULT_BOB_DEVICE_ID, platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@staticlss.com', status: 'active', networkEnabled: false },
 ];
 
 export const INITIAL_DEVICE_GROUPS: DeviceGroupRow[] = [

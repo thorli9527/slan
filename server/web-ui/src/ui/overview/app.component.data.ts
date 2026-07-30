@@ -342,6 +342,7 @@ export abstract class AppComponentData extends AppComponentState {
       ip: device.globalIp,
       owner: device.ownerEmail || device.ownerId,
       status: device.status,
+      networkEnabled: device.networkEnabled ?? false,
       createdAt: device.createdAt,
     };
   }

@@ -779,6 +779,146 @@ void main() {
     expect(bridge.state.value.switchEnabled, isTrue);
   });
 
+  test('ios resume reconnects control and hot reloads packet tunnel', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        final method = request['method'] as String;
+        embeddedMethods.add(method);
+        if (method == 'localPlatformNetworkConfig') {
+          return _nativePlatformNetworkConfigPayload();
+        }
+        return {'accepted': true};
+      }
+      if (call.method == 'iosStartPacketTunnel' ||
+          call.method == 'iosRefreshPacketTunnel' ||
+          call.method == 'iosRuntimeState') {
+        return {
+          'adapterPresent': true,
+          'networkEnabled': true,
+          'virtualIp': '10.0.0.44',
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      runtimePlatform: ClientBridgeRuntimePlatform.ios,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.enableNetwork),
+    );
+    await _waitFor(
+      () => bridge.state.value.networkEnabled,
+      reason: 'iOS network should be enabled before resume recovery',
+    );
+    calls.clear();
+    embeddedMethods.clear();
+
+    await bridge.notifyAppResumed();
+
+    expect(embeddedMethods, [
+      'localConnectivityChanged',
+      'localPlatformNetworkConfig',
+    ]);
+    expect(
+        calls,
+        containsAllInOrder([
+          'embeddedServiceRequest',
+          'embeddedServiceRequest',
+          'iosRuntimeState',
+          'iosRefreshPacketTunnel',
+        ]));
+    expect(calls, isNot(contains('iosStartPacketTunnel')));
+  });
+
+  test('android resume reconnects control and rebuilds vpn data plane',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        if (request['method'] == 'localPlatformNetworkConfig') {
+          return _nativePlatformNetworkConfigPayload();
+        }
+        if (request['method'] == 'dispatch') {
+          return {
+            'signedIn': true,
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          };
+        }
+        return {'accepted': true};
+      }
+      if (call.method == 'androidStartVpn' ||
+          call.method == 'androidRuntimeState') {
+        return {
+          'adapterPresent': true,
+          'networkEnabled': true,
+          'virtualIp': '10.0.0.44',
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      if (call.method == 'androidVpnPermissionState') {
+        return 'granted';
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      runtimePlatform: ClientBridgeRuntimePlatform.android,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.dispatch(const ClientCommand(
+      ClientCommandType.loginWithPassword,
+      {'email': 'android@example.com', 'password': 'secret'},
+    ));
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.enableNetwork),
+    );
+    await _waitFor(
+      () => bridge.state.value.networkEnabled,
+      reason: 'Android network should be enabled before resume recovery',
+    );
+    calls.clear();
+
+    await bridge.notifyAppResumed();
+
+    expect(
+        calls,
+        containsAllInOrder([
+          'embeddedServiceRequest',
+          'embeddedServiceRequest',
+          'androidRuntimeState',
+          'androidStartVpn',
+        ]));
+  });
+
   test('mobile business event watch uses embedded service before native queue',
       () async {
     const channel = MethodChannel('dev.slan/client_core_v2');

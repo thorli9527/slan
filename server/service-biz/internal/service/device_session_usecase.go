@@ -131,6 +131,14 @@ func (s DeviceSessionService) RenewDeviceSession(ctx context.Context, accessToke
 	}
 	nowUnix := now.Unix()
 	device, updated := applyRenewDeviceSessionInput(device, input, nowUnix)
+	if !managedDeviceVirtualIP(device.VirtualIP) {
+		device.VirtualIP, err = allocateDeviceVirtualIP(s.Devices)
+		if err != nil {
+			return DeviceSessionBoundView{}, err
+		}
+		device.UpdatedAt = nowUnix
+		updated = true
+	}
 	if updated {
 		if err := s.Devices.SaveDevice(ctx, device); err != nil {
 			return DeviceSessionBoundView{}, err

@@ -664,6 +664,9 @@ class _UiTestBridge implements ClientCoreBridge {
   Future<void> start() async {}
 
   @override
+  Future<void> notifyAppResumed() async {}
+
+  @override
   Future<String> serverBaseUrl() async => serverUrl;
 
   @override

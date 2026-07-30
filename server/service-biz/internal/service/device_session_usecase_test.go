@@ -331,6 +331,12 @@ func TestRenewDeviceSessionRetriesPreviousTokenIdempotently(t *testing.T) {
 	if retry.Session.AccessToken != first.Session.AccessToken || retry.Session.RefreshToken != first.Session.RefreshToken {
 		t.Fatalf("retry rotated device tokens again: first=%#v retry=%#v", first.Session, retry.Session)
 	}
+	if first.Profile.GlobalIP != "10.0.1.1" || retry.Profile.GlobalIP != first.Profile.GlobalIP {
+		t.Fatalf("renewal must repair and preserve device IP: first=%q retry=%q", first.Profile.GlobalIP, retry.Profile.GlobalIP)
+	}
+	if devices.nextVirtualIP != 1 {
+		t.Fatalf("renewal must allocate missing IP exactly once, got %d", devices.nextVirtualIP)
+	}
 }
 
 func TestBindDeviceSessionMigratesLegacyIPAndIgnoresInactiveNetworkMembership(t *testing.T) {

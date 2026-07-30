@@ -39,6 +39,7 @@ class ClientCoreLocalService {
     'localEnsureDevice',
     'localPlatformNetworkConfig',
     'localConnectControlMqtt',
+    'localConnectivityChanged',
     'localRefreshRelayCandidates',
     'localRelayPrepare',
     'localRegisterTestUser',
@@ -109,6 +110,11 @@ class ClientCoreLocalService {
   /// 查询 MQTT 控制通道状态。
   Future<Map<String, Object?>?> localControlStatus() async {
     return requestJson('localControlStatus');
+  }
+
+  /// 通知桌面后台服务应用或操作系统刚从挂起状态恢复。
+  Future<void> localConnectivityChanged() async {
+    await requestJson('localConnectivityChanged');
   }
 
   /// 查询控制通道下一步计划。

@@ -31,7 +31,9 @@ class HomePage extends StatefulWidget {
 /// 首页内部状态。
 ///
 /// 这里保存表单输入、临时操作结果和诊断快照；可持久化业务状态统一来自 bridge。
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  static const _connectivityRecoveryBackgroundThreshold = Duration(seconds: 3);
+
   /// 移动端密码登录账号输入框。
   final TextEditingController _emailController = TextEditingController();
 
@@ -60,9 +62,12 @@ class _HomePageState extends State<HomePage> {
   /// 当前正在打开的浏览器命令，避免连续点击重复打开窗口。
   ClientCommandType? _pendingBrowserCommand;
 
+  DateTime? _backgroundedAt;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.bridge.state.addListener(_logStateChange);
     _logStateChange();
     unawaited(_loadServerBaseUrl());
@@ -71,11 +76,34 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.bridge.state.removeListener(_logStateChange);
     _emailController.dispose();
     _passwordController.dispose();
     _serverBaseUrlController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _backgroundedAt ??= DateTime.now();
+        break;
+      case AppLifecycleState.resumed:
+        final backgroundedAt = _backgroundedAt;
+        _backgroundedAt = null;
+        if (backgroundedAt != null &&
+            DateTime.now().difference(backgroundedAt) >=
+                _connectivityRecoveryBackgroundThreshold) {
+          unawaited(widget.bridge.notifyAppResumed());
+        }
+        break;
+      case AppLifecycleState.inactive:
+        break;
+    }
   }
 
   @override

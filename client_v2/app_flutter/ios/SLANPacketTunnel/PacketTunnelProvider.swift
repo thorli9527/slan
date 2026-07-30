@@ -16,6 +16,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   private var resolverRecords: [NativeResolverRecord] = []
   // RelayRuntime 内部同时管理 UDP 直链和中继路径，PacketTunnelProvider 只负责按目的地址投递。
   private var relayRuntime: RelayRuntime?
+  private let connectivityMonitor = NWPathMonitor()
+  private let connectivityQueue = DispatchQueue(
+    label: "dev.slan.client.v2.connectivity",
+    qos: .utility
+  )
+  private var lastConnectivityFingerprint: String?
+  private var connectivityGeneration = 0
   // 暴露给宿主 App 查询的运行统计，便于客户端页面诊断路由、直链和中继状态。
   private var tunnelStats = PacketTunnelStats()
 
@@ -95,6 +102,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
         self.tunnelStats.relaySessionCount = self.relayRuntime?.sessionCount ?? 0
         self.relayRuntime?.start()
+        self.startConnectivityMonitor()
         self.persistStats()
         os_log(
           "SLAN PacketTunnel started virtualIp=%{public}@/%{public}d configuredPrefix=%{public}d routes=%{public}d relaySessions=%{public}d",
@@ -119,6 +127,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     completionHandler: @escaping () -> Void
   ) {
     readingPackets = false
+    connectivityMonitor.cancel()
     relayRuntime?.stop()
     relayRuntime = nil
     dnsServers.removeAll()
@@ -139,6 +148,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     if command == "reloadResolver" {
       reloadResolverFromSharedConfig()
       completionHandler?(Data("ok".utf8))
+      return
+    }
+    if command == "reloadDataPlane" {
+      reloadNetworkAndDataPlaneFromSharedConfig { error in
+        completionHandler?(error == nil ? Data("ok".utf8) : nil)
+      }
       return
     }
     guard command == "stats" else {
@@ -179,6 +194,149 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       dnsServers.count,
       resolverRecords.count
     )
+  }
+
+  private func reloadDataPlaneFromSharedConfig() {
+    let config = SLANIosSharedStore.readNetworkConfig() ?? [:]
+    let virtualIp = (config["virtualIp"] as? String ?? tunnelStats.virtualIp)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    reloadResolverFromSharedConfig()
+    replaceDataPlane(config: config, virtualIp: virtualIp)
+  }
+
+  private func replaceDataPlane(config: [String: Any], virtualIp: String) {
+    relayRuntime?.stop()
+    relayRuntime = RelayRuntime(
+      config: config["relayDataPlane"],
+      localVirtualIp: virtualIp,
+      packetFlow: packetFlow
+    )
+    tunnelStats.relaySessionCount = relayRuntime?.sessionCount ?? 0
+    tunnelStats.relayAttachedSessionCount = 0
+    tunnelStats.lastRelayAttachError = ""
+    relayRuntime?.start()
+    persistStats()
+    os_log(
+      "SLAN PacketTunnel data plane reloaded virtualIp=%{public}@ relaySessions=%{public}d",
+      log: Self.logger,
+      type: .info,
+      virtualIp,
+      tunnelStats.relaySessionCount
+    )
+  }
+
+  private func reloadNetworkAndDataPlaneFromSharedConfig(
+    completion: @escaping (Error?) -> Void
+  ) {
+    let config = SLANIosSharedStore.readNetworkConfig() ?? [:]
+    guard var virtualIp = config["virtualIp"] as? String, !virtualIp.isEmpty else {
+      completion(PacketTunnelError("missing virtualIp during reload"))
+      return
+    }
+    _ = Self.addressPrefixLen(config: config, virtualIp: &virtualIp)
+    let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.255.0.1")
+    let ipv4 = NEIPv4Settings(
+      addresses: [virtualIp],
+      subnetMasks: [Self.mask(Self.hostInterfacePrefixLen)]
+    )
+    let resolverConfig = config["resolver"] as? [String: Any] ?? [:]
+    let nextDnsServers = (resolverConfig["servers"] as? [String] ?? [])
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    var nextRoutes = Self.routeEntries(config["routes"])
+    for dnsServer in nextDnsServers {
+      guard let address = Self.ipv4Value(dnsServer) else { continue }
+      let route = RouteEntry(
+        cidr: "\(dnsServer)/32",
+        destination: dnsServer,
+        mask: "255.255.255.255",
+        network: address,
+        prefix: 32
+      )
+      if !nextRoutes.contains(where: { $0.cidr == route.cidr }) {
+        nextRoutes.append(route)
+      }
+    }
+    let includedRoutes = nextRoutes.map {
+      NEIPv4Route(destinationAddress: $0.destination, subnetMask: $0.mask)
+    }
+    ipv4.includedRoutes = includedRoutes.isEmpty ? [NEIPv4Route.default()] : includedRoutes
+    networkSettings.ipv4Settings = ipv4
+    if !nextDnsServers.isEmpty {
+      let dnsSettings = NEDNSSettings(servers: nextDnsServers)
+      dnsSettings.matchDomains = (resolverConfig["splitDomains"] as? [String] ?? [])
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+      networkSettings.dnsSettings = dnsSettings
+    }
+    if let mtu = config["mtu"] as? Int, mtu >= 576 {
+      networkSettings.mtu = NSNumber(value: mtu)
+    } else {
+      networkSettings.mtu = 1280
+    }
+    setTunnelNetworkSettings(networkSettings) { [weak self] error in
+      guard let self = self else {
+        completion(PacketTunnelError("packet tunnel released during reload"))
+        return
+      }
+      guard error == nil else {
+        completion(error)
+        return
+      }
+      self.dnsServers = nextDnsServers
+      self.resolverRecords = NativeResolverRecord.records(resolverConfig["records"])
+      self.routeTable = nextRoutes
+      self.tunnelStats.networkId = config["networkId"] as? String ?? ""
+      self.tunnelStats.deviceId = config["deviceId"] as? String ?? ""
+      self.tunnelStats.virtualIp = virtualIp
+      self.tunnelStats.routeCount = nextRoutes.count
+      self.replaceDataPlane(config: config, virtualIp: virtualIp)
+      os_log(
+        "SLAN PacketTunnel network config reloaded virtualIp=%{public}@ routes=%{public}d dns=%{public}d",
+        log: Self.logger,
+        type: .info,
+        virtualIp,
+        nextRoutes.count,
+        nextDnsServers.count
+      )
+      completion(nil)
+    }
+  }
+
+  private func startConnectivityMonitor() {
+    connectivityMonitor.pathUpdateHandler = { [weak self] path in
+      guard let self = self else { return }
+      let interfaces = path.availableInterfaces
+        .map { "\($0.name):\(String(describing: $0.type))" }
+        .sorted()
+        .joined(separator: ",")
+      let fingerprint = "\(path.status):\(interfaces)"
+      guard let previous = self.lastConnectivityFingerprint else {
+        self.lastConnectivityFingerprint = fingerprint
+        return
+      }
+      self.lastConnectivityFingerprint = fingerprint
+      self.connectivityGeneration += 1
+      let generation = self.connectivityGeneration
+      self.connectivityQueue.asyncAfter(deadline: .now() + 1) { [weak self] in
+        guard let self = self,
+          generation == self.connectivityGeneration,
+          path.status == .satisfied,
+          self.readingPackets
+        else {
+          return
+        }
+        os_log(
+          "SLAN PacketTunnel connectivity path changed previous=%{public}@ current=%{public}@",
+          log: Self.logger,
+          type: .info,
+          previous,
+          fingerprint
+        )
+        self.reloadDataPlaneFromSharedConfig()
+      }
+    }
+    connectivityMonitor.start(queue: connectivityQueue)
   }
 
   // 持续从 NEPacketTunnelFlow 异步读取系统写入 utun 的 IP 包。
@@ -1994,6 +2152,13 @@ private final class DerpPeerRuntime {
   private var connection: NWConnection?
   private var readBuffer = Data()
   private var ready = false
+  private var running = false
+  private var reconnectAttempts = 0
+  private var reconnectGeneration = 0
+  private let connectionQueue = DispatchQueue(
+    label: "dev.slan.client.v2.derp-tcp",
+    qos: .utility
+  )
   private var serverSessionId = ""
   private(set) var attached = false
   private(set) var attachError = ""
@@ -2046,7 +2211,12 @@ private final class DerpPeerRuntime {
   }
 
   func start() {
-    guard connection == nil else {
+    running = true
+    startConnection()
+  }
+
+  private func startConnection() {
+    guard running, connection == nil else {
       return
     }
     let connection = NWConnection(host: endpoint.host, port: endpoint.port, using: .tcp)
@@ -2060,21 +2230,57 @@ private final class DerpPeerRuntime {
         self.receive()
       }
       if case .failed = state {
-        self.ready = false
+        self.resetConnectionForReconnect(connection)
       }
       if case .cancelled = state {
         self.ready = false
       }
     }
     self.connection = connection
-    connection.start(queue: DispatchQueue.global(qos: .utility))
+    connection.start(queue: connectionQueue)
   }
 
   func stop() {
+    running = false
+    reconnectGeneration += 1
     disconnect()
     ready = false
+    attached = false
     connection?.cancel()
     connection = nil
+  }
+
+  private func resetConnectionForReconnect(_ failedConnection: NWConnection? = nil) {
+    guard failedConnection == nil || connection === failedConnection else {
+      return
+    }
+    ready = false
+    attached = false
+    serverSessionId = ""
+    readBuffer.removeAll(keepingCapacity: true)
+    let current = connection
+    connection = nil
+    current?.cancel()
+    scheduleReconnect()
+  }
+
+  private func scheduleReconnect() {
+    guard running else { return }
+    reconnectAttempts += 1
+    reconnectGeneration += 1
+    let generation = reconnectGeneration
+    let delay = min(30, 1 << min(reconnectAttempts - 1, 5))
+    connectionQueue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+      guard let self = self,
+        self.running,
+        generation == self.reconnectGeneration,
+        self.connection == nil
+      else {
+        return
+      }
+      self.attachError = ""
+      self.startConnection()
+    }
   }
 
   func matches(_ destination: String) -> Bool {
@@ -2130,9 +2336,13 @@ private final class DerpPeerRuntime {
   }
 
   private func receive() {
-    connection?.receive(minimumIncompleteLength: 1, maximumLength: 4096) {
+    guard let receivingConnection = connection else { return }
+    receivingConnection.receive(minimumIncompleteLength: 1, maximumLength: 4096) {
       [weak self] data, _, isComplete, error in
       guard let self = self else {
+        return
+      }
+      guard self.connection === receivingConnection else {
         return
       }
       if let data = data, !data.isEmpty {
@@ -2140,7 +2350,7 @@ private final class DerpPeerRuntime {
         self.consumeBufferedLines()
       }
       if isComplete || error != nil {
-        self.ready = false
+        self.resetConnectionForReconnect(receivingConnection)
         return
       }
       if self.ready {
@@ -2167,10 +2377,12 @@ private final class DerpPeerRuntime {
       attached = true
       serverSessionId = (value["sessionId"] as? String) ?? sessionId
       attachError = ""
+      reconnectAttempts = 0
       return
     }
     if kind == "error" {
       attachError = ((value["error"] as? [String: Any])?["message"] as? String) ?? "DERP error"
+      resetConnectionForReconnect()
       return
     }
     guard kind == "recv",
@@ -2295,6 +2507,13 @@ private final class RelayPeerRuntime {
   private(set) var packetsWritten = 0
   private(set) var detachSent = false
   private var attachAttempts = 0
+  private var reconnectAttempts = 0
+  private var reconnectGeneration = 0
+  private var running = false
+  private let connectionQueue = DispatchQueue(
+    label: "dev.slan.client.v2.relay-udp",
+    qos: .utility
+  )
   private var seq: UInt64 = 0
   var aclPeer: AclPeer {
     AclPeer(peerNodeId: peerNodeId, peerVirtualIps: peerVirtualIps)
@@ -2344,7 +2563,13 @@ private final class RelayPeerRuntime {
 
   // 建立到 relay 节点的 UDP 连接，ready 后发送 attach 并进入接收循环。
   func start() {
+    running = true
+    startConnection()
+  }
+
+  private func startConnection() {
     guard connection == nil,
+      running,
       let endpoint = Self.endpoint(relayAddress)
     else {
       return
@@ -2361,21 +2586,58 @@ private final class RelayPeerRuntime {
       }
       if case .failed = state {
         self.ready = false
+        self.attached = false
+        if self.connection === connection {
+          self.connection = nil
+        }
+        self.scheduleReconnect()
       }
       if case .cancelled = state {
         self.ready = false
       }
     }
     self.connection = connection
-    connection.start(queue: DispatchQueue.global(qos: .utility))
+    connection.start(queue: connectionQueue)
   }
 
   // 退出 relay 会话，尽量发送 detach 后再关闭 UDP 连接。
   func stop() {
+    running = false
+    reconnectGeneration += 1
     detach()
     ready = false
     connection?.cancel()
     connection = nil
+  }
+
+  private func scheduleReconnect() {
+    guard running else { return }
+    reconnectAttempts += 1
+    reconnectGeneration += 1
+    let generation = reconnectGeneration
+    let delay = min(30, 1 << min(reconnectAttempts - 1, 5))
+    connectionQueue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+      guard let self = self,
+        self.running,
+        generation == self.reconnectGeneration,
+        self.connection == nil
+      else {
+        return
+      }
+      self.attachAttempts = 0
+      self.attachError = ""
+      self.startConnection()
+    }
+  }
+
+  private func resetConnectionForReconnect(_ error: String) {
+    attachError = error
+    ready = false
+    attached = false
+    let current = connection
+    connection = nil
+    current?.cancel()
+    scheduleReconnect()
   }
 
   // 判断目的虚拟 IP 是否应由当前 relay session 承载。
@@ -2431,22 +2693,30 @@ private final class RelayPeerRuntime {
 
   // attach 未确认时按固定次数重试，最终暴露错误给统计页面。
   private func scheduleAttachTimeout(attempt: Int) {
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak self] in
+    connectionQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
       guard let self = self, self.ready, !self.attached, self.attachAttempts == attempt else {
         return
       }
       if self.attachAttempts < Self.maxAttachAttempts {
         self.attach()
       } else {
-        self.attachError = "relay attach timed out"
+        self.resetConnectionForReconnect("relay attach timed out")
       }
     }
   }
 
   // 接收 relay 控制响应和数据帧，数据帧会写回 utun 或本地响应 ICMP。
   private func receive() {
-    connection?.receiveMessage { [weak self] data, _, _, _ in
+    guard let receivingConnection = connection else { return }
+    receivingConnection.receiveMessage { [weak self] data, _, _, error in
       guard let self = self else {
+        return
+      }
+      guard self.connection === receivingConnection else {
+        return
+      }
+      if let error = error {
+        self.resetConnectionForReconnect("relay receive failed: \(error.localizedDescription)")
         return
       }
       if let data = data {
@@ -2513,15 +2783,19 @@ private final class RelayPeerRuntime {
       if ackSessionId == sessionId {
         attached = true
         attachError = ""
+        reconnectAttempts = 0
       } else {
-        attached = false
-        attachError = "relay attach session mismatch"
+        resetConnectionForReconnect("relay attach session mismatch")
       }
       return true
     }
     if kind == "error" {
-      attached = false
-      attachError = (value["message"] as? String) ?? "relay attach failed"
+      let nestedError = value["error"] as? [String: Any]
+      resetConnectionForReconnect(
+        (nestedError?["message"] as? String)
+          ?? (value["message"] as? String)
+          ?? "relay attach failed"
+      )
       return true
     }
     return false

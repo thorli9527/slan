@@ -188,7 +188,7 @@ func (p *deviceLoginTestPublisher) PublishDeviceControl(_ context.Context, devic
 	return nil
 }
 
-func TestRegisterInstalledDeviceDoesNotAllocateIPOrAttachNetwork(t *testing.T) {
+func TestRegisterInstalledDeviceAllocatesIPWithoutAttachingNetwork(t *testing.T) {
 	now := time.Unix(1700004000, 0)
 	devices := &deviceRegistrationTestDevices{
 		networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{}},
@@ -210,11 +210,42 @@ func TestRegisterInstalledDeviceDoesNotAllocateIPOrAttachNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registerInstalledDevice returned error: %v", err)
 	}
-	if device.VirtualIP != "" {
-		t.Fatalf("installed device must not receive IP, got %q", device.VirtualIP)
+	if device.VirtualIP != "10.0.1.1" {
+		t.Fatalf("installed device must receive IP 10.0.1.1, got %q", device.VirtualIP)
 	}
-	if devices.nextVirtualIP != 0 {
-		t.Fatalf("installed device must not consume IP sequence, got %d", devices.nextVirtualIP)
+	if devices.nextVirtualIP != 1 {
+		t.Fatalf("installed device must allocate exactly one IP, got %d", devices.nextVirtualIP)
+	}
+}
+
+func TestRegisterInstalledDeviceRepairsMissingIPOnce(t *testing.T) {
+	now := time.Unix(1700004000, 0)
+	devices := &deviceRegistrationTestDevices{
+		networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
+			"device-1": {
+				DeviceID: "device-1", OwnerID: "user-1", Name: "Linux", Platform: "linux", Status: "active",
+			},
+		}},
+	}
+	users := &deviceRegistrationTestUsers{users: map[string]model.User{
+		"user-1": {UserID: "user-1", Email: "user@example.test", Status: "active"},
+	}}
+	input := RegisterDeviceInput{
+		OwnerID: "user-1", DeviceID: "device-1", Name: "Linux", Platform: "linux",
+	}
+	first, err := registerInstalledDevice(context.Background(), users, devices, func() time.Time { return now }, input)
+	if err != nil {
+		t.Fatalf("first registerInstalledDevice returned error: %v", err)
+	}
+	second, err := registerInstalledDevice(context.Background(), users, devices, func() time.Time { return now }, input)
+	if err != nil {
+		t.Fatalf("second registerInstalledDevice returned error: %v", err)
+	}
+	if first.VirtualIP != "10.0.1.1" || second.VirtualIP != first.VirtualIP {
+		t.Fatalf("expected stable repaired IP, first=%q second=%q", first.VirtualIP, second.VirtualIP)
+	}
+	if devices.nextVirtualIP != 1 {
+		t.Fatalf("expected one IP allocation across retries, got %d", devices.nextVirtualIP)
 	}
 }
 

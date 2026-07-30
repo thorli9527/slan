@@ -90,6 +90,8 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       iosWatchNetworkEvent(result: result)
     case "iosStartPacketTunnel":
       iosStartPacketTunnel(call.arguments, result: result)
+    case "iosRefreshPacketTunnel":
+      iosRefreshPacketTunnel(call.arguments, result: result)
     case "iosStopPacketTunnel":
       iosStopPacketTunnel(result: result)
     case "embeddedServiceRequest":
@@ -268,9 +270,12 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     let previousConfig = SLANIosSharedStore.readNetworkConfig()
     SLANIosSharedStore.writeNetworkConfig(config)
     if let session = packetTunnelManager?.connection as? NETunnelProviderSession,
-      session.status == .connected,
-      resolverOnlyConfigChange(previous: previousConfig, next: config)
+      session.status == .connected
     {
+      guard resolverOnlyConfigChange(previous: previousConfig, next: config) else {
+        iosRefreshPacketTunnel(config, result: result)
+        return
+      }
       do {
         try session.sendProviderMessage(Data("reloadResolver".utf8)) { [weak self] _ in
           guard let self = self else { return }
@@ -326,6 +331,82 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
           )
         }
         result(self.compactState())
+      }
+    }
+  }
+
+  private func iosRefreshPacketTunnel(_ arguments: Any?, result: @escaping FlutterResult) {
+    guard var config = arguments as? [String: Any] else {
+      result(
+        FlutterError(
+          code: "ios_config_missing",
+          message: "iOS packet tunnel config is missing",
+          details: nil
+        )
+      )
+      return
+    }
+    if config["sessionName"] == nil {
+      config["sessionName"] = "SLAN"
+    }
+    SLANIosSharedStore.writeNetworkConfig(config)
+    loadPacketTunnelManager { [weak self] managerResult in
+      guard let self = self else { return }
+      switch managerResult {
+      case .failure(let error):
+        result(
+          FlutterError(
+            code: "ios_tunnel_load_failed",
+            message: error.localizedDescription,
+            details: nil
+          )
+        )
+      case .success(let manager):
+        guard let session = manager.connection as? NETunnelProviderSession,
+          session.status == .connected
+        else {
+          self.iosStartPacketTunnel(config, result: result)
+          return
+        }
+        do {
+          try session.sendProviderMessage(Data("reloadDataPlane".utf8)) { [weak self] response in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+              guard response != nil else {
+                result(
+                  FlutterError(
+                    code: "ios_data_plane_reload_failed",
+                    message: "PacketTunnel did not confirm data plane reload",
+                    details: nil
+                  )
+                )
+                return
+              }
+              self.packetTunnelManager = manager
+              self.state["virtualIp"] = self.stringField(config, "virtualIp")
+              self.state["adapterPresent"] = true
+              self.state["networkEnabled"] = true
+              self.state["syncing"] = false
+              self.state["switchEnabled"] = true
+              self.state["notice"] = "networkConnectivityRecovered"
+              self.state["error"] = nil
+              self.pushNetworkEvent(
+                eventType: "connectivityChanged",
+                message: "iOS PacketTunnel data plane reloaded",
+                runtimeState: self.iosRuntimeState()
+              )
+              result(self.compactState())
+            }
+          }
+        } catch {
+          result(
+            FlutterError(
+              code: "ios_data_plane_reload_failed",
+              message: error.localizedDescription,
+              details: nil
+            )
+          )
+        }
       }
     }
   }

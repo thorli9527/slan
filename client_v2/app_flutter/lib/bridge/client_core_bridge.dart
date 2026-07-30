@@ -54,6 +54,9 @@ abstract interface class ClientCoreBridge {
   /// 查询本地控制通道状态。
   Future<ControlTransportStatus?> localControlStatus();
 
+  /// 通知核心服务前台生命周期已恢复，以便立即重建失效连接。
+  Future<void> notifyAppResumed();
+
   /// 使用接入码把当前设备确认给邀请方。
   Future<void> acceptNetworkInvite(String inviteCode);
 
@@ -125,6 +128,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// 当前网络开关操作上下文。
   NetworkToggleOperation? _networkToggleOperation;
+
+  /// 移动端前台恢复任务，合并短时间内重复的 lifecycle 回调。
+  Future<void>? _mobileResumeInFlight;
 
   /// 网络开关是否正在执行。操作上下文本身是唯一状态源。
   bool get _networkToggleInFlight => _networkToggleOperation != null;
@@ -1808,6 +1814,54 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   bool get _isDesktopHostPlatform => _isMacOS || _isWindows || _isLinux;
 
+  @override
+  Future<void> notifyAppResumed() async {
+    if (_usesNativeMobileControlPlane) {
+      final inFlight = _mobileResumeInFlight;
+      if (inFlight != null) {
+        return inFlight;
+      }
+      final operation = _recoverNativeMobileAfterResume();
+      _mobileResumeInFlight = operation;
+      try {
+        await operation;
+      } finally {
+        if (identical(_mobileResumeInFlight, operation)) {
+          _mobileResumeInFlight = null;
+        }
+      }
+      return;
+    }
+    if (!_isDesktopHostPlatform) {
+      return;
+    }
+    try {
+      await _localService.localConnectivityChanged();
+    } catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.connectivity.resume.failed',
+        state: _state.value,
+        fields: {'error': error.toString()},
+      );
+    }
+  }
+
+  Future<void> _recoverNativeMobileAfterResume() async {
+    try {
+      await _embeddedServiceRequest('localConnectivityChanged', null, true);
+    } catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.mobile.resume.controlRecoveryFailed',
+        state: _state.value,
+        fields: {'error': error.toString()},
+      );
+    }
+    if (!_state.value.networkEnabled) {
+      return;
+    }
+    await _refreshNativeMobilePeersFromControlSync(forceReconnect: true);
+  }
+
   /// 当前运行环境是否按 Android 处理。
   bool get _isAndroid =>
       _runtimePlatform == ClientBridgeRuntimePlatform.android ||
@@ -2414,7 +2468,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   ///
   /// Android/iOS 在网络启用期间收到安全组、设备、relay 或直连候选变化时，
   /// 需要重新下发配置，否则新规则不会进入数据面。
-  Future<void> _refreshNativeMobilePeersFromControlSync() async {
+  Future<void> _refreshNativeMobilePeersFromControlSync({
+    bool forceReconnect = false,
+  }) async {
     try {
       final config = await _platformNetworkConfig();
       if (config == null) {
@@ -2434,12 +2490,18 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         return;
       }
       if (_isAndroid) {
-        final refreshed = await _refreshAndroidMobilePeers(config);
+        final refreshed = await _refreshAndroidMobilePeers(
+          config,
+          forceReconnect: forceReconnect,
+        );
         if (!refreshed) {
           return;
         }
       } else if (_isIos) {
-        final refreshed = await _refreshIosMobilePeers(config);
+        final refreshed = await _refreshIosMobilePeers(
+          config,
+          forceReconnect: forceReconnect,
+        );
         if (!refreshed) {
           return;
         }
@@ -2464,14 +2526,17 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   Future<bool> _refreshAndroidMobilePeers(
-    AndroidVpnSessionConfig config,
-  ) async {
+    AndroidVpnSessionConfig config, {
+    bool forceReconnect = false,
+  }) async {
     final fingerprint = androidVpnConfigFingerprint(config);
     final runtimeState = await _plugin.androidRuntimeState();
     final runtimeRunning = runtimeState is Map &&
         runtimeState['networkEnabled'] == true &&
         runtimeState['adapterPresent'] == true;
-    if (runtimeRunning && _lastAndroidVpnConfigFingerprint == fingerprint) {
+    if (!forceReconnect &&
+        runtimeRunning &&
+        _lastAndroidVpnConfigFingerprint == fingerprint) {
       _logMobilePeersRefreshSkipped(reason: 'unchangedAndroidVpnConfig');
       return false;
     }
@@ -2481,19 +2546,27 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   Future<bool> _refreshIosMobilePeers(
-    AndroidVpnSessionConfig config,
-  ) async {
+    AndroidVpnSessionConfig config, {
+    bool forceReconnect = false,
+  }) async {
     final fingerprint = androidVpnConfigFingerprint(config);
     final runtimeState = await _plugin.iosRuntimeState();
     final runtimeRunning = runtimeState is Map &&
         runtimeState['networkEnabled'] == true &&
         runtimeState['adapterPresent'] == true;
-    if (runtimeRunning &&
+    if (!forceReconnect &&
+        runtimeRunning &&
         _lastIosPacketTunnelConfigFingerprint == fingerprint) {
       _logMobilePeersRefreshSkipped(reason: 'unchangedIosPacketTunnelConfig');
       return false;
     }
-    await _plugin.iosStartPacketTunnel(config).timeout(_networkToggleTimeout);
+    if (forceReconnect && runtimeRunning) {
+      await _plugin
+          .iosRefreshPacketTunnel(config)
+          .timeout(_networkToggleTimeout);
+    } else {
+      await _plugin.iosStartPacketTunnel(config).timeout(_networkToggleTimeout);
+    }
     _rememberIosPacketTunnelConfigFingerprint(config);
     return true;
   }

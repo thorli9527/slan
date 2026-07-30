@@ -68,6 +68,7 @@ export type ApiDevice = {
   globalIp: string;
   globalName: string;
   status: string;
+  networkEnabled?: boolean;
   createdAt: number;
   updatedAt: number;
 };
@@ -307,6 +308,7 @@ export type DeviceRow = {
   ip: string;
   owner: string;
   status: string;
+  networkEnabled: boolean;
   createdAt?: number;
 };
 

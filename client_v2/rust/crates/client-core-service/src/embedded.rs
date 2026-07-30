@@ -73,11 +73,13 @@ static MQTT: OnceLock<Mutex<Option<EmbeddedMqttConnection>>> = OnceLock::new();
 static MQTT_LAST_ERROR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static EMBEDDED_CONTROL_BASE_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static NEXT_EMBEDDED_MQTT_GENERATION: AtomicU64 = AtomicU64::new(1);
+static EMBEDDED_CONNECTIVITY_RECOVERY_AT_MS: OnceLock<Mutex<u64>> = OnceLock::new();
 
 const EMBEDDED_MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
 const EMBEDDED_ACTIVE_NETWORK_RECONCILE_INTERVAL_MS: u64 = 10_000;
 const EMBEDDED_NETWORK_SUBSCRIBE_RETRY_INTERVAL_MS: u64 = 2_000;
 const EMBEDDED_MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
+const EMBEDDED_CONNECTIVITY_RECOVERY_DEDUP_MS: u64 = 3_000;
 
 struct EmbeddedMqttConnection {
     generation: u64,
@@ -367,6 +369,10 @@ fn handle_request_json(request_json: &str) -> Result<String> {
         }
         LocalServiceMethod::LocalControlStatus => {
             serde_json::to_string(&embedded_control_status()).context("encode control status")
+        }
+        LocalServiceMethod::LocalConnectivityChanged => {
+            serde_json::to_string(&handle_embedded_connectivity_changed()?)
+                .context("encode embedded connectivity recovery")
         }
         LocalServiceMethod::LocalEnsureDevice => {
             serde_json::to_string(&ensure_embedded_device()?).context("encode ensure device")
@@ -1162,6 +1168,38 @@ fn ensure_embedded_device() -> Result<Value> {
 fn connect_embedded_control_mqtt() -> Result<Value> {
     let session = ensure_device_session().context("ensure device before mqtt")?;
     connect_embedded_control_mqtt_with_session(&session)
+}
+
+fn handle_embedded_connectivity_changed() -> Result<Value> {
+    let mut last_recovery_at_ms = EMBEDDED_CONNECTIVITY_RECOVERY_AT_MS
+        .get_or_init(|| Mutex::new(0))
+        .lock()
+        .expect("embedded connectivity recovery mutex poisoned");
+    let now_ms = current_timestamp_ms();
+    if now_ms.saturating_sub(*last_recovery_at_ms) < EMBEDDED_CONNECTIVITY_RECOVERY_DEDUP_MS
+        && mqtt_connection()
+            .lock()
+            .expect("embedded mqtt mutex poisoned")
+            .as_ref()
+            .is_some_and(|connection| connection.connected)
+    {
+        return Ok(serde_json::json!({
+            "accepted": true,
+            "skipped": true,
+            "reason": "recent_connectivity_recovery",
+            "networkEnabled": runtime().snapshot().state.network_enabled,
+        }));
+    }
+    clear_embedded_mqtt_connection();
+    let session = ensure_device_session().context("refresh device session after connectivity change")?;
+    let mqtt = connect_embedded_control_mqtt_with_session(&session)
+        .context("reconnect embedded mqtt after connectivity change")?;
+    *last_recovery_at_ms = current_timestamp_ms();
+    Ok(serde_json::json!({
+        "accepted": true,
+        "mqtt": mqtt,
+        "networkEnabled": runtime().snapshot().state.network_enabled,
+    }))
 }
 
 fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Result<Value> {

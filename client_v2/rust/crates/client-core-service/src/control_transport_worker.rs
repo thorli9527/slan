@@ -1,6 +1,9 @@
 use std::{
     collections::BTreeSet,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -47,6 +50,15 @@ const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 const MQTT_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(1);
 const MQTT_PLANNED_RECONNECT_REASON: &str =
     "control mqtt proactive reconnect after session refresh window";
+const MQTT_NETWORK_GENERATION_RECONNECT_REASON: &str =
+    "control mqtt reconnect after local network generation changed";
+static MQTT_NETWORK_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn request_network_generation_reconnect() -> u64 {
+    MQTT_NETWORK_GENERATION
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1)
+}
 
 fn network_event_requires_data_plane_reconfigure(event_type: &NetworkEventType) -> bool {
     !matches!(
@@ -157,6 +169,7 @@ fn run_control_transport_worker(
     worker_state: Arc<Mutex<ControlTransportWorkerState>>,
     state_notifier: Arc<RuntimeEventHub>,
 ) -> Result<(), String> {
+    let network_generation = MQTT_NETWORK_GENERATION.load(Ordering::Acquire);
     let plan = control_transport::control_transport_plan(&session);
     let Some(downstream_topic) = plan.downstream_control_topic.clone() else {
         return Err("control transport downstream topic is missing".to_string());
@@ -202,6 +215,9 @@ fn run_control_transport_worker(
     let mut initial_endpoint_report_queued = false;
     let connected_at_ms = current_timestamp_ms();
     loop {
+        if MQTT_NETWORK_GENERATION.load(Ordering::Acquire) != network_generation {
+            return Err(MQTT_NETWORK_GENERATION_RECONNECT_REASON.to_string());
+        }
         let latest_session = load_session().map_err(|err| err.to_string())?;
         if !mqtt_connection_matches(&latest_session, &session) {
             return Err("control transport session changed".to_string());
@@ -1817,7 +1833,10 @@ fn release_worker(
     state.connected = false;
     let should_backoff = error
         .as_deref()
-        .is_some_and(|reason| reason != MQTT_PLANNED_RECONNECT_REASON);
+        .is_some_and(|reason| {
+            reason != MQTT_PLANNED_RECONNECT_REASON
+                && reason != MQTT_NETWORK_GENERATION_RECONNECT_REASON
+        });
     state.backoff_ms = if should_backoff {
         (state.backoff_ms.max(1_000) * 2).min(30_000)
     } else {

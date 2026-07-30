@@ -8,6 +8,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.net.VpnService;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
+import android.net.LinkProperties;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.Os;
@@ -18,7 +23,12 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -36,6 +46,7 @@ public final class SlanVpnService extends VpnService {
   private static final String DIRECT_UDP_PORT_KEY = "direct_udp_port";
   private static final int DEFAULT_DIRECT_UDP_PORT = 41642;
   private static final int TAILSCALE_DEFAULT_UDP_PORT = 41641;
+  private static final int CONNECTIVITY_RECOVERY_MAX_ATTEMPTS = 5;
 
   private static final String CHANNEL_ID = "slan_vpn";
   private static final int NOTIFICATION_ID = 24018;
@@ -45,6 +56,14 @@ public final class SlanVpnService extends VpnService {
   private ParcelFileDescriptor vpnInterface;
   /** Protected relay/direct sockets whose fds are detached into Rust. */
   private final List<Closeable> protectedRelaySockets = new ArrayList<>();
+  private final Object vpnLifecycleLock = new Object();
+  private final AtomicLong connectivityGeneration = new AtomicLong();
+  private ConnectivityManager connectivityManager;
+  private ConnectivityManager.NetworkCallback connectivityCallback;
+  private final Set<Network> underlyingNetworks = new HashSet<>();
+  private final Map<Network, String> linkFingerprints = new HashMap<>();
+  private boolean underlyingNetworkWasLost;
+  private JSONObject activeConfig;
 
   /** Protect an externally created socket fd from VPN routing. */
   static boolean protectSocketFd(int socketFd) {
@@ -57,6 +76,7 @@ public final class SlanVpnService extends VpnService {
     super.onCreate();
     activeService = this;
     SlanVpnRuntime.configure(this);
+    registerConnectivityMonitor();
   }
 
   @Override
@@ -97,6 +117,7 @@ public final class SlanVpnService extends VpnService {
 
   @Override
   public void onDestroy() {
+    unregisterConnectivityMonitor();
     stopVpn("Android VPN destroyed");
     if (activeService == this) {
       activeService = null;
@@ -106,11 +127,17 @@ public final class SlanVpnService extends VpnService {
 
   /** Build Android VPN interface, protect relay/direct sockets, and start Rust TUN runtime. */
   private void startVpn(JSONObject config) throws Exception {
+    synchronized (vpnLifecycleLock) {
+      startVpnLocked(config);
+    }
+  }
+
+  private void startVpnLocked(JSONObject config) throws Exception {
     Log.i(TAG, "Android VPN start requested with fresh config");
     // Peer/relay refresh can re-enter ACTION_START while a previous Android VPN
     // runtime is still active. Always tear down the previous native/TUN/socket
     // state first so socket protection and fd ownership restart from a clean slate.
-    stopVpn("Android VPN reconfiguring");
+    stopDataPlaneForReconfigure();
     String virtualIp = config.optString("virtualIp", "").trim();
     int prefixLen = config.optInt("prefixLen", 32);
     Cidr virtualAddress = Cidr.parse(virtualIp);
@@ -189,6 +216,134 @@ public final class SlanVpnService extends VpnService {
         mtu >= 576 ? mtu : null,
         relayAddress(config),
         relaySessionCount(config));
+    activeConfig = new JSONObject(config.toString());
+  }
+
+  private void registerConnectivityMonitor() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+      return;
+    }
+    connectivityManager =
+        (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+    if (connectivityManager == null) {
+      return;
+    }
+    connectivityCallback = new ConnectivityManager.NetworkCallback() {
+      @Override
+      public void onAvailable(Network network) {
+        boolean changed;
+        synchronized (vpnLifecycleLock) {
+          boolean hadNetwork = !underlyingNetworks.isEmpty();
+          boolean added = underlyingNetworks.add(network);
+          changed = underlyingNetworkWasLost || (hadNetwork && added);
+          underlyingNetworkWasLost = false;
+        }
+        if (changed) {
+          scheduleConnectivityRecovery("underlying network available");
+        }
+      }
+
+      @Override
+      public void onLost(Network network) {
+        boolean recoverWithRemainingNetwork;
+        synchronized (vpnLifecycleLock) {
+          boolean removed = underlyingNetworks.remove(network);
+          linkFingerprints.remove(network);
+          underlyingNetworkWasLost = removed && underlyingNetworks.isEmpty();
+          recoverWithRemainingNetwork = removed && !underlyingNetworks.isEmpty();
+        }
+        if (recoverWithRemainingNetwork) {
+          scheduleConnectivityRecovery("underlying network lost with fallback available");
+        }
+      }
+
+      @Override
+      public void onLinkPropertiesChanged(Network network, LinkProperties properties) {
+        String fingerprint = properties.getInterfaceName()
+            + "|"
+            + properties.getLinkAddresses()
+            + "|"
+            + properties.getRoutes();
+        boolean changed;
+        synchronized (vpnLifecycleLock) {
+          underlyingNetworks.add(network);
+          String previous = linkFingerprints.put(network, fingerprint);
+          changed = previous != null && !previous.equals(fingerprint);
+        }
+        if (changed) {
+          scheduleConnectivityRecovery("underlying link properties changed");
+        }
+      }
+    };
+    NetworkRequest request = new NetworkRequest.Builder()
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        .build();
+    connectivityManager.registerNetworkCallback(request, connectivityCallback);
+  }
+
+  private void unregisterConnectivityMonitor() {
+    connectivityGeneration.incrementAndGet();
+    if (connectivityManager != null && connectivityCallback != null) {
+      try {
+        connectivityManager.unregisterNetworkCallback(connectivityCallback);
+      } catch (RuntimeException ignored) {
+      }
+    }
+    connectivityCallback = null;
+    connectivityManager = null;
+    synchronized (vpnLifecycleLock) {
+      underlyingNetworks.clear();
+      linkFingerprints.clear();
+      underlyingNetworkWasLost = false;
+    }
+  }
+
+  private void scheduleConnectivityRecovery(String reason) {
+    long generation = connectivityGeneration.incrementAndGet();
+    runConnectivityRecovery(reason, 0, generation);
+  }
+
+  private void runConnectivityRecovery(String reason, int attempt, long generation) {
+    new Thread(() -> {
+      try {
+        long delayMs = Math.min(30_000L, 1_000L << Math.min(attempt, 5));
+        Thread.sleep(delayMs);
+        if (generation != connectivityGeneration.get()) {
+          return;
+        }
+        synchronized (vpnLifecycleLock) {
+          if (activeConfig == null) {
+            return;
+          }
+          Log.i(TAG, "Android VPN connectivity recovery: " + reason);
+          startVpnLocked(new JSONObject(activeConfig.toString()));
+          SlanVpnRuntime.pushEvent(
+              "connectivityChanged",
+              "Android VPN data plane rebuilt",
+              SlanVpnRuntime.runtimeState());
+        }
+        String controlRecovery = SlanNativeBridge.serviceRequest(
+            "{\"method\":\"localConnectivityChanged\","
+                + "\"args\":{\"source\":\"androidUnderlyingNetwork\"}}");
+        if (controlRecovery.contains("\"error\"")) {
+          Log.w(TAG, "Android embedded control recovery returned: " + controlRecovery);
+        }
+      } catch (Exception error) {
+        Log.e(TAG, "Android VPN connectivity recovery failed", error);
+        SlanVpnRuntime.markError(error.getMessage());
+        boolean retryAllowed;
+        synchronized (vpnLifecycleLock) {
+          retryAllowed = activeConfig != null
+              && attempt + 1 < CONNECTIVITY_RECOVERY_MAX_ATTEMPTS;
+        }
+        long retryGeneration = generation + 1;
+        if (retryAllowed
+            && connectivityGeneration.compareAndSet(generation, retryGeneration)) {
+          runConnectivityRecovery(reason + " retry", attempt + 1, retryGeneration);
+        }
+      }
+    }, "slan-vpn-connectivity").start();
   }
 
   private String relayAddress(JSONObject config) {
@@ -451,15 +606,25 @@ public final class SlanVpnService extends VpnService {
   }
 
   private void stopVpn(String message) {
+    synchronized (vpnLifecycleLock) {
+      connectivityGeneration.incrementAndGet();
+      activeConfig = null;
+      SlanNativeBridge.stop();
+      closeRelaySockets();
+      closeInterface();
+      SlanVpnRuntime.markStopped(message);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        stopForeground(STOP_FOREGROUND_REMOVE);
+      } else {
+        stopForeground(true);
+      }
+    }
+  }
+
+  private void stopDataPlaneForReconfigure() {
     SlanNativeBridge.stop();
     closeRelaySockets();
     closeInterface();
-    SlanVpnRuntime.markStopped(message);
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-      stopForeground(STOP_FOREGROUND_REMOVE);
-    } else {
-      stopForeground(true);
-    }
   }
 
   private void closeInterface() {

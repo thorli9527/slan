@@ -83,6 +83,11 @@ class ClientCorePlugin {
     return _invokeNativeOnly('iosStartPacketTunnel', config.toJson());
   }
 
+  /// 保持 iOS VPN 启用状态并热重建 PacketTunnel 内的数据面连接。
+  Future<Object?> iosRefreshPacketTunnel(PlatformNetworkConfig config) {
+    return _invokeNativeOnly('iosRefreshPacketTunnel', config.toJson());
+  }
+
   /// 停止 iOS PacketTunnel 数据面。
   Future<Object?> iosStopPacketTunnel() {
     return _invokeNativeOnly('iosStopPacketTunnel');

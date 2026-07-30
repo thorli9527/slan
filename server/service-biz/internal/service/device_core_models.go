@@ -38,6 +38,7 @@ type DeviceView struct {
 type DeviceProfileView struct {
 	Device           DeviceView `json:"device"`
 	ActiveNetworkID  string     `json:"activeNetworkId"`
+	NetworkEnabled   bool       `json:"networkEnabled"`
 	OwnerEmail       string     `json:"ownerEmail"`
 	MembershipStatus string     `json:"membershipStatus"`
 	CurrentVirtualIP string     `json:"currentVirtualIp"`

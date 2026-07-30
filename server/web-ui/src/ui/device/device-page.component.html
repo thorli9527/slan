@@ -25,10 +25,11 @@
         <col class="ip-column" />
         <col class="owner-column" />
         <col class="status-column" />
+        <col class="network-status-column" />
         <col class="created-at-column" />
         <col class="action-column" />
       </colgroup>
-      <thead><tr><th>设备 ID</th><th>操作系统/版本</th><th>别名</th><th>IP</th><th>用户</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>设备 ID</th><th>操作系统/版本</th><th>别名</th><th>IP</th><th>用户</th><th>设备状态</th><th>网络状态</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let device of vm.deviceManagementDevices">
           <td class="device-id-cell">
@@ -61,6 +62,7 @@
           <td><code>{{ device.ip }}</code></td>
           <td>{{ vm.userLabel(device.owner) }}</td>
           <td><span class="status online">{{ device.status }}</span></td>
+          <td><span class="status" [class.online]="device.networkEnabled" [class.offline]="!device.networkEnabled">{{ vm.deviceNetworkStatus(device) }}</span></td>
           <td>{{ vm.formatTime(device.createdAt) }}</td>
           <td class="table-actions">
             <button class="text-link" type="button" (click)="vm.openDeviceGroupPickerDialog(device)">绑定分组</button>
@@ -70,7 +72,7 @@
           </td>
         </tr>
         <tr *ngIf="vm.deviceManagementDevices.length === 0">
-          <td colspan="8">暂无设备，注册或接入一台设备后会显示在这里。</td>
+          <td colspan="9">暂无设备，注册或接入一台设备后会显示在这里。</td>
         </tr>
       </tbody>
     </table>

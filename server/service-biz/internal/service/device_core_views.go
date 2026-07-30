@@ -32,6 +32,7 @@ func buildDeviceProfile(ctx context.Context, users repository.UserRepository, ne
 	globalIP := deviceGlobalIP(device)
 	view := DeviceProfileView{
 		Device:           deviceView(device),
+		NetworkEnabled:   device.Status == "active",
 		CurrentVirtualIP: globalIP,
 		VirtualIP:        globalIP,
 		GlobalIP:         globalIP,

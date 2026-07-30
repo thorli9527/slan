@@ -1186,7 +1186,7 @@ code {
 .network-devices-table {
   table-layout: fixed;
   width: 100%;
-  min-width: 1390px;
+  min-width: 1490px;
 }
 
 .network-devices-table .device-id-column {
@@ -1207,6 +1207,10 @@ code {
 
 .network-devices-table .status-column {
   width: 90px;
+}
+
+.network-devices-table .network-status-column {
+  width: 100px;
 }
 
 .network-devices-table .owner-column {
@@ -1249,7 +1253,7 @@ code {
 .managed-devices-table {
   table-layout: fixed;
   width: 100%;
-  min-width: 1410px;
+  min-width: 1480px;
 }
 
 .managed-devices-table .device-id-column {
@@ -1273,6 +1277,10 @@ code {
 }
 
 .managed-devices-table .status-column {
+  width: 100px;
+}
+
+.managed-devices-table .network-status-column {
   width: 100px;
 }
 

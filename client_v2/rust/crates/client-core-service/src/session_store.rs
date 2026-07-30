@@ -584,10 +584,20 @@ fn prepare_bound_device_session(
     if !has_device_token {
         return prepare_bound_device_session_response(client, session, false);
     }
-    if force_renew || device_session_should_renew(session) {
+    if force_renew || device_session_needs_refresh(session) {
         return prepare_bound_device_session_response(client, session, true);
     }
     Ok((session.relay_candidates.clone(), Vec::new()))
+}
+
+fn device_session_needs_refresh(session: &PersistedSession) -> bool {
+    let assigned_ip_missing = session
+        .virtual_ip
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    assigned_ip_missing || device_session_should_renew(session)
 }
 
 fn clear_bound_device_session(session: &mut PersistedSession) {
@@ -1466,6 +1476,20 @@ mod tests {
 
         assert!(session_is_expired(&session));
         assert!(device_session_should_renew(&session));
+    }
+
+    #[test]
+    fn standalone_device_session_without_ip_is_renewable_before_expiry() {
+        let mut session = PersistedSession::empty();
+        session.session_kind = "device".to_string();
+        session.access_token = "device-token".to_string();
+        session.device_token = Some("device-token".to_string());
+        session.device_refresh_token = Some("device-refresh-token".to_string());
+        session.device_token_expires_at = Some(((current_timestamp_ms() / 1_000) + 86_400) as i64);
+
+        assert!(session.virtual_ip.is_none());
+        assert!(!device_session_should_renew(&session));
+        assert!(device_session_needs_refresh(&session));
     }
 
     #[test]

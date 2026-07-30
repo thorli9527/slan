@@ -28,6 +28,10 @@ import { WEB_API } from '../api-paths';
 import { compactUuid } from '../app.utils';
 import { ApiHttpError } from '../app-api.service';
 export abstract class AppComponentDevices extends AppComponentNetworks {
+  deviceNetworkStatus(device: DeviceRow): string {
+    return device.networkEnabled ? '已启用' : '未启用';
+  }
+
   setDevicePanel(panel: 'list' | 'groups'): void {
     this.devicePanel = panel;
     this.deviceListMessage = '';
@@ -58,7 +62,16 @@ export abstract class AppComponentDevices extends AppComponentNetworks {
     const nextIp = `10.0.0.${this.devices.length + 1}`;
     this.devices = [
       ...this.devices,
-      { deviceId: this.deviceId, platform: this.devicePlatform, osVersion: this.deviceOSVersion, alias: this.deviceAlias, ip: nextIp, owner: this.currentUser, status: 'active' },
+      {
+        deviceId: this.deviceId,
+        platform: this.devicePlatform,
+        osVersion: this.deviceOSVersion,
+        alias: this.deviceAlias,
+        ip: nextIp,
+        owner: this.currentUser,
+        status: 'active',
+        networkEnabled: false,
+      },
     ];
     this.notifyStateChanged();
   }
