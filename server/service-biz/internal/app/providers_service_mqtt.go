@@ -8,6 +8,7 @@ func newMQTTServices(deps UseCaseDependencies) MQTTServices {
 		BrokerWebhook: servicepkg.MQTTWebhookService{
 			Networks:        repos.Networks,
 			EventPublisher:  servicepkg.NewNetworkEventPublisher(deps.mqttConfig(), repos.EventDeliveries),
+			DevicePublisher: servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
 			EventDeliveries: repos.EventDeliveries,
 			Config:          deps.mqttConfig(),
 		},

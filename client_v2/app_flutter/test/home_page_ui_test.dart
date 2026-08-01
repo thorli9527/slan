@@ -37,32 +37,63 @@ void main() {
     expect(find.text('tester@example.com'), findsOneWidget);
   });
 
-  testWidgets('browser login blocks repeated clicks while opening',
-      (tester) async {
+  testWidgets('desktop signs in with username and password', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
       final bridge = _UiTestBridge(
         initialState: ClientViewState.initial(),
         activationDelay: Duration.zero,
-        browserCommandDelay: const Duration(milliseconds: 100),
       );
 
       await tester.pumpWidget(SlanClientV2App(bridge: bridge));
       await tester.pumpAndSettle();
 
-      final button = find.byKey(const Key('desktop-browser-login'));
-      await tester.tap(button);
-      await tester.tap(button);
-      await tester.pump();
-
-      expect(bridge.browserCommandCount, 1);
-      expect(find.text('正在打开'), findsOneWidget);
-      expect(tester.widget<FilledButton>(button).onPressed, isNull);
-
-      await tester.pump(bridge.browserCommandDelay);
+      expect(find.byKey(const Key('desktop-browser-login')), findsNothing);
+      expect(find.byKey(const Key('login-email')), findsOneWidget);
+      expect(find.byKey(const Key('login-password')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('login-email')),
+        'desktop@example.com',
+      );
+      await tester.enterText(find.byKey(const Key('login-password')), 'secret');
+      await tester.tap(find.byKey(const Key('login-submit')));
       await tester.pumpAndSettle();
-      expect(find.text('打开浏览器登录'), findsOneWidget);
-      expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+
+      expect(bridge.lastCommand, ClientCommandType.loginWithPassword);
+      expect(bridge.lastPayload, {
+        'email': 'desktop@example.com',
+        'password': 'secret',
+      });
+      expect(bridge.browserCommandCount, 0);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('desktop device token session still shows user login',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: true,
+          userAuthenticated: false,
+          userLabel: 'device-session',
+          deviceId: 'device-1',
+          networkEnabled: false,
+          syncing: false,
+          switchEnabled: true,
+        ),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('login-email')), findsOneWidget);
+      expect(find.byKey(const Key('login-password')), findsOneWidget);
+      expect(find.text('device-session'), findsNothing);
+      expect(find.byKey(const Key('network-switch')), findsNothing);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
@@ -94,7 +125,7 @@ void main() {
     }
   });
 
-  testWidgets('desktop shows network docking below user and before ip',
+  testWidgets('desktop hides network docking and keeps ip below user',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
@@ -119,22 +150,16 @@ void main() {
       expect(find.text('优秀 · 91 分 · UDP 直联'), findsNothing);
       expect(
           find.byKey(const Key('client-signal-quality-value')), findsNothing);
-      expect(find.byKey(const Key('network-docking-actions')), findsOneWidget);
-      expect(find.byKey(const Key('network-docking-avatar')), findsOneWidget);
+      expect(find.byKey(const Key('network-docking-actions')), findsNothing);
+      expect(find.byKey(const Key('network-docking-avatar')), findsNothing);
       final userY = tester.getTopLeft(find.text('tester@example.com')).dy;
-      final dockingY = tester
-          .getTopLeft(find.byKey(const Key('network-docking-actions')))
-          .dy;
       final ipY =
           tester.getTopLeft(find.byKey(const Key('network-ip-value'))).dy;
-      expect(dockingY, greaterThan(userY));
-      expect(dockingY, lessThan(ipY));
-      final userX = tester.getTopLeft(find.text('用户')).dx;
-      final dockingX = tester.getTopLeft(find.text('网络对接')).dx;
-      expect(dockingX, closeTo(userX, 2));
+      expect(ipY, greaterThan(userY));
+      expect(find.text('网络对接'), findsNothing);
       expect(find.byKey(const Key('generate-network-invite')), findsNothing);
       expect(find.text('生成接入码'), findsNothing);
-      expect(find.byKey(const Key('accept-network-invite')), findsOneWidget);
+      expect(find.byKey(const Key('accept-network-invite')), findsNothing);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
@@ -160,11 +185,9 @@ void main() {
       await tester.pumpWidget(SlanClientV2App(bridge: bridge));
       await tester.pumpAndSettle();
 
-      final console = find.byKey(const Key('open-web-console'));
-      final logout = find.text('退出登录');
-      expect(console, findsOneWidget);
+      final logout = find.byKey(const Key('logout'));
+      expect(find.byKey(const Key('open-web-console')), findsNothing);
       expect(logout, findsOneWidget);
-      expect(tester.getBottomRight(console).dy, lessThanOrEqualTo(190));
       expect(tester.getBottomRight(logout).dy, lessThanOrEqualTo(190));
       expect(190 - tester.getBottomRight(logout).dy, lessThanOrEqualTo(36));
       expect(tester.takeException(), isNull);
@@ -186,10 +209,16 @@ void main() {
       await tester.pumpWidget(SlanClientV2App(bridge: bridge));
       await tester.pumpAndSettle();
 
-      final login = find.byKey(const Key('desktop-browser-login'));
-      expect(login, findsOneWidget);
+      final login = find.byKey(const Key('login-submit'));
+      expect(find.byKey(const Key('desktop-browser-login')), findsNothing);
+      expect(find.byKey(const Key('server-settings')), findsOneWidget);
+      expect(find.byKey(const Key('login-email')), findsOneWidget);
+      expect(find.byKey(const Key('login-password')), findsOneWidget);
       expect(tester.getBottomRight(login).dy, lessThanOrEqualTo(190));
-      expect(190 - tester.getBottomRight(login).dy, lessThanOrEqualTo(16));
+      expect(
+        tester.getBottomRight(find.byKey(const Key('login-panel'))).dy,
+        lessThanOrEqualTo(180),
+      );
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;
@@ -197,74 +226,63 @@ void main() {
     }
   });
 
-  testWidgets('network invite dialog validates and submits trimmed code',
-      (tester) async {
+  testWidgets('desktop server settings updates bridge url', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
+      await tester.binding.setSurfaceSize(const Size(480, 360));
       final bridge = _UiTestBridge(
-        initialState: const ClientViewState(
-          signedIn: true,
-          userLabel: 'tester@example.com',
-          networkEnabled: true,
-          syncing: false,
-          switchEnabled: true,
-        ),
+        initialState: ClientViewState.initial(),
         activationDelay: Duration.zero,
       );
 
       await tester.pumpWidget(SlanClientV2App(bridge: bridge));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('accept-network-invite')));
+
+      await tester.tap(find.byKey(const Key('server-settings')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('network-invite-dialog')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('network-invite-submit')));
-      await tester.pump();
-      expect(find.text('请输入接入码'), findsWidgets);
-      expect(bridge.acceptedInviteCodes, isEmpty);
-
-      await tester.enterText(
-          find.byKey(const Key('network-invite-code-input')), '  JOIN-123  ');
-      await tester.tap(find.byKey(const Key('network-invite-submit')));
-      await tester.pumpAndSettle();
-
-      expect(bridge.acceptedInviteCodes, ['JOIN-123']);
-      expect(find.byKey(const Key('network-invite-dialog')), findsNothing);
-      expect(find.text('网络接入已确认'), findsOneWidget);
-    } finally {
-      debugDefaultTargetPlatformOverride = null;
-    }
-  });
-
-  testWidgets('network invite dialog keeps errors inline', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    try {
-      final bridge = _UiTestBridge(
-        initialState: const ClientViewState(
-          signedIn: true,
-          userLabel: 'tester@example.com',
-          networkEnabled: true,
-          syncing: false,
-          switchEnabled: true,
-        ),
-        activationDelay: Duration.zero,
-        inviteError: '接入码已失效',
+      final dialog = find.byKey(const Key('server-settings-dialog'));
+      final dialogWidget = tester.widget<Dialog>(find.byType(Dialog));
+      expect(tester.getSize(dialog).width, lessThanOrEqualTo(340));
+      expect(dialogWidget.backgroundColor, Colors.white);
+      expect(
+        tester.getSize(find.byKey(const Key('server-base-url'))).height,
+        38,
       );
-
-      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('accept-network-invite')));
-      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(const Key('server-cancel'))).height,
+        34,
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('server-confirm'))).height,
+        34,
+      );
+      expect(find.byKey(const Key('server-cancel')), findsOneWidget);
+      expect(find.byKey(const Key('server-confirm')), findsOneWidget);
+      expect(find.text('服务器地址'), findsNothing);
+      expect(find.text('支持 HTTP 或 HTTPS 地址'), findsNothing);
+      final dialogBottom = tester.getBottomRight(dialog).dy;
+      expect(
+        tester.getBottomRight(find.byKey(const Key('server-cancel'))).dy,
+        lessThan(dialogBottom),
+      );
+      expect(
+        tester.getBottomRight(find.byKey(const Key('server-confirm'))).dy,
+        lessThan(dialogBottom),
+      );
       await tester.enterText(
-          find.byKey(const Key('network-invite-code-input')), 'EXPIRED');
-      await tester.tap(find.byKey(const Key('network-invite-submit')));
+        find.byKey(const Key('server-base-url')),
+        'private.example.com:28080/',
+      );
+      await tester.tap(find.byKey(const Key('server-confirm')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('network-invite-dialog')), findsOneWidget);
-      expect(find.byKey(const Key('network-invite-error')), findsOneWidget);
-      expect(find.text('接入失败：接入码已失效'), findsOneWidget);
+      expect(bridge.serverUrl, 'http://private.example.com:28080');
+      expect(find.text('http://private.example.com:28080'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
     } finally {
       debugDefaultTargetPlatformOverride = null;
+      await tester.binding.setSurfaceSize(null);
     }
   });
 
@@ -295,7 +313,7 @@ void main() {
         find.byKey(const Key('server-base-url')),
         '10.0.2.2:28080/',
       );
-      await tester.tap(find.byKey(const Key('server-save')));
+      await tester.tap(find.byKey(const Key('server-confirm')));
       await tester.pumpAndSettle();
 
       expect(bridge.serverUrl, 'http://10.0.2.2:28080');
@@ -626,9 +644,7 @@ class _UiTestBridge implements ClientCoreBridge {
     this.assignedIp,
     this.activationError,
     this.disableError,
-    this.inviteError,
     this.dispatchStartDelay = Duration.zero,
-    this.browserCommandDelay = Duration.zero,
   })  : _state = ValueNotifier<ClientViewState>(initialState),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -642,9 +658,7 @@ class _UiTestBridge implements ClientCoreBridge {
   final String? assignedIp;
   final String? activationError;
   final String? disableError;
-  final String? inviteError;
   final Duration dispatchStartDelay;
-  final Duration browserCommandDelay;
   ClientCommandType? lastCommand;
   Map<String, Object?>? lastPayload;
   int androidPrepareCount = 0;
@@ -686,7 +700,6 @@ class _UiTestBridge implements ClientCoreBridge {
   @override
   Future<void> acceptNetworkInvite(String inviteCode) async {
     acceptedInviteCodes.add(inviteCode);
-    if (inviteError != null) throw Exception(inviteError);
   }
 
   @override
@@ -694,7 +707,6 @@ class _UiTestBridge implements ClientCoreBridge {
     if (command.type == ClientCommandType.openClientLogin ||
         command.type == ClientCommandType.openWebConsole) {
       browserCommandCount += 1;
-      await Future<void>.delayed(browserCommandDelay);
     }
     if (command.type == ClientCommandType.enableNetwork ||
         command.type == ClientCommandType.disableNetwork) {

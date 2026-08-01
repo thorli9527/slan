@@ -12,8 +12,9 @@ type NetworkCoreService struct {
 	Users              repository.UserRepository
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
-	Ops                repository.OpsRepository
+	Ops                repository.OpsNodeRepository
 	EventPublisher     NetworkEventPublisher
+	DevicePublisher    DeviceControlPublisher
 	VersionPushTracker *NetworkVersionPushTracker
 	NewNetworkID       func() string
 	Now                func() time.Time
@@ -34,7 +35,7 @@ type NetworkDNSService struct {
 	Users          repository.UserRepository
 	Devices        repository.DeviceRepository
 	Networks       repository.NetworkRepository
-	Ops            repository.OpsRepository
+	Ops            repository.OpsNodeRepository
 	EventPublisher NetworkEventPublisher
 	NewDNSZoneID   func() string
 	NewDNSRecordID func() string
@@ -45,7 +46,7 @@ type NetworkAccessService struct {
 	Users              repository.UserRepository
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
-	Ops                repository.OpsRepository
+	Ops                repository.OpsNodeRepository
 	EventPublisher     NetworkEventPublisher
 	NewSecurityGroupID func() string
 	NewSecurityRuleID  func() string
@@ -55,7 +56,7 @@ type NetworkAccessService struct {
 type NetworkRuntimeService struct {
 	Devices   repository.DeviceRepository
 	Networks  repository.NetworkRepository
-	Ops       repository.OpsRepository
+	Ops       repository.OpsNodeRepository
 	NewSessID func(string) string
 	Now       func() time.Time
 }

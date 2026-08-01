@@ -1,0 +1,16 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title"><div><h2>设备分组</h2><p>全局管理所有用户的设备分组，分组变更会同步相关网络。</p></div><button class="primary" type="button" (click)="vm.openDeviceGroupDialog()">新增分组</button></div>
+    <table><thead><tr><th>分组</th><th>所属用户</th><th>说明</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
+      <tr *ngFor="let group of vm.deviceGroups"><td><strong>{{ group.name }}</strong><br><code>{{ group.groupId }}</code></td><td>{{ vm.userEmail(group.userId) }}<br><code>{{ group.userId }}</code></td><td>{{ group.description || '-' }}</td><td>{{ group.updatedAt }}</td><td><div class="row-actions"><button class="ghost small" type="button" (click)="vm.manageDeviceGroup(group)">成员</button><button class="ghost small" type="button" (click)="vm.openDeviceGroupDialog(group)">编辑</button><button class="danger small" type="button" (click)="vm.deleteDeviceGroup(group)">删除</button></div></td></tr>
+      <tr *ngIf="!vm.deviceGroups.length"><td colspan="5" class="empty-cell">暂无设备分组</td></tr>
+    </tbody></table>
+  </article>
+  <article class="panel" *ngIf="vm.managedDeviceGroup">
+    <div class="panel-title"><div><h2>分组成员：{{ vm.managedDeviceGroup.name }}</h2><p>勾选或取消当前用户的设备，变更会同步使用该分组的网络。</p></div></div>
+    <table><thead><tr><th>设备</th><th>IP</th><th>系统</th><th>分组成员</th></tr></thead><tbody>
+      <tr *ngFor="let device of vm.devicesForManagedGroup()"><td>{{ device.alias || device.name || device.deviceId }}<br><code>{{ device.deviceId }}</code></td><td><code>{{ device.globalIp || '-' }}</code></td><td>{{ device.osName || device.platform }}</td><td><label class="check-row"><input type="checkbox" [checked]="vm.deviceInManagedGroup(device.deviceId)" (change)="vm.toggleManagedGroupDevice(device)"><span>{{ vm.deviceInManagedGroup(device.deviceId) ? '已加入' : '未加入' }}</span></label></td></tr>
+      <tr *ngIf="!vm.devicesForManagedGroup().length"><td colspan="4" class="empty-cell">该用户暂无设备</td></tr>
+    </tbody></table>
+  </article>
+</section>

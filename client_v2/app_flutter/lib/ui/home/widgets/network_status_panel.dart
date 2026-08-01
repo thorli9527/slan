@@ -13,7 +13,6 @@ class SignedInStatusPanel extends StatelessWidget {
     required this.currentIp,
     required this.state,
     required this.onToggle,
-    this.onAcceptInvite,
     super.key,
   });
 
@@ -30,7 +29,6 @@ class SignedInStatusPanel extends StatelessWidget {
 
   /// 网络开关回调。
   final ValueChanged<bool> onToggle;
-  final VoidCallback? onAcceptInvite;
 
   @override
   Widget build(BuildContext context) {
@@ -59,38 +57,6 @@ class SignedInStatusPanel extends StatelessWidget {
               ),
             ],
           ),
-          if (desktop && onAcceptInvite != null) ...[
-            const SizedBox(height: 6),
-            Row(
-              key: const Key('network-docking-actions'),
-              children: [
-                CircleAvatar(
-                  key: const Key('network-docking-avatar'),
-                  radius: 11,
-                  backgroundColor: theme.colorScheme.primaryContainer,
-                  foregroundColor: theme.colorScheme.onPrimaryContainer,
-                  child: const Icon(Icons.link_rounded, size: 14),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 74,
-                  child: Text(
-                    '网络对接',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                TextButton(
-                  key: const Key('accept-network-invite'),
-                  style: _networkDockingButtonStyle(),
-                  onPressed: onAcceptInvite,
-                  child: const Text('确认接入'),
-                ),
-              ],
-            ),
-          ],
           SizedBox(height: desktop ? 6 : 8),
           CompactInfoRow(
             valueKey: const Key('network-ip-value'),
@@ -116,15 +82,6 @@ class SignedInStatusPanel extends StatelessWidget {
           ],
         ],
       ),
-    );
-  }
-
-  ButtonStyle _networkDockingButtonStyle() {
-    return TextButton.styleFrom(
-      minimumSize: const Size(0, 28),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      visualDensity: VisualDensity.compact,
-      textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
     );
   }
 

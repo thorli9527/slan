@@ -93,6 +93,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             }
             ClientCommand::ApplyDeviceUserLogin(payload) => {
                 self.state.signed_in = true;
+                self.state.user_authenticated = payload.user_authenticated.unwrap_or(true);
                 self.state.user_label = Some(payload.user_label);
                 self.state.device_id = payload.device_id;
                 if self.state.network_enabled {

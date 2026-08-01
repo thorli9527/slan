@@ -383,7 +383,7 @@ func cleanupTriDevices(bizURL, token, userID string, deviceIDs []string) {
 			DeviceID string `json:"deviceId"`
 		} `json:"items"`
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/web/devices?userId="+url.QueryEscape(userID), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/app/devices?userId="+url.QueryEscape(userID), nil)
 	if err == nil {
 		if strings.TrimSpace(token) != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -403,7 +403,7 @@ func cleanupTriDevices(bizURL, token, userID string, deviceIDs []string) {
 		}
 	}
 	for deviceID := range deviceIDSet {
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID), nil)
 		if err != nil {
 			continue
 		}

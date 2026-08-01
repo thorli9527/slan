@@ -264,17 +264,12 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 				DeviceID: "device-1", Name: "Mac", Platform: "macos", Status: "pending", ExpiresAt: now.Add(time.Minute).Unix(),
 			},
 		},
-		groups: map[string]model.DeviceGroup{
-			"group-dev": {GroupID: "group-dev", UserID: "user-1", Name: defaultUserDeviceGroupName},
-		},
 	}
 	networks := &deviceLoginTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
 		networks: map[string]model.Network{
 			"network-1": {NetworkID: "network-1", OwnerID: "user-1", Name: "Default", Default: true, Status: "active"},
 		},
 		networkDevices: map[string][]model.NetworkDevice{},
-	}, groupRefs: map[string][]model.NetworkDeviceGroupReference{
-		"network-1": {{NetworkID: "network-1", GroupID: "group-dev"}},
 	}}
 	publisher := &deviceLoginTestPublisher{}
 	service := AuthDeviceLoginCompleteService{authDeviceLoginDependencies: authDeviceLoginDependencies{
@@ -300,21 +295,20 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 	if got := devices.devices["device-1"].VirtualIP; got != "10.0.1.1" {
 		t.Fatalf("expected login allocation 10.0.1.1, got %q", got)
 	}
-	assignment, ok := devices.assignments["device-1"]
-	if !ok || len(assignment.GroupIDs) != 1 || assignment.GroupIDs[0] != "group-dev" {
-		t.Fatalf("expected first device in default group, got %+v", assignment)
+	if len(devices.assignments) != 0 {
+		t.Fatalf("login must not create implicit group assignments: %+v", devices.assignments)
 	}
-	if len(networks.networkDevices["network-1"]) != 1 || networks.networkDevices["network-1"][0].DeviceID != "device-1" {
-		t.Fatalf("expected first device attached through default group, got %+v", networks.networkDevices["network-1"])
+	if len(networks.networkDevices["network-1"]) != 0 {
+		t.Fatalf("login must not create implicit network membership: %+v", networks.networkDevices["network-1"])
 	}
 	if publisher.deviceID != "device-1" {
 		t.Fatalf("unexpected private event target: %q", publisher.deviceID)
 	}
-	if len(publisher.events) != 2 {
-		t.Fatalf("expected login and membership events, got %#v", publisher.events)
+	if len(publisher.events) != 1 {
+		t.Fatalf("expected only login event, got %#v", publisher.events)
 	}
-	if publisher.events[0].Type != "device_user_login_succeeded" || publisher.events[1].Type != "device_network_membership_changed" {
-		t.Fatalf("private events published out of order: %#v", publisher.events)
+	if publisher.events[0].Type != "device_user_login_succeeded" {
+		t.Fatalf("unexpected private event: %#v", publisher.events)
 	}
 	loginEvent := publisher.events[0]
 	desktopAccessToken, _ := loginEvent.Payload["accessToken"].(string)
@@ -330,34 +324,6 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 	}
 	if got := loginEvent.Payload["virtualIp"]; got != "10.0.1.1" {
 		t.Fatalf("expected virtual IP in private login event, got %#v", got)
-	}
-}
-
-func TestSecondOwnedDeviceIsNotAutomaticallyAssignedToDefaultGroup(t *testing.T) {
-	devices := &deviceLoginTestDevices{
-		deviceRegistrationTestDevices: deviceRegistrationTestDevices{
-			networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
-				"device-1": {DeviceID: "device-1", OwnerID: "user-1"},
-				"device-2": {DeviceID: "device-2", OwnerID: "user-1"},
-			}},
-		},
-		groups: map[string]model.DeviceGroup{
-			"group-dev": {GroupID: "group-dev", UserID: "user-1", Name: defaultUserDeviceGroupName},
-		},
-	}
-	service := AuthDeviceLoginCompleteService{authDeviceLoginDependencies: authDeviceLoginDependencies{
-		Devices: devices,
-	}}
-
-	joined, err := service.assignOnlyOwnedDeviceToDefaultGroup(context.Background(), devices.devices["device-2"])
-	if err != nil {
-		t.Fatalf("assignOnlyOwnedDeviceToDefaultGroup returned error: %v", err)
-	}
-	if joined {
-		t.Fatal("second device must not be automatically assigned")
-	}
-	if len(devices.assignments) != 0 {
-		t.Fatalf("unexpected second-device assignment: %+v", devices.assignments)
 	}
 }
 

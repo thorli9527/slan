@@ -3,7 +3,7 @@ package service
 import "context"
 
 func (s OpsNodeService) ListRelayNodes(ctx context.Context) ([]OpsRelayNodeView, error) {
-	items, err := s.Catalog.ListRelayNodes(ctx)
+	items, err := s.Nodes.ListRelayNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -16,24 +16,24 @@ func (s OpsNodeService) UpsertRelayNode(ctx context.Context, input UpsertNodeInp
 		return OpsRelayNodeView{}, ErrInvalidArgument
 	}
 	now := opsNow(s.Now).Unix()
-	nodeID := opsNodeID(s.Catalog, input.NodeID, "relay")
+	nodeID := opsNodeID(s.Nodes, input.NodeID, "relay")
 	item := newRelayNode(nodeID, now, input)
-	if current, ok, err := s.Catalog.GetRelayNode(ctx, item.NodeID); err != nil {
+	if current, ok, err := s.Nodes.GetRelayNode(ctx, item.NodeID); err != nil {
 		return OpsRelayNodeView{}, err
 	} else if ok {
 		item = mergeRelayNode(current, input, now)
 	}
-	if err := validateRelayNodeModel(ctx, s.Catalog, item); err != nil {
+	if err := validateRelayNodeModel(ctx, s.Nodes, item); err != nil {
 		return OpsRelayNodeView{}, err
 	}
-	if err := s.Catalog.SaveRelayNode(ctx, item); err != nil {
+	if err := s.Nodes.SaveRelayNode(ctx, item); err != nil {
 		return OpsRelayNodeView{}, err
 	}
 	return opsRelayNodeViewFromModel(item), nil
 }
 
 func (s OpsNodeService) UpdateRelayNodeStatus(ctx context.Context, nodeID, status string) (OpsRelayNodeView, error) {
-	item, ok, err := s.Catalog.GetRelayNode(ctx, normalizeNodeID(nodeID))
+	item, ok, err := s.Nodes.GetRelayNode(ctx, normalizeNodeID(nodeID))
 	if err != nil {
 		return OpsRelayNodeView{}, err
 	}
@@ -41,18 +41,18 @@ func (s OpsNodeService) UpdateRelayNodeStatus(ctx context.Context, nodeID, statu
 		return OpsRelayNodeView{}, ErrNotFound
 	}
 	item = applyRelayNodeStatus(item, status, opsNow(s.Now).Unix())
-	if err := s.Catalog.SaveRelayNode(ctx, item); err != nil {
+	if err := s.Nodes.SaveRelayNode(ctx, item); err != nil {
 		return OpsRelayNodeView{}, err
 	}
 	return opsRelayNodeViewFromModel(item), nil
 }
 
 func (s OpsNodeService) DeleteRelayNode(ctx context.Context, nodeID string) error {
-	return s.Catalog.DeleteRelayNode(ctx, normalizeNodeID(nodeID))
+	return s.Nodes.DeleteRelayNode(ctx, normalizeNodeID(nodeID))
 }
 
 func (s OpsNodeService) ListPunchNodes(ctx context.Context) ([]OpsPunchNodeView, error) {
-	items, err := s.Catalog.ListPunchNodes(ctx)
+	items, err := s.Nodes.ListPunchNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -65,23 +65,23 @@ func (s OpsNodeService) UpsertPunchNode(ctx context.Context, input UpsertNodeInp
 		return OpsPunchNodeView{}, ErrInvalidArgument
 	}
 	now := opsNow(s.Now).Unix()
-	item := newPunchNode(opsNodeID(s.Catalog, input.NodeID, "punch"), now, input)
-	if current, ok, err := s.Catalog.GetPunchNode(ctx, item.NodeID); err != nil {
+	item := newPunchNode(opsNodeID(s.Nodes, input.NodeID, "punch"), now, input)
+	if current, ok, err := s.Nodes.GetPunchNode(ctx, item.NodeID); err != nil {
 		return OpsPunchNodeView{}, err
 	} else if ok {
 		item = mergePunchNode(current, input, now)
 	}
-	if err := validatePunchNodeModel(ctx, s.Catalog, item); err != nil {
+	if err := validatePunchNodeModel(ctx, s.Nodes, item); err != nil {
 		return OpsPunchNodeView{}, err
 	}
-	if err := s.Catalog.SavePunchNode(ctx, item); err != nil {
+	if err := s.Nodes.SavePunchNode(ctx, item); err != nil {
 		return OpsPunchNodeView{}, err
 	}
 	return opsPunchNodeViewFromModel(item), nil
 }
 
 func (s OpsNodeService) UpdatePunchNodeStatus(ctx context.Context, nodeID, status string) (OpsPunchNodeView, error) {
-	item, ok, err := s.Catalog.GetPunchNode(ctx, normalizeNodeID(nodeID))
+	item, ok, err := s.Nodes.GetPunchNode(ctx, normalizeNodeID(nodeID))
 	if err != nil {
 		return OpsPunchNodeView{}, err
 	}
@@ -89,12 +89,12 @@ func (s OpsNodeService) UpdatePunchNodeStatus(ctx context.Context, nodeID, statu
 		return OpsPunchNodeView{}, ErrNotFound
 	}
 	item = applyPunchNodeStatus(item, status, opsNow(s.Now).Unix())
-	if err := s.Catalog.SavePunchNode(ctx, item); err != nil {
+	if err := s.Nodes.SavePunchNode(ctx, item); err != nil {
 		return OpsPunchNodeView{}, err
 	}
 	return opsPunchNodeViewFromModel(item), nil
 }
 
 func (s OpsNodeService) DeletePunchNode(ctx context.Context, nodeID string) error {
-	return s.Catalog.DeletePunchNode(ctx, normalizeNodeID(nodeID))
+	return s.Nodes.DeletePunchNode(ctx, normalizeNodeID(nodeID))
 }

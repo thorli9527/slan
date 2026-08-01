@@ -668,6 +668,7 @@ mod tests {
         actor
             .call(|runtime| {
                 runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
+                    user_authenticated: Some(true),
                     access_token: "token".to_string(),
                     refresh_token: None,
                     user_id: "user".to_string(),

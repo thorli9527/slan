@@ -1,0 +1,33 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>用户管理</h2>
+        <p>查看应用用户资料、设备数量和账户启用状态。</p>
+      </div>
+      <button class="primary" type="button" (click)="vm.openUserDialog()">新增用户</button>
+    </div>
+    <table>
+      <thead><tr><th>用户</th><th>姓名</th><th>地区</th><th>设备</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let user of vm.users">
+          <td><strong>{{ user.email }}</strong><br><code>{{ user.userId }}</code></td>
+          <td>{{ user.name || '-' }}</td>
+          <td>{{ user.country || '-' }} {{ user.province || '' }} {{ user.city || '' }}<br><code>{{ user.ipRegion || '-' }}</code></td>
+          <td>自有 {{ user.ownDevices }} / 引入 {{ user.invitedDevices }}</td>
+          <td><span class="status" [class.online]="user.status === 'active'">{{ user.status }}</span></td>
+          <td>{{ user.updatedAt || '-' }}</td>
+          <td>
+            <button class="table-icon-button" type="button" title="查看或修改用户" aria-label="查看或修改用户" (click)="vm.openUserDialog(user)">
+              <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.013 1.427a2 2 0 0 1 2.828 2.828l-7.28 7.28-3.3.472.471-3.3 7.281-7.28Zm1.414 1.414a1 1 0 0 0-1.414 0L4.675 9.18l-.236 1.65 1.65-.236 6.338-6.339a1 1 0 0 0 0-1.414Z"/></svg>
+            </button>
+            <button class="table-action" type="button" (click)="vm.openUserPasswordDialog(user)">修改密码</button>
+          </td>
+        </tr>
+        <tr *ngIf="vm.users.length === 0">
+          <td colspan="7" class="empty-cell">暂无用户。</td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

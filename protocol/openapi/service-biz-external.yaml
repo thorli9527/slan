@@ -23,7 +23,6 @@ tags:
   - name: SecurityGroups
   - name: Relay
   - name: Punch
-  - name: Downloads
   - name: Ops
 security:
   - userBearer: []
@@ -35,33 +34,6 @@ paths:
       summary: Health check
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-  /api/client-downloads:
-    get:
-      tags: [Downloads]
-      security: []
-      summary: List public client downloads
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-  /downloads/clients/{fileName}:
-    get:
-      tags: [Downloads]
-      security: []
-      summary: Download client package or install script
-      parameters:
-        - $ref: '#/components/parameters/fileName'
-      responses:
-        '200':
-          description: Binary package or script.
-
-  /api/auth/register:
-    post:
-      tags: [Auth]
-      security: []
-      summary: Register user and create default network
-      requestBody:
-        $ref: '#/components/requestBodies/Register'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
   /api/auth/login:
     post:
       tags: [Auth]
@@ -123,7 +95,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/JSON' }
 
-  /api/web/device-bootstrap-keys:
+  /api/app/device-bootstrap-keys:
     get:
       tags: [DeviceSession]
       summary: List bootstrap keys
@@ -138,7 +110,7 @@ paths:
         $ref: '#/components/requestBodies/BootstrapKey'
       responses:
         '201': { $ref: '#/components/responses/JSON' }
-  /api/web/device-bootstrap-keys/{keyId}/revoke:
+  /api/app/device-bootstrap-keys/{keyId}/revoke:
     post:
       tags: [DeviceSession]
       summary: Revoke bootstrap key
@@ -182,14 +154,6 @@ paths:
       summary: List users
       responses:
         '200': { $ref: '#/components/responses/Items' }
-  /api/users/{userId}/entitlement:
-    get:
-      tags: [Auth]
-      summary: Get user device quota and plan entitlement
-      parameters:
-        - $ref: '#/components/parameters/userId'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
   /api/users/{userId}/password:
     patch:
       tags: [Auth]
@@ -652,53 +616,18 @@ paths:
     post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create punch node, requestBody: { $ref: '#/components/requestBodies/PunchNode' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
   /api/ops/punch-nodes/{nodeId}:
     patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update punch node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/PunchNode' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/customers:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List customers, responses: { '200': { $ref: '#/components/responses/Items' } } }
-  /api/ops/customers/{customerId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update customer, parameters: [ { $ref: '#/components/parameters/customerId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/customers/{customerId}/assign-plan:
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Assign plan to customer, parameters: [ { $ref: '#/components/parameters/customerId' } ], requestBody: { $ref: '#/components/requestBodies/AssignPlan' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/users:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List users, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create user, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/users/{userId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update user, parameters: [ { $ref: '#/components/parameters/userId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/users/{userId}/password:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Set user password, parameters: [ { $ref: '#/components/parameters/userId' } ], requestBody: { $ref: '#/components/requestBodies/NewPassword' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
   /api/ops/devices:
     get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List ops devices, responses: { '200': { $ref: '#/components/responses/Items' } } }
   /api/ops/devices/{deviceId}:
     patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update ops device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], requestBody: { $ref: '#/components/requestBodies/OpsDeviceUpdate' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
     delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete ops device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], responses: { '204': { description: Deleted. } } }
-  /api/ops/client-downloads:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List client downloads, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post:
-      tags: [Ops]
-      security: [ { operatorBearer: [] } ]
-      summary: Upload client download
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ClientDownloadUpload'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/ops/client-downloads/{downloadId}:
-    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete client download, parameters: [ { $ref: '#/components/parameters/downloadId' } ], responses: { '204': { description: Deleted. } } }
-  /api/ops/plans:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List plans, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Upsert plan, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/plans/{planCode}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update plan, parameters: [ { $ref: '#/components/parameters/planCode' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/products:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List products, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create product, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/products/{productId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update product, parameters: [ { $ref: '#/components/parameters/productId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/orders:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List orders, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create order, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/orders/{orderId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update order, parameters: [ { $ref: '#/components/parameters/orderId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/renewals:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List renewals, responses: { '200': { $ref: '#/components/responses/Items' } } }
-  /api/ops/renewals/{renewalId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update renewal, parameters: [ { $ref: '#/components/parameters/renewalId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-
 components:
   securitySchemes:
     userBearer:
@@ -732,12 +661,6 @@ components:
     fileName: { name: fileName, in: path, required: true, schema: { type: string } }
     operatorId: { name: operatorId, in: path, required: true, schema: { type: string } }
     nodeId: { name: nodeId, in: path, required: true, schema: { type: string } }
-    customerId: { name: customerId, in: path, required: true, schema: { type: string } }
-    downloadId: { name: downloadId, in: path, required: true, schema: { type: string } }
-    planCode: { name: planCode, in: path, required: true, schema: { type: string } }
-    productId: { name: productId, in: path, required: true, schema: { type: string } }
-    orderId: { name: orderId, in: path, required: true, schema: { type: string } }
-    renewalId: { name: renewalId, in: path, required: true, schema: { type: string } }
   responses:
     JSON:
       description: JSON object response.
@@ -763,17 +686,6 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/FreeFormObject' }
-    Register:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [email, password]
-            properties:
-              email: { type: string, format: email }
-              password: { type: string }
-              name: { type: string }
     Login:
       required: true
       content:
@@ -1086,18 +998,6 @@ components:
               status: { type: string }
               health: { type: string }
               priority: { type: integer }
-    AssignPlan:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [planCode]
-            properties:
-              planCode: { type: string }
-              expiresAt: { type: integer, format: int64 }
-              amount: { type: number }
-              period: { type: string }
   schemas:
     FreeFormObject:
       type: object
@@ -1126,18 +1026,6 @@ components:
         networkEnabled: { type: boolean }
         rxBytesTotal: { type: integer, format: int64, minimum: 0 }
         txBytesTotal: { type: integer, format: int64, minimum: 0 }
-    ClientDownloadUpload:
-      type: object
-      properties:
-        file:
-          type: string
-          format: binary
-        platform: { type: string }
-        version: { type: string }
-        channel: { type: string }
-        arch: { type: string }
-        releaseNotes: { type: string }
-        status: { type: string }
     OpsDeviceUpdate:
       type: object
       properties:

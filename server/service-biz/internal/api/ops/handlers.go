@@ -12,21 +12,21 @@ type RouteDependencies struct {
 	OverviewDashboard servicepkg.OpsDashboardUseCase
 	OverviewAudit     servicepkg.OpsAuditUseCase
 	Node              servicepkg.OpsNodeUseCase
-	Customer          servicepkg.OpsCustomerUseCase
+	User              servicepkg.OpsUserUseCase
 	ManagedDevice     servicepkg.OpsManagedDeviceUseCase
-	CatalogDownloads  servicepkg.OpsCatalogDownloadUseCase
-	CatalogPlans      servicepkg.OpsCatalogPlanUseCase
-	CatalogProducts   servicepkg.OpsCatalogProductUseCase
-	CatalogOrders     servicepkg.OpsCatalogOrderUseCase
+	DeviceGroup       servicepkg.DeviceGroupUseCase
+	NetworkCore       servicepkg.NetworkCoreUseCase
+	NetworkInvite     servicepkg.NetworkInviteUseCase
+	NetworkDNS        servicepkg.NetworkDNSUseCase
+	NetworkAccess     servicepkg.NetworkAccessUseCase
 }
 
 func Routes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.CombineRoutes(
+	return withRequiredOperatorSession(serviceapi.CombineRoutes(
 		authRoutes(deps),
 		overviewRoutes(deps),
 		managementRoutes(deps),
-		catalogRoutes(deps),
-	)
+	), deps.AuthSessions)
 }
 
 func authRoutes(deps RouteDependencies) []serviceapi.Route {
@@ -45,16 +45,8 @@ func overviewRoutes(deps RouteDependencies) []serviceapi.Route {
 func managementRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
 		NodeHandler{OpsNodes: deps.Node}.Routes(),
-		CustomerHandler{OpsCustomers: deps.Customer}.Routes(),
+		UserHandler{OpsUsers: deps.User}.Routes(),
 		DeviceHandler{OpsDevices: deps.ManagedDevice}.Routes(),
-	)
-}
-
-func catalogRoutes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.CombineRoutes(
-		ClientDownloadHandler{OpsCatalogDownloads: deps.CatalogDownloads}.Routes(),
-		PlanHandler{OpsCatalogPlans: deps.CatalogPlans}.Routes(),
-		ProductHandler{OpsCatalogProducts: deps.CatalogProducts}.Routes(),
-		OrderHandler{OpsCatalogOrders: deps.CatalogOrders}.Routes(),
+		ResourceHandler{Users: deps.User, DeviceGroups: deps.DeviceGroup, Networks: deps.NetworkCore, NetworkInvite: deps.NetworkInvite, DNS: deps.NetworkDNS, Access: deps.NetworkAccess, Audit: deps.OverviewAudit}.Routes(),
 	)
 }

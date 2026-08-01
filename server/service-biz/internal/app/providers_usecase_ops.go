@@ -8,11 +8,7 @@ func newOpsUseCasesFromServices(services OpsServices) OpsUseCases {
 		DashboardOverview: services.DashboardOverview,
 		AuditOverview:     services.AuditOverview,
 		NodeRegistry:      services.NodeRegistry,
-		CustomerDirectory: services.CustomerDirectory,
+		UserDirectory:     services.UserDirectory,
 		DeviceDirectory:   services.DeviceDirectory,
-		DownloadCatalog:   services.DownloadCatalog,
-		PlanCatalog:       services.PlanCatalog,
-		ProductCatalog:    services.ProductCatalog,
-		OrderCatalog:      services.OrderCatalog,
 	}
 }

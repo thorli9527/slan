@@ -9,13 +9,3 @@ func userSummaryViews(items []model.User) []UserSummaryView {
 	}
 	return views
 }
-
-func userEntitlementView(userID string, usedDevices int) UserEntitlementView {
-	return UserEntitlementView{
-		UserID:      userID,
-		PlanCode:    "free",
-		DeviceLimit: 10,
-		UsedDevices: usedDevices,
-		Status:      "active",
-	}
-}

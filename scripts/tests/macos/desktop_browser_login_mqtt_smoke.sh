@@ -63,7 +63,7 @@ device_id=$(jq -r '.deviceId // empty' <<<"$prepared")
   exit 1
 }
 
-auth=$(curl -fsS -X POST "$WEB_BASE/api/web/auth/register" \
+auth=$(curl -fsS -X POST "$WEB_BASE/api/app/auth/register" \
   -H 'Content-Type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\",\"name\":\"Browser Login Smoke\"}")
 access_token=$(jq -r '.auth.session.token // .auth.session.accessToken // empty' <<<"$auth")
@@ -72,7 +72,7 @@ access_token=$(jq -r '.auth.session.token // .auth.session.accessToken // empty'
   exit 1
 }
 
-curl -fsS -X POST "$WEB_BASE/api/web/auth/device-login-devices/$device_id/complete" \
+curl -fsS -X POST "$WEB_BASE/api/app/auth/device-login-devices/$device_id/complete" \
   -H 'Content-Type: application/json' \
   -d "{\"accessToken\":\"$access_token\"}" >/dev/null
 

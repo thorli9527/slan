@@ -42,5 +42,4 @@ audit_project() {
   echo "ui template audit ok: ${name}"
 }
 
-audit_project "web-ui" "$ROOT_DIR/server/web-ui/src/ui"
 audit_project "opt-ui" "$ROOT_DIR/server/opt-ui/src"

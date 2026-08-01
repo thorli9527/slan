@@ -17,7 +17,7 @@ BUILD_PACKAGE="${SLAN_LINUX_DUAL_BUILD_PACKAGE:-0}"
 CONTAINER_PREFIX="${SLAN_LINUX_DUAL_PREFIX:-slan-linux-dual}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
 WEB_API_BASE_URL="${SLAN_WEB_API_BASE_URL:-${SLAN_BIZ_WEB_BASE_URL:-http://47.245.40.231:28081}}"
-WEB_API_PREFIX="${SLAN_WEB_API_PREFIX:-/api/web}"
+CONTROL_API_PREFIX="${SLAN_CONTROL_API_PREFIX:-/api/app}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 CONTAINER_BIZ_URL="${SLAN_LINUX_DUAL_CONTAINER_BIZ_URL:-$BIZ_URL}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
@@ -213,7 +213,7 @@ revoke_bootstrap_key() {
   local bootstrap_id="$1"
   [[ -n "$bootstrap_id" && -n "$USER_TOKEN" && -n "$USER_ID" ]] || return 0
   curl --silent --show-error --fail \
-    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/device-bootstrap-keys/${bootstrap_id}/revoke" \
+    -X POST "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/device-bootstrap-keys/${bootstrap_id}/revoke" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
@@ -233,25 +233,25 @@ cleanup() {
   if [[ -n "$USER_ID" ]]; then
     for rule_id in "${RULE_IDS[@]:-}"; do
       curl --silent --show-error -X DELETE \
-        "${WEB_API_BASE_URL}${WEB_API_PREFIX}/security-groups/rules/${rule_id}" >/dev/null 2>&1 || true
+        "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/security-groups/rules/${rule_id}" >/dev/null 2>&1 || true
     done
     if [[ -n "$NETWORK_ID" ]]; then
       for record_id in "${RECORD_IDS[@]:-}"; do
         curl --silent --show-error -X DELETE \
-          "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/records/${record_id}" >/dev/null 2>&1 || true
+          "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/networks/${NETWORK_ID}/dns/records/${record_id}" >/dev/null 2>&1 || true
       done
       if [[ -n "$ZONE_ID" ]]; then
         curl --silent --show-error -X DELETE \
-          "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}" >/dev/null 2>&1 || true
+          "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}" >/dev/null 2>&1 || true
       fi
     fi
     local device_ids
     device_ids="$(curl --silent --show-error \
-      "${WEB_API_BASE_URL}${WEB_API_PREFIX}/devices?userId=${USER_ID}" | jq -r '.items[]?.deviceId // empty' 2>/dev/null || true)"
+      "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/devices?userId=${USER_ID}" | jq -r '.items[]?.deviceId // empty' 2>/dev/null || true)"
     while IFS= read -r device_id; do
       [[ -n "$device_id" ]] || continue
       curl --silent --show-error -X DELETE \
-        "${WEB_API_BASE_URL}${WEB_API_PREFIX}/devices/${device_id}?actorUserId=${USER_ID}" >/dev/null 2>&1 || true
+        "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/devices/${device_id}?actorUserId=${USER_ID}" >/dev/null 2>&1 || true
     done <<<"$device_ids"
   fi
   rm -rf "$RESULT_DIR"
@@ -293,7 +293,7 @@ resolve_network() {
   local networks_json
   networks_json="$(curl_retry --silent --show-error --fail \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks?userId=${USER_ID}")"
+    "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/networks?userId=${USER_ID}")"
   NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
   [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
 }
@@ -302,7 +302,7 @@ create_bootstrap_key() {
   local alias="$1"
   local bootstrap_json
   bootstrap_json="$(curl_retry --silent --show-error --fail \
-    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/device-bootstrap-keys" \
+    -X POST "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/device-bootstrap-keys" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${alias}\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
@@ -368,8 +368,7 @@ install_client() {
   local_package_in_container="/workspace/slan/${PACKAGE_PATH#$ROOT_DIR/}"
   container_exec "$name" "
 set -euo pipefail
-curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh \
+bash /workspace/slan/client_v2/install/linux/install.sh \
   --server='${CONTAINER_BIZ_URL}' \
   --installation-key='${bootstrap_key}' \
   --tray=disabled \
@@ -489,7 +488,7 @@ create_dns_zone_and_records() {
   log "create dns zone ${ZONE_NAME}"
   local zone_json
   zone_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/zones" \
+    -X POST "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/networks/${NETWORK_ID}/dns/zones" \
     -H 'Content-Type: application/json' \
     -d "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
@@ -501,7 +500,7 @@ create_dns_record() {
   local target_device_id="$2"
   local record_json record_id
   record_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/records" \
+    -X POST "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/networks/${NETWORK_ID}/dns/records" \
     -H 'Content-Type: application/json' \
     -d "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${record_name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
@@ -511,7 +510,7 @@ create_dns_record() {
 
 security_group_id() {
   curl --silent --show-error --fail \
-    "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/security-groups" | jq -r '.items[0].securityGroupId // empty'
+    "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/networks/${NETWORK_ID}/security-groups" | jq -r '.items[0].securityGroupId // empty'
 }
 
 add_rule() {
@@ -523,7 +522,7 @@ add_rule() {
   local peer_value="$6"
   local rule_json rule_id
   rule_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/security-groups/${security_group_id}/rules" \
+    -X POST "${WEB_API_BASE_URL}${CONTROL_API_PREFIX}/security-groups/${security_group_id}/rules" \
     -H 'Content-Type: application/json' \
     -d "{\"direction\":\"${direction}\",\"priority\":100,\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"${peer_type}\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"

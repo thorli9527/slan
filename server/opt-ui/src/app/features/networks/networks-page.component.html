@@ -1,0 +1,45 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div><h2>网络管理</h2><p>全局管理网络；安全组和 DNS 在所选网络内维护。</p></div>
+      <button class="primary" type="button" (click)="vm.openNetworkDialog()">新增网络</button>
+    </div>
+    <table><thead><tr><th>网络</th><th>所属用户</th><th>CIDR</th><th>设备/成员</th><th>状态</th><th>操作</th></tr></thead><tbody>
+      <tr *ngFor="let item of vm.networks" [class.selected-row]="vm.selectedNetwork?.network.networkId === item.network.networkId">
+        <td><strong>{{ item.network.name }}</strong><br><code>{{ item.network.networkId }}</code></td><td>{{ vm.userEmail(item.network.ownerId) }}</td><td><code>{{ item.network.cidr }}</code></td><td>{{ item.deviceCount }} / {{ item.memberCount }}</td><td><span class="status" [class.online]="item.network.status === 'active'">{{ item.network.status }}</span></td>
+        <td><div class="row-actions"><button class="ghost small" type="button" (click)="vm.selectNetwork(item)">管理</button><button class="ghost small" type="button" (click)="vm.openNetworkDialog(item)">编辑</button><button class="danger small" type="button" (click)="vm.deleteNetwork(item)">删除</button></div></td>
+      </tr><tr *ngIf="!vm.networks.length"><td colspan="6" class="empty-cell">暂无网络</td></tr>
+    </tbody></table>
+  </article>
+
+  <ng-container *ngIf="vm.selectedNetwork">
+    <article class="panel">
+      <div class="panel-title"><div><h2>网络设备与引用分组</h2><p>{{ vm.selectedNetwork.network.name }}</p></div></div>
+      <div class="resource-split"><div><h3>当前网络设备</h3><div class="inline-create"><select [(ngModel)]="vm.networkDeviceToAdd"><option value="">选择设备</option><option *ngFor="let device of vm.availableNetworkDevices()" [value]="device.deviceId">{{ device.alias || device.name || device.deviceId }}</option></select><button class="primary" type="button" (click)="vm.addNetworkDevice()">加入网络</button></div><table><thead><tr><th>设备</th><th>所有者</th><th>状态</th><th>操作</th></tr></thead><tbody><tr *ngFor="let device of vm.networkDevices"><td>{{ device.alias || device.deviceId }}<br><code>{{ device.deviceId }}</code></td><td>{{ vm.userEmail(device.ownerUserId) }}</td><td><span class="status" [class.online]="device.enabled">{{ device.status }}</span></td><td><button class="danger small" type="button" (click)="vm.removeNetworkDevice(device)">移出网络</button></td></tr><tr *ngIf="!vm.networkDevices.length"><td colspan="4" class="empty-cell">暂无网络设备</td></tr></tbody></table></div>
+        <div><h3>引用设备分组</h3><div class="inline-create"><select [(ngModel)]="vm.networkGroupToAdd"><option value="">选择分组</option><option *ngFor="let group of vm.availableNetworkDeviceGroups()" [value]="group.groupId">{{ group.name }}</option></select><button class="primary" type="button" (click)="vm.addNetworkDeviceGroup()">添加引用</button></div><table><thead><tr><th>分组</th><th>说明</th><th>操作</th></tr></thead><tbody><tr *ngFor="let group of vm.networkDeviceGroups"><td>{{ group.name }}<br><code>{{ group.groupId }}</code></td><td>{{ group.description || '-' }}</td><td><button class="danger small" type="button" (click)="vm.removeNetworkDeviceGroup(group)">移除</button></td></tr><tr *ngIf="!vm.networkDeviceGroups.length"><td colspan="3" class="empty-cell">暂无引用分组</td></tr></tbody></table></div>
+      </div>
+    </article>
+    <article class="panel">
+      <div class="panel-title"><div><h2>安全组管理</h2><p>{{ vm.selectedNetwork.network.name }}</p></div></div>
+      <div class="inline-create"><input [(ngModel)]="vm.securityGroupName" placeholder="安全组名称"><input [(ngModel)]="vm.securityGroupDescription" placeholder="说明"><button class="primary" type="button" (click)="vm.createSecurityGroup()">{{ vm.editingSecurityGroup ? '保存安全组' : '新增安全组' }}</button></div>
+      <div class="resource-split">
+        <div><table><thead><tr><th>安全组</th><th>说明</th><th>操作</th></tr></thead><tbody>
+          <tr *ngFor="let group of vm.securityGroups"><td><button class="table-text-button" type="button" (click)="vm.selectSecurityGroup(group)">{{ group.name }}</button><br><code>{{ group.securityGroupId }}</code></td><td>{{ group.description || '-' }}</td><td><div class="row-actions"><button class="ghost small" type="button" (click)="vm.editSecurityGroup(group)">编辑</button><button class="danger small" type="button" (click)="vm.deleteSecurityGroup(group)">删除</button></div></td></tr>
+          <tr *ngIf="!vm.securityGroups.length"><td colspan="3" class="empty-cell">暂无安全组</td></tr>
+        </tbody></table></div>
+        <div *ngIf="vm.selectedSecurityGroup"><h3>规则：{{ vm.selectedSecurityGroup.name }}</h3>
+          <div class="rule-create"><select [(ngModel)]="vm.ruleForm.direction"><option value="ingress">入站</option><option value="egress">出站</option></select><select [(ngModel)]="vm.ruleForm.protocol"><option value="all">all</option><option value="tcp">tcp</option><option value="udp">udp</option><option value="icmp">icmp</option></select><input [(ngModel)]="vm.ruleForm.portRange" placeholder="端口，如 all"><select [(ngModel)]="vm.ruleForm.peerType"><option value="device_group">设备分组</option><option value="device">设备</option></select><select [(ngModel)]="vm.ruleForm.peerValue"><ng-container *ngIf="vm.ruleForm.peerType === 'device_group'"><option *ngFor="let item of vm.deviceGroups" [value]="item.groupId" [disabled]="item.userId !== vm.selectedNetwork.network.ownerId">{{ item.name }}</option></ng-container><ng-container *ngIf="vm.ruleForm.peerType === 'device'"><option *ngFor="let item of vm.devices" [value]="item.deviceId" [disabled]="item.ownerId !== vm.selectedNetwork.network.ownerId">{{ item.alias || item.name || item.deviceId }}</option></ng-container></select><select [(ngModel)]="vm.ruleForm.action"><option value="allow">允许</option><option value="deny">拒绝</option></select><button class="primary" type="button" (click)="vm.createSecurityRule()">{{ vm.editingSecurityRule ? '保存规则' : '新增规则' }}</button></div>
+          <table><thead><tr><th>方向</th><th>协议/端口</th><th>动作</th><th></th></tr></thead><tbody><tr *ngFor="let rule of vm.securityRules"><td>{{ rule.direction }}</td><td>{{ rule.protocol }} / {{ rule.portRange }}</td><td>{{ rule.action }}</td><td><div class="row-actions"><button class="ghost small" type="button" (click)="vm.editSecurityRule(rule)">编辑</button><button class="danger small" type="button" (click)="vm.deleteSecurityRule(rule)">删除</button></div></td></tr><tr *ngIf="!vm.securityRules.length"><td colspan="4" class="empty-cell">暂无规则</td></tr></tbody></table>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-title"><div><h2>DNS 管理</h2><p>DNS 配置属于当前网络，不作为全局独立资源。</p></div></div>
+      <h3>DNS 区域</h3><div class="inline-create"><input [(ngModel)]="vm.dnsZoneName" placeholder="区域，例如 corp.example"><button class="primary" type="button" (click)="vm.createDNSZone()">{{ vm.editingDNSZone ? '保存区域' : '新增区域' }}</button></div>
+      <table><thead><tr><th>区域</th><th>状态</th><th>操作</th></tr></thead><tbody><tr *ngFor="let zone of vm.dnsZones"><td>{{ zone.name }}<br><code>{{ zone.zoneId }}</code></td><td>{{ zone.status }}</td><td><div class="row-actions"><button class="ghost small" type="button" (click)="vm.editDNSZone(zone)">编辑</button><button class="danger small" type="button" (click)="vm.deleteDNSZone(zone)">删除</button></div></td></tr><tr *ngIf="!vm.dnsZones.length"><td colspan="3" class="empty-cell">暂无 DNS 区域</td></tr></tbody></table>
+      <h3 class="section-heading">DNS 记录</h3><div class="inline-create compact"><select [(ngModel)]="vm.dnsRecordForm.zoneId"><option value="">无区域</option><option *ngFor="let zone of vm.dnsZones" [value]="zone.zoneId">{{ zone.name }}</option></select><input [(ngModel)]="vm.dnsRecordForm.name" placeholder="名称"><select [(ngModel)]="vm.dnsRecordForm.type"><option value="A">A</option><option value="AAAA">AAAA</option><option value="CNAME">CNAME</option><option value="SRV">SRV</option></select><input [(ngModel)]="vm.dnsRecordForm.value" placeholder="值"><input [(ngModel)]="vm.dnsRecordForm.ttl" type="number" placeholder="TTL"><button class="primary" type="button" (click)="vm.createDNSRecord()">{{ vm.editingDNSRecord ? '保存记录' : '新增记录' }}</button></div>
+      <table><thead><tr><th>名称</th><th>类型</th><th>值</th><th>TTL</th><th>操作</th></tr></thead><tbody><tr *ngFor="let record of vm.dnsRecords"><td>{{ record.name }}</td><td>{{ record.type }}</td><td><code>{{ record.value }}</code></td><td>{{ record.ttl }}</td><td><div class="row-actions"><button class="ghost small" type="button" (click)="vm.editDNSRecord(record)">编辑</button><button class="danger small" type="button" (click)="vm.deleteDNSRecord(record)">删除</button></div></td></tr><tr *ngIf="!vm.dnsRecords.length"><td colspan="5" class="empty-cell">暂无 DNS 记录</td></tr></tbody></table>
+    </article>
+  </ng-container>
+</section>

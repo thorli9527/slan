@@ -63,7 +63,10 @@ func (p *MqttDeviceControlPublisher) PublishDeviceControl(
 			if ctx.Err() != nil || attempt == 2 {
 				break
 			}
-			time.Sleep(200 * time.Millisecond)
+			if err := mqttRetryDelay(ctx, 200*time.Millisecond); err != nil {
+				lastErr = err
+				break
+			}
 			continue
 		}
 		return nil

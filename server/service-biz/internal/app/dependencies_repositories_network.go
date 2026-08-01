@@ -7,6 +7,6 @@ type NetworkRepositories struct {
 	Devices         repository.DeviceRepository
 	Relations       repository.DeviceRelationRepository
 	Networks        repository.NetworkRepository
-	Ops             repository.OpsRepository
+	Ops             repository.OpsNodeRepository
 	EventDeliveries repository.NetworkEventDeliveryStore
 }

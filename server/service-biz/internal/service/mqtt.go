@@ -78,6 +78,7 @@ type MQTTUseCase interface {
 type MQTTWebhookService struct {
 	Networks        repository.NetworkRepository
 	EventPublisher  NetworkEventPublisher
+	DevicePublisher DeviceControlPublisher
 	EventDeliveries repository.NetworkEventDeliveryStore
 	Config          mqttkit.Config
 	Now             func() time.Time

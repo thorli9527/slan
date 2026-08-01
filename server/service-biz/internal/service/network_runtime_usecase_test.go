@@ -342,63 +342,10 @@ func (s *networkRuntimeTestOps) GetPunchNode(context.Context, string) (model.Pun
 
 func (s *networkRuntimeTestOps) SavePunchNode(context.Context, model.PunchNode) error { return nil }
 func (s *networkRuntimeTestOps) DeletePunchNode(context.Context, string) error        { return nil }
-func (s *networkRuntimeTestOps) GetCustomerPlan(context.Context, string) (string, bool, error) {
-	return "", false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveCustomerPlan(context.Context, string, string) error { return nil }
-func (s *networkRuntimeTestOps) ListClientDownloads(context.Context) ([]model.ClientDownload, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetClientDownload(context.Context, string) (model.ClientDownload, bool, error) {
-	return model.ClientDownload{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveClientDownload(context.Context, model.ClientDownload) error {
-	return nil
-}
-
-func (s *networkRuntimeTestOps) DeleteClientDownload(context.Context, string) error { return nil }
-func (s *networkRuntimeTestOps) ListPlans(context.Context) ([]model.Plan, error)    { return nil, nil }
-
-func (s *networkRuntimeTestOps) GetPlan(context.Context, string) (model.Plan, bool, error) {
-	return model.Plan{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SavePlan(context.Context, model.Plan) error { return nil }
-func (s *networkRuntimeTestOps) ListProducts(context.Context) ([]model.Product, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetProduct(context.Context, string) (model.Product, bool, error) {
-	return model.Product{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveProduct(context.Context, model.Product) error { return nil }
-func (s *networkRuntimeTestOps) ListOrders(context.Context) ([]model.Order, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetOrder(context.Context, string) (model.Order, bool, error) {
-	return model.Order{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveOrder(context.Context, model.Order) error { return nil }
-func (s *networkRuntimeTestOps) ListRenewals(context.Context) ([]model.Renewal, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetRenewal(context.Context, string) (model.Renewal, bool, error) {
-	return model.Renewal{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveRenewal(context.Context, model.Renewal) error { return nil }
-func (s *networkRuntimeTestOps) DeleteRenewal(context.Context, string) error      { return nil }
 
 var _ repository.NetworkRepository = (*networkRuntimeTestNetworks)(nil)
 var _ repository.DeviceRepository = (*networkRuntimeTestDevices)(nil)
-var _ repository.OpsRepository = (*networkRuntimeTestOps)(nil)
+var _ repository.OpsNodeRepository = (*networkRuntimeTestOps)(nil)
 
 func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
 	service := newNetworkRuntimeTestService([]model.SecurityRule{{

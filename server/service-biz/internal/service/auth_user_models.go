@@ -36,11 +36,3 @@ type ChangedUserPasswordView struct {
 	User      UserView `json:"user"`
 	UpdatedAt int64    `json:"updatedAt"`
 }
-
-type UserEntitlementView struct {
-	UserID      string `json:"userId"`
-	PlanCode    string `json:"planCode"`
-	DeviceLimit int    `json:"deviceLimit"`
-	UsedDevices int    `json:"usedDevices"`
-	Status      string `json:"status"`
-}

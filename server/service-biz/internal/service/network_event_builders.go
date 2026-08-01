@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,15 +21,27 @@ func newNetworkEventEnvelope(
 	payload any,
 ) NetworkEventEnvelope {
 	networkID = strings.TrimSpace(networkID)
+	eventID := networkEventID(eventType, networkID, version, occurredAt, payload)
 	return NetworkEventEnvelope{
 		Type:       "network_event",
 		NetworkID:  networkID,
 		Version:    version,
-		EventID:    fmt.Sprintf("%s-%s-%d-%d", networkID, eventType, version, occurredAt),
+		EventID:    eventID,
 		EventType:  eventType,
 		OccurredAt: occurredAt,
 		Payload:    payload,
 	}
+}
+
+func networkEventID(eventType NetworkEventType, networkID string, version uint64, occurredAt int64, payload any) string {
+	digest := sha256.New()
+	_, _ = fmt.Fprintf(digest, "%s\x00%s\x00%d\x00%d\x00", strings.TrimSpace(networkID), eventType, version, occurredAt)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		payloadJSON = []byte(fmt.Sprintf("%#v", payload))
+	}
+	_, _ = digest.Write(payloadJSON)
+	return fmt.Sprintf("netevt-%x", digest.Sum(nil)[:16])
 }
 
 func publishNetworkEvent(
@@ -53,7 +67,7 @@ func buildNetworkEventSnapshotFromRepositories(
 	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsRepository,
+	ops repository.OpsNodeRepository,
 	nowFn func() time.Time,
 	networkID string,
 ) (NetworkSnapshotPayload, error) {

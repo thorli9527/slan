@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 pub struct ClientViewState {
     /// 当前是否已登录。
     pub signed_in: bool,
+    /// 是否已完成用户认证；设备 token 会话仍可保持 signed_in。
+    #[serde(default)]
+    pub user_authenticated: bool,
     /// UI 展示用用户标识。
     pub user_label: Option<String>,
     /// 当前设备 ID。
@@ -63,6 +66,7 @@ impl Default for ClientViewState {
     fn default() -> Self {
         Self {
             signed_in: false,
+            user_authenticated: false,
             user_label: None,
             device_id: None,
             virtual_ip: None,

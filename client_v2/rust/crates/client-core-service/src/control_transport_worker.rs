@@ -736,14 +736,11 @@ fn try_ingest_device_network_membership_changed(
             let mut queue = task_queue
                 .lock()
                 .map_err(|_| "control task queue mutex poisoned".to_string())?;
-            queue
-                .enqueue_downstream_unacked(
-                    crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
-                    false,
-                )
-                .map_err(|error| error.to_string())?;
+            enqueue_membership_reconcile_task(&mut queue, delivery_id.as_deref())?;
         }
         state = crate::drain_pending_control_tasks(runtime, task_queue);
+    } else if let Some(delivery_id) = delivery_id.as_deref() {
+        record_network_event_ack(task_queue, delivery_id)?;
     }
     publish_state_business_event_with_extra(
         state_notifier,
@@ -759,6 +756,29 @@ fn try_ingest_device_network_membership_changed(
         }),
     );
     Ok(true)
+}
+
+fn enqueue_membership_reconcile_task(
+    queue: &mut ControlTaskQueue,
+    delivery_id: Option<&str>,
+) -> Result<(), String> {
+    if let Some(delivery_id) = delivery_id.map(str::trim).filter(|value| !value.is_empty()) {
+        queue
+            .enqueue_downstream(
+                crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
+                delivery_id.to_string(),
+                false,
+            )
+            .map_err(|error| error.to_string())?;
+    } else {
+        queue
+            .enqueue_downstream_unacked(
+                crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
+                false,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn downstream_control_business_data(message: &serde_json::Value) -> Option<serde_json::Value> {
@@ -1017,8 +1037,14 @@ fn record_network_event_ack(
             false,
         )
         .map_err(|err| err.to_string())?;
-    queue.mark_succeeded(&task.id).map_err(|err| err.to_string())
-        .and_then(|_| queue.mark_unacknowledged(&task.id).map_err(|err| err.to_string()))
+    queue
+        .mark_succeeded(&task.id)
+        .map_err(|err| err.to_string())
+        .and_then(|_| {
+            queue
+                .mark_unacknowledged(&task.id)
+                .map_err(|err| err.to_string())
+        })
 }
 
 fn network_event_targets_active_runtime(
@@ -1831,12 +1857,10 @@ fn release_worker(
     }
     state.running = false;
     state.connected = false;
-    let should_backoff = error
-        .as_deref()
-        .is_some_and(|reason| {
-            reason != MQTT_PLANNED_RECONNECT_REASON
-                && reason != MQTT_NETWORK_GENERATION_RECONNECT_REASON
-        });
+    let should_backoff = error.as_deref().is_some_and(|reason| {
+        reason != MQTT_PLANNED_RECONNECT_REASON
+            && reason != MQTT_NETWORK_GENERATION_RECONNECT_REASON
+    });
     state.backoff_ms = if should_backoff {
         (state.backoff_ms.max(1_000) * 2).min(30_000)
     } else {
@@ -1866,9 +1890,10 @@ mod tests {
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
-        ingest_downstream_publish, mark_worker_connected, mqtt_connection_matches,
-        network_event_requires_data_plane_reconfigure, network_event_targets_active_runtime,
-        reconnect_key, release_worker, try_ingest_device_ip_reassigned, uses_control_connection,
+        enqueue_membership_reconcile_task, ingest_downstream_publish, mark_worker_connected,
+        mqtt_connection_matches, network_event_requires_data_plane_reconfigure,
+        network_event_targets_active_runtime, reconnect_key, record_network_event_ack,
+        release_worker, try_ingest_device_ip_reassigned, uses_control_connection,
     };
     use crate::control_plane::MqttCredential;
     use crate::network_event::{
@@ -1933,6 +1958,40 @@ mod tests {
 
         assert_eq!(reconnect_key(&before), reconnect_key(&after));
         assert!(mqtt_connection_matches(&before, &after));
+    }
+
+    #[test]
+    fn membership_reconcile_task_preserves_delivery_id_for_ack() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-membership-ack-task-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+
+        let mut queue = ControlTaskQueue::load_default();
+        enqueue_membership_reconcile_task(&mut queue, Some("membership-delivery-1"))
+            .expect("enqueue membership reconcile");
+        let task = queue.take_next_pending().expect("take task").expect("task");
+        assert_eq!(task.delivery_id.as_deref(), Some("membership-delivery-1"));
+
+        let queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        record_network_event_ack(&queue, "membership-delivery-2")
+            .expect("record disabled membership ack");
+        let pending_acks = queue.lock().expect("queue").pending_downstream_acks();
+        assert!(pending_acks
+            .iter()
+            .any(|task| task.delivery_id.as_deref() == Some("membership-delivery-2")));
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
     }
 
     #[test]
@@ -2224,6 +2283,7 @@ mod tests {
             .call(|runtime| {
                 runtime
                     .dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
+                        user_authenticated: Some(true),
                         access_token: "existing-token".to_string(),
                         refresh_token: None,
                         user_id: "user-1".to_string(),

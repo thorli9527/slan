@@ -188,7 +188,7 @@ class ClientCoreLocalService {
     return requestJson('localNetworkShutdown');
   }
 
-  /// 供集成测试使用的测试用户注册入口。
+  /// 供集成测试使用的 App 兼容注册入口。
   Future<Map<String, Object?>?> localRegisterTestUser({
     required String email,
     required String password,

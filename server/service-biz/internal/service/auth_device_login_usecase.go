@@ -166,10 +166,6 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {
 		return CompleteDeviceLoginDeviceView{}, err
 	}
-	joinedDefaultGroup, err := s.assignOnlyOwnedDeviceToDefaultGroup(ctx, device)
-	if err != nil {
-		return CompleteDeviceLoginDeviceView{}, err
-	}
 	if ownerChanged {
 		if err := publishDeviceOwnerChangedNetworkRemovals(
 			ctx, s.Users, s.Devices, s.Networks, s.EventPublisher, s.Now,
@@ -224,17 +220,7 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 			return CompleteDeviceLoginDeviceView{}, err
 		}
 	}
-	if joinedDefaultGroup {
-		groupService := DeviceGroupService{
-			Networks:        s.Networks,
-			DevicePublisher: s.DevicePublisher,
-			Now:             s.Now,
-		}
-		if err := groupService.publishGroupDerivedNetworkMembership(ctx, device.DeviceID, activeNetworkID, "joined", 0); err != nil {
-			return CompleteDeviceLoginDeviceView{}, err
-		}
-	}
-	if activeNetworkID != "" && !joinedDefaultGroup {
+	if activeNetworkID != "" {
 		member, ok, err := s.Networks.GetNetworkDevice(ctx, activeNetworkID, device.DeviceID)
 		if err != nil {
 			return CompleteDeviceLoginDeviceView{}, err
@@ -253,49 +239,6 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 		}
 	}
 	return completedDeviceLoginView(item), nil
-}
-
-func (s AuthDeviceLoginCompleteService) assignOnlyOwnedDeviceToDefaultGroup(ctx context.Context, device model.Device) (bool, error) {
-	owned, err := s.Devices.ListDevicesByOwner(ctx, device.OwnerID)
-	if err != nil {
-		return false, err
-	}
-	if len(owned) != 1 || owned[0].DeviceID != device.DeviceID {
-		return false, nil
-	}
-	groups, err := s.Devices.ListDeviceGroups(ctx, device.OwnerID)
-	if err != nil {
-		return false, err
-	}
-	defaultGroupID := ""
-	for _, group := range groups {
-		if strings.TrimSpace(group.Name) == defaultUserDeviceGroupName {
-			defaultGroupID = group.GroupID
-			break
-		}
-	}
-	if defaultGroupID == "" {
-		return false, nil
-	}
-	groupService := DeviceGroupService{
-		Users:          s.Users,
-		Devices:        s.Devices,
-		Networks:       s.Networks,
-		EventPublisher: s.EventPublisher,
-		Now:            s.Now,
-	}
-	if networkGroups, ok := s.Networks.(repository.NetworkDeviceGroupRepository); ok {
-		groupService.NetworkGroups = networkGroups
-	}
-	if err := groupService.SetDeviceGroups(ctx, SetDeviceGroupsInput{
-		ActorUserID: device.OwnerID,
-		UserID:      device.OwnerID,
-		DeviceID:    device.DeviceID,
-		GroupIDs:    []string{defaultGroupID},
-	}); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func deviceNetworkMemberships(ctx context.Context, networks repository.NetworkRepository, deviceID string) ([]model.NetworkDevice, error) {

@@ -208,7 +208,7 @@ func seed() {
 	email := "wire-persist-" + suffix + "@local.slan"
 	password := "Password123!"
 	var auth authResponse
-	postJSON(bizURL+"/auth/register", "", map[string]any{
+	postJSON(bizURL+"/api/app/auth/register", "", map[string]any{
 		"email":    email,
 		"password": password,
 	}, &auth)
@@ -470,7 +470,7 @@ func cleanupSmokeDeviceBestEffort(bizURL, email, password, deviceID string) {
 	var auth cleanupAuthResponse
 	payload, err := json.Marshal(map[string]any{"email": email, "password": password})
 	must(err)
-	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/web/auth/login", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/app/auth/login", bytes.NewReader(payload))
 	must(err)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
@@ -487,7 +487,7 @@ func cleanupSmokeDeviceBestEffort(bizURL, email, password, deviceID string) {
 	}
 	req, err = http.NewRequest(
 		http.MethodDelete,
-		bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
 		nil,
 	)
 	must(err)

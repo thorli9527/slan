@@ -3,12 +3,11 @@ package app
 import servicepkg "github.com/slan/service-biz/internal/service"
 
 type RouteUseCases struct {
-	App            AppRouteUseCases
-	Web            WebRouteUseCases
-	Ops            OpsRouteUseCases
-	WireControl    servicepkg.WireUseCase
-	MessagingHook  servicepkg.MQTTUseCase
-	DownloadClient servicepkg.DownloadUseCase
+	App           AppRouteUseCases
+	Management    ManagementRouteUseCases
+	Ops           OpsRouteUseCases
+	WireControl   servicepkg.WireUseCase
+	MessagingHook servicepkg.MQTTUseCase
 }
 
 type AppRouteUseCases struct {
@@ -27,12 +26,10 @@ type AppRouteUseCases struct {
 	NetworkRuntime      servicepkg.NetworkRuntimeUseCase
 }
 
-type WebRouteUseCases struct {
-	AuthRegistration    servicepkg.AuthUserRegistrationUseCase
+type ManagementRouteUseCases struct {
 	AuthSessions        servicepkg.AuthUserSessionUseCase
 	UserTokens          servicepkg.UserTokenManagementUseCase
 	UserAccounts        servicepkg.AuthUserAccountUseCase
-	UserEntitlements    servicepkg.AuthUserEntitlementUseCase
 	AuthAlias           servicepkg.AuthAliasUseCase
 	ConsoleKeys         servicepkg.AuthConsoleKeyUseCase
 	ConsoleLogin        servicepkg.AuthConsoleLoginUseCase
@@ -46,7 +43,6 @@ type WebRouteUseCases struct {
 	NetworkInvite       servicepkg.NetworkInviteUseCase
 	NetworkDNS          servicepkg.NetworkDNSUseCase
 	NetworkAccess       servicepkg.NetworkAccessUseCase
-	Downloads           servicepkg.DownloadUseCase
 }
 
 type OpsRouteUseCases struct {
@@ -56,12 +52,8 @@ type OpsRouteUseCases struct {
 	DashboardOverview servicepkg.OpsDashboardUseCase
 	AuditOverview     servicepkg.OpsAuditUseCase
 	NodeRegistry      servicepkg.OpsNodeUseCase
-	CustomerDirectory servicepkg.OpsCustomerUseCase
+	UserDirectory     servicepkg.OpsUserUseCase
 	DeviceDirectory   servicepkg.OpsManagedDeviceUseCase
-	DownloadCatalog   servicepkg.OpsCatalogDownloadUseCase
-	PlanCatalog       servicepkg.OpsCatalogPlanUseCase
-	ProductCatalog    servicepkg.OpsCatalogProductUseCase
-	OrderCatalog      servicepkg.OpsCatalogOrderUseCase
 }
 
 func newRouteUseCases(useCases UseCases) RouteUseCases {
@@ -81,12 +73,10 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			NetworkInvite:       useCases.Network.InviteManagement,
 			NetworkRuntime:      useCases.Network.RuntimeControl,
 		},
-		Web: WebRouteUseCases{
-			AuthRegistration:    useCases.Auth.UserRegistration,
+		Management: ManagementRouteUseCases{
 			AuthSessions:        useCases.Auth.UserSessions,
 			UserTokens:          useCases.Auth.UserTokens,
 			UserAccounts:        useCases.Auth.UserAccounts,
-			UserEntitlements:    useCases.Auth.UserEntitlements,
 			AuthAlias:           useCases.Auth.Aliases,
 			ConsoleKeys:         useCases.Auth.ConsoleKeys,
 			ConsoleLogin:        useCases.Auth.ConsoleLogin,
@@ -100,7 +90,6 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			NetworkInvite:       useCases.Network.InviteManagement,
 			NetworkDNS:          useCases.Network.DNSManagement,
 			NetworkAccess:       useCases.Network.AccessManagement,
-			Downloads:           useCases.Downloads.ClientDelivery,
 		},
 		Ops: OpsRouteUseCases{
 			SessionAuth:       useCases.Ops.SessionAuth,
@@ -109,15 +98,10 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			DashboardOverview: useCases.Ops.DashboardOverview,
 			AuditOverview:     useCases.Ops.AuditOverview,
 			NodeRegistry:      useCases.Ops.NodeRegistry,
-			CustomerDirectory: useCases.Ops.CustomerDirectory,
+			UserDirectory:     useCases.Ops.UserDirectory,
 			DeviceDirectory:   useCases.Ops.DeviceDirectory,
-			DownloadCatalog:   useCases.Ops.DownloadCatalog,
-			PlanCatalog:       useCases.Ops.PlanCatalog,
-			ProductCatalog:    useCases.Ops.ProductCatalog,
-			OrderCatalog:      useCases.Ops.OrderCatalog,
 		},
-		WireControl:    useCases.Wire.AdminControl,
-		MessagingHook:  useCases.Messaging.BrokerWebhook,
-		DownloadClient: useCases.Downloads.ClientDelivery,
+		WireControl:   useCases.Wire.AdminControl,
+		MessagingHook: useCases.Messaging.BrokerWebhook,
 	}
 }

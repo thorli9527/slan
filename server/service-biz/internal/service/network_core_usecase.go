@@ -96,7 +96,37 @@ func (s NetworkCoreService) DeleteNetwork(ctx context.Context, input DeleteNetwo
 	if _, err := requireOwnedManagedNetwork(ctx, s.Users, s.Networks, input.ActorUserID, input.NetworkID); err != nil {
 		return err
 	}
-	return s.Networks.DeleteNetwork(ctx, input.NetworkID)
+	members, err := s.Networks.ListNetworkDevices(ctx, input.NetworkID)
+	if err != nil {
+		return err
+	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, input.NetworkID, "network_deleted")
+	if err != nil {
+		return err
+	}
+	deviceIDs := make([]string, 0, len(members))
+	seen := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		if !networkMemberActive(member) {
+			continue
+		}
+		if err := publishNetworkMemberChanged(ctx, s.EventPublisher, s.Now, input.NetworkID, member.DeviceID, "removed", member, version.Version, version.Reason); err != nil {
+			return err
+		}
+		if _, ok := seen[member.DeviceID]; !ok {
+			seen[member.DeviceID] = struct{}{}
+			deviceIDs = append(deviceIDs, member.DeviceID)
+		}
+	}
+	if err := s.Networks.DeleteNetwork(ctx, input.NetworkID); err != nil {
+		return err
+	}
+	for _, deviceID := range deviceIDs {
+		if err := publishDirectNetworkMembership(ctx, s.Networks, s.DevicePublisher, s.Now, deviceID, input.NetworkID, "left", version.Version); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s NetworkCoreService) summarizeNetwork(ctx context.Context, item model.Network) (NetworkSummaryView, error) {

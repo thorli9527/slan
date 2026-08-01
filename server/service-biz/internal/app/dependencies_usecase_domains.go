@@ -46,10 +46,6 @@ func (d UseCaseDependencies) mqttRepositories() MQTTRepositories {
 	return d.Repositories.MQTT
 }
 
-func (d UseCaseDependencies) downloadRepositories() DownloadRepositories {
-	return d.Repositories.Download
-}
-
 func (d UseCaseDependencies) mqttConfig() mqttkit.Config {
 	return d.Runtime.MQTTConfig
 }

@@ -9,7 +9,6 @@ import '../../bridge/client_ui_diagnostics.dart';
 import '../../bridge/client_view_state.dart';
 import 'widgets/android_authorization_panel.dart';
 import 'widgets/network_status_panel.dart';
-import 'widgets/network_invite_dialog.dart';
 import 'widgets/password_login_form.dart';
 import 'widgets/signed_in_actions.dart';
 import 'widgets/signed_out_status.dart';
@@ -34,13 +33,13 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _connectivityRecoveryBackgroundThreshold = Duration(seconds: 3);
 
-  /// 移动端密码登录账号输入框。
+  /// 密码登录账号输入框。
   final TextEditingController _emailController = TextEditingController();
 
-  /// 移动端密码登录密码输入框。
+  /// 密码登录密码输入框。
   final TextEditingController _passwordController = TextEditingController();
 
-  /// 移动端控制面 API 地址输入框。
+  /// 控制面 API 地址输入框。
   final TextEditingController _serverBaseUrlController =
       TextEditingController();
 
@@ -50,7 +49,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// 最近一次已弹窗展示的网络错误，避免同一错误反复弹窗。
   String? _lastShownError;
 
-  /// 当前移动端控制面 API 地址。
+  /// 当前控制面 API 地址。
   String? _serverBaseUrl;
 
   /// 上一次登录态，用于从未登录变已登录时触发平台授权准备。
@@ -58,9 +57,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   /// UI 刚派发的网络目标；非空时同时表示操作锁和乐观显示值。
   bool? _pendingNetworkTarget;
-
-  /// 当前正在打开的浏览器命令，避免连续点击重复打开窗口。
-  ClientCommandType? _pendingBrowserCommand;
 
   DateTime? _backgroundedAt;
 
@@ -118,7 +114,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(
                   _isDesktopLike ? 18 : 20,
-                  _isDesktopLike ? 10 : 12,
+                  _isDesktopLike && state.hasUserSession ? 26 : 10,
                   _isDesktopLike ? 18 : 20,
                   _isDesktopLike ? 10 : 24,
                 ),
@@ -130,61 +126,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (state.signedIn) ...[
+                      if (state.hasUserSession) ...[
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
                         SizedBox(height: _isDesktopLike ? 8 : 14),
                         SignedInActions(
                           desktop: _isDesktopLike,
-                          showConsole: _showWebConsoleAction,
-                          onOpenConsole: _showWebConsoleAction &&
-                                  _pendingBrowserCommand == null
-                              ? _openWebConsole
-                              : null,
-                          consoleBusy: _pendingBrowserCommand ==
-                              ClientCommandType.openWebConsole,
                           onLogout: () => widget.bridge.dispatch(
                             const ClientCommand(ClientCommandType.logout),
                           ),
                         ),
                       ] else ...[
-                        SignedOutStatus(desktop: _isDesktopLike),
-                        SizedBox(height: _isDesktopLike ? 10 : 14),
-                        if (_usesPasswordLogin)
-                          PasswordLoginForm(
-                            emailController: _emailController,
-                            passwordController: _passwordController,
-                            serverBaseUrl: _serverBaseUrl,
-                            syncing: state.syncing,
-                            onSettings: _showServerSettings,
-                            onSubmit: _loginWithPassword,
-                          )
-                        else
-                          SizedBox(
-                            height: 46,
-                            child: FilledButton.icon(
-                              key: const Key('desktop-browser-login'),
-                              onPressed: state.syncing ||
-                                      _pendingBrowserCommand != null
-                                  ? null
-                                  : _openBrowserLogin,
-                              icon: _pendingBrowserCommand ==
-                                      ClientCommandType.openClientLogin
-                                  ? const SizedBox.square(
-                                      dimension: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.login_rounded, size: 18),
-                              label: Text(
-                                _pendingBrowserCommand ==
-                                        ClientCommandType.openClientLogin
-                                    ? '正在打开'
-                                    : '打开浏览器登录',
-                              ),
-                            ),
-                          ),
+                        if (!_isDesktopLike) ...[
+                          const SignedOutStatus(),
+                          const SizedBox(height: 14),
+                        ],
+                        PasswordLoginForm(
+                          desktop: _isDesktopLike,
+                          emailController: _emailController,
+                          passwordController: _passwordController,
+                          serverBaseUrl: _serverBaseUrl,
+                          syncing: state.syncing,
+                          onSettings: _showServerSettings,
+                          onSubmit: _loginWithPassword,
+                        ),
                       ],
                     ],
                   ),
@@ -197,15 +162,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  /// 移动端使用内置账号密码登录；桌面端走浏览器登录同步。
-  bool get _usesPasswordLogin =>
-      Theme.of(context).platform == TargetPlatform.iOS ||
-      Theme.of(context).platform == TargetPlatform.android;
-
-  /// 桌面端登录后显示打开 Web Console 的入口。
-  bool get _showWebConsoleAction => !_usesPasswordLogin;
-
-  bool get _isDesktopLike => !_usesPasswordLogin;
+  bool get _isDesktopLike =>
+      Theme.of(context).platform != TargetPlatform.iOS &&
+      Theme.of(context).platform != TargetPlatform.android;
 
   /// 读取当前服务端地址并同步到设置输入框。
   Future<void> _loadServerBaseUrl() async {
@@ -219,38 +178,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
-  /// 弹出移动端服务器地址设置。
+  /// 弹出服务器地址设置。
   Future<void> _showServerSettings() async {
     _serverBaseUrlController.text =
         _serverBaseUrl ?? await widget.bridge.serverBaseUrl();
     final saved = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('服务器设置'),
-        content: TextField(
-          key: const Key('server-base-url'),
-          controller: _serverBaseUrlController,
-          keyboardType: TextInputType.url,
-          textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(
-            labelText: '服务器地址',
-            hintText: 'http://example.com:28080',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-          onSubmitted: (_) => Navigator.of(context).pop(true),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            key: const Key('server-save'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('保存'),
-          ),
-        ],
+      builder: (context) => _ServerSettingsDialog(
+        controller: _serverBaseUrlController,
       ),
     );
     if (saved != true || !mounted) {
@@ -267,9 +202,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _serverBaseUrl = normalized;
         _serverBaseUrlController.text = normalized;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('服务器已设置为 $normalized')),
-      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -280,7 +212,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  /// 移动端账号密码登录。
+  /// 账号密码登录。
   ///
   /// 成功后 bridge 会完成设备注册并启动 MQTT 控制通道，页面只负责显示错误。
   Future<void> _loginWithPassword() async {
@@ -297,7 +229,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (email.isEmpty || password.isEmpty) {
       _lastShownError = null;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入账号和密码')),
+        const SnackBar(content: Text('请输入用户名和密码')),
       );
       return;
     }
@@ -318,68 +250,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('登录失败：$error')),
       );
-    }
-  }
-
-  Future<void> _openBrowserLogin() async {
-    await _dispatchDesktopBrowserCommand(
-      const ClientCommand(ClientCommandType.openClientLogin),
-      failurePrefix: '打开浏览器登录失败',
-    );
-  }
-
-  Future<void> _openWebConsole() async {
-    await _dispatchDesktopBrowserCommand(
-      const ClientCommand(ClientCommandType.openWebConsole),
-      failurePrefix: '打开 Web Console 失败',
-    );
-  }
-
-  Future<void> _dispatchDesktopBrowserCommand(
-    ClientCommand command, {
-    required String failurePrefix,
-  }) async {
-    if (_pendingBrowserCommand != null) {
-      ClientUiDiagnostics.unawaitedCriticalLog(
-        'home.browser.ignoredInFlight',
-        state: widget.bridge.state.value,
-        fields: {'command': command.type.name},
-      );
-      return;
-    }
-    setState(() => _pendingBrowserCommand = command.type);
-    ClientUiDiagnostics.unawaitedCriticalLog(
-      'home.browser.tap',
-      state: widget.bridge.state.value,
-      fields: {'command': command.type.name},
-    );
-    try {
-      await widget.bridge.dispatch(command);
-      ClientUiDiagnostics.unawaitedCriticalLog(
-        'home.browser.completed',
-        state: widget.bridge.state.value,
-        fields: {'command': command.type.name},
-      );
-    } catch (error) {
-      ClientUiDiagnostics.unawaitedCriticalLog(
-        'home.browser.failed',
-        state: widget.bridge.state.value,
-        fields: {
-          'command': command.type.name,
-          'errorType': error.runtimeType.toString(),
-          'message': _friendlyError('$error'),
-        },
-      );
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$failurePrefix：${_friendlyError('$error')}')),
-      );
-    } finally {
-      if (mounted && _pendingBrowserCommand == command.type) {
-        setState(() => _pendingBrowserCommand = null);
-      }
     }
   }
 
@@ -539,7 +409,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (normalized.contains('not assigned to any network') ||
         normalized.contains('no active network attachment') ||
         normalized.contains('no active network')) {
-      return '当前设备未加入任何网络，请重新登录或在 Web Console 中配置网络。';
+      return '当前设备未加入任何网络，请联系管理员配置网络。';
     }
     if (normalized.contains('device unavailable')) {
       return '设备不可用，请联系管理员重新启用。';
@@ -570,22 +440,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       currentIp: _ipText(displayedState),
       state: displayedState,
       onToggle: _toggleNetwork,
-      onAcceptInvite: _isDesktopLike ? _acceptNetworkInvite : null,
     );
-  }
-
-  Future<void> _acceptNetworkInvite() async {
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (_) => NetworkInviteDialog(
-        onAccept: widget.bridge.acceptNetworkInvite,
-      ),
-    );
-    if (accepted == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('网络接入已确认')),
-      );
-    }
   }
 
   /// 构建 Android VPN 授权提示；非 Android 或无需提示时隐藏。
@@ -626,5 +481,108 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return '待分配';
     }
     return virtualIp;
+  }
+}
+
+/// 桌面和移动端共用的紧凑服务器设置弹窗。
+class _ServerSettingsDialog extends StatelessWidget {
+  const _ServerSettingsDialog({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Dialog(
+      backgroundColor: Colors.white,
+      clipBehavior: Clip.antiAlias,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ConstrainedBox(
+        key: const Key('server-settings-dialog'),
+        constraints: const BoxConstraints(maxWidth: 340),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.dns_outlined,
+                    size: 18,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    '服务器设置',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 38,
+                child: TextField(
+                  key: const Key('server-base-url'),
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.done,
+                  style: theme.textTheme.bodySmall,
+                  decoration: const InputDecoration(
+                    hintText: 'http://example.com:28080',
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                  ),
+                  onSubmitted: (_) => Navigator.of(context).pop(true),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 34,
+                      child: OutlinedButton(
+                        key: const Key('server-cancel'),
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          textStyle: theme.textTheme.labelMedium,
+                        ),
+                        child: const Text('取消'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SizedBox(
+                      height: 34,
+                      child: FilledButton(
+                        key: const Key('server-confirm'),
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: FilledButton.styleFrom(
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          textStyle: theme.textTheme.labelMedium,
+                        ),
+                        child: const Text('确认'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

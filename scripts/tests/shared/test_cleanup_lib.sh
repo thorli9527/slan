@@ -9,11 +9,7 @@ slan_cleanup_remote_test_devices() {
 
   local web_base="${5:-${SLAN_WEB_BASE_URL:-${SLAN_DEFAULT_WEB_BASE_URL:-}}}"
   if [[ -z "$web_base" ]]; then
-    if [[ "$biz_url" == *:28080 ]]; then
-      web_base="${biz_url%:28080}:24200"
-    else
-      web_base="$biz_url"
-    fi
+    web_base="$biz_url"
   fi
 
   local auth access_token user_id devices device_id
@@ -26,11 +22,11 @@ slan_cleanup_remote_test_devices() {
 
   devices="$(curl --silent --show-error --connect-timeout 5 --max-time 15 \
     -H "Authorization: Bearer ${access_token}" \
-    "${web_base}/api/web/devices?userId=${user_id}" 2>/dev/null || true)"
+    "${web_base}/api/app/devices?userId=${user_id}" 2>/dev/null || true)"
   while IFS= read -r device_id; do
     [[ -n "$device_id" ]] || continue
     curl --silent --show-error --connect-timeout 5 --max-time 30 \
-      -X DELETE "${web_base}/api/web/devices/${device_id}?actorUserId=${user_id}" \
+      -X DELETE "${web_base}/api/app/devices/${device_id}?actorUserId=${user_id}" \
       -H "Authorization: Bearer ${access_token}" >/dev/null 2>&1 || true
   done < <(printf '%s' "$devices" | grep -o '"deviceId":"[^"]*"' | sed 's/"deviceId":"//;s/"$//')
 }

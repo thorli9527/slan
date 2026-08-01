@@ -589,12 +589,12 @@ ensure_network_context() {
 
   networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${ADMIN_BIZ_URL}/api/web/networks?userId=${USER_ID}")"
+    "${ADMIN_BIZ_URL}/api/app/networks?userId=${USER_ID}")"
   NETWORK_ID="$(printf '%s' "$networks" | jq -r '.items[0].networkId // .[0].networkId // empty')"
   [[ -n "$NETWORK_ID" ]] || fail "failed to parse network id for user ${USER_ID}"
   groups="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
+    "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/security-groups")"
   SECURITY_GROUP_ID="$(printf '%s' "$groups" | jq -r '.items[0].securityGroupId // .[0].securityGroupId // empty')"
   [[ -n "$SECURITY_GROUP_ID" ]] || fail "network ${NETWORK_ID} has no security group"
 }
@@ -618,20 +618,20 @@ provision_network_membership_and_acl() {
     -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${ANDROID_TEST_DEVICE_ID}\",\"name\":\"Android matrix\",\"alias\":\"Android matrix\",\"platform\":\"android\",\"osName\":\"Android\",\"osVersion\":\"integration\",\"publicKey\":\"matrix-${ANDROID_TEST_DEVICE_ID}\"}" >/dev/null
 
   local group_json device_id rule_json rule_id
-  group_json="$(create_json "${ADMIN_BIZ_URL}/api/web/users/${USER_ID}/device-groups?actorUserId=${USER_ID}" \
+  group_json="$(create_json "${ADMIN_BIZ_URL}/api/app/users/${USER_ID}/device-groups?actorUserId=${USER_ID}" \
     "{\"name\":\"mac-android-$(date +%s%N)\",\"description\":\"Mac Android integration devices\"}")"
   DEVICE_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.groupId // empty')"
   [[ -n "$DEVICE_GROUP_ID" ]] || fail "device group create returned empty groupId"
 
   for device_id in "$mac_device_id" "$ANDROID_TEST_DEVICE_ID"; do
     curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-      -X PUT "${ADMIN_BIZ_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -X PUT "${ADMIN_BIZ_URL}/api/app/users/${USER_ID}/devices/${device_id}/groups" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
   done
 
-  create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/device-groups?actorUserId=${USER_ID}" \
+  create_json "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/device-groups?actorUserId=${USER_ID}" \
     "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
 
   local direction protocol port priority
@@ -640,7 +640,7 @@ provision_network_membership_and_acl() {
     port="$UDP_PORT"
     [[ "$protocol" == tcp ]] && port="$TCP_PORT"
     for direction in ingress egress; do
-      rule_json="$(create_json "${ADMIN_BIZ_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules?actorUserId=${USER_ID}" \
+      rule_json="$(create_json "${ADMIN_BIZ_URL}/api/app/security-groups/${SECURITY_GROUP_ID}/rules?actorUserId=${USER_ID}" \
         "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${DEVICE_GROUP_ID}\",\"enabled\":true}")"
       rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
       [[ -n "$rule_id" ]] || fail "failed to create ${protocol} ${direction} ACL rule"
@@ -657,12 +657,12 @@ provision_socket_dns_record() {
 
   ZONE_NAME="socket-${RANDOM}-$(date +%s).lan"
   local response
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
+  response="$(create_json "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/zones" \
     "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(extract_json_field "$response" "zoneId")"
   [[ -n "$ZONE_ID" ]] || fail "failed to create dns zone ${ZONE_NAME}"
 
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"mac\",\"recordType\":\"A\",\"targetDeviceId\":\"${mac_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"${TCP_PORT}\",\"ttl\":60}")"
   RECORD_ID="$(extract_json_field "$response" "recordId")"
   [[ -n "$RECORD_ID" ]] || fail "failed to create socket dns record"
@@ -770,14 +770,14 @@ cleanup() {
   if [[ -n "$NETWORK_ID" ]]; then
     local rule_id
     for rule_id in "${RULE_IDS[@]:-}"; do
-      [[ -n "$rule_id" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules/${rule_id}?actorUserId=${USER_ID}"
+      [[ -n "$rule_id" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/app/security-groups/${SECURITY_GROUP_ID}/rules/${rule_id}?actorUserId=${USER_ID}"
     done
-    [[ -n "$RECORD_ID" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_ID}?actorUserId=${USER_ID}"
-    [[ -n "$ZONE_ID" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}?actorUserId=${USER_ID}"
-    [[ -n "$DEVICE_GROUP_ID" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
+    [[ -n "$RECORD_ID" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/records/${RECORD_ID}?actorUserId=${USER_ID}"
+    [[ -n "$ZONE_ID" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}?actorUserId=${USER_ID}"
+    [[ -n "$DEVICE_GROUP_ID" ]] && best_effort_delete "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
   fi
   if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
-    best_effort_delete "${ADMIN_BIZ_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
+    best_effort_delete "${ADMIN_BIZ_URL}/api/app/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
   fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_MAC_ANDROID_SOCKET_WORK_DIR:-0}" != "1" ]]; then

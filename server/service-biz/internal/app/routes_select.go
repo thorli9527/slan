@@ -10,16 +10,12 @@ func routesForSet(c routeCatalog, routeSet string) []serviceapi.Route {
 	switch routeSet {
 	case RouteSetApp:
 		return c.appBundleRoutes()
-	case RouteSetWeb:
-		return c.webBundleRoutes()
 	case RouteSetOps:
 		return c.ops
 	case RouteSetWire:
 		return c.wire
 	case RouteSetMQTT:
 		return c.mqtt
-	case RouteSetDownload:
-		return c.download
 	default:
 		return c.allRoutes()
 	}

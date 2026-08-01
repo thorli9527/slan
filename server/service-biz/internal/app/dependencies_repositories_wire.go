@@ -5,5 +5,5 @@ import "github.com/slan/service-biz/internal/repository"
 type WireRepositories struct {
 	Devices  repository.DeviceRepository
 	Networks repository.NetworkRepository
-	Catalog  repository.OpsRepository
+	Nodes    repository.OpsNodeRepository
 }

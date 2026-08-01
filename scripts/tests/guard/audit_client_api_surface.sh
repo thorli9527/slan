@@ -8,7 +8,6 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 CLIENT_DIR="$ROOT_DIR/client_v2"
-WEB_CONSOLE_RULE_DOC="$CLIENT_DIR/docs/web-console-url-resolution.md"
 CLIENT_DEFAULT_ENDPOINTS_DOC="$CLIENT_DIR/docs/client-default-endpoints.md"
 SCRIPT_DEFAULT_ENDPOINTS_LIB="$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 
@@ -61,8 +60,7 @@ report_matches \
 print_section "Shared default endpoint coverage"
 test -s "$CLIENT_DEFAULT_ENDPOINTS_DOC"
 for required_pattern in \
-  '47\.245\.40\.231:28080' \
-  '47\.245\.40\.231:24200'
+  '47\.245\.40\.231:28080'
 do
   if ! rg -q "$required_pattern" \
     "$CLIENT_DIR/rust/crates/client-core-service/src/control_plane.rs" \
@@ -81,32 +79,13 @@ done
 echo "shared default endpoint patterns present in main client entrypoints"
 
 report_matches \
-  "Desktop Web Console host-mapping rules still present (review intentionally)" \
-  'web\.dev\.staticlss\.com|127\.0\.0\.1:24200' \
+  "Legacy Web Console code still present (compatibility removal backlog)" \
+  'openWebConsole|SLAN_WEB_CONSOLE_URL|web\.dev\.staticlss\.com|:24200' \
   "$CLIENT_DIR/app_flutter" \
+  "$CLIENT_DIR/rust" \
   "$CLIENT_DIR/plugins/client_core_plugin" \
   "$CLIENT_DIR/install" \
   --glob '!**/build/**'
-
-print_section "Shared Web Console mapping rule coverage"
-test -s "$WEB_CONSOLE_RULE_DOC"
-for required_pattern in \
-  'api\.dev\.staticlss\.com' \
-  'web\.dev\.staticlss\.com' \
-  'api\.slan\.localhost' \
-  'web\.slan\.localhost' \
-  '47\.245\.40\.231:24200'
-do
-  if ! rg -q "$required_pattern" \
-    "$CLIENT_DIR/app_flutter/lib/bridge/client_core_bridge.dart" \
-    "$CLIENT_DIR/plugins/client_core_plugin/macos/Classes/ClientCorePlugin.swift" \
-    "$CLIENT_DIR/plugins/client_core_plugin/windows/client_core_plugin.cpp" \
-    "$CLIENT_DIR/plugins/client_core_plugin/linux/client_core_plugin.cc"; then
-    echo "missing shared Web Console mapping pattern: $required_pattern" >&2
-    exit 1
-  fi
-done
-echo "shared mapping patterns present in Flutter/macOS/Windows/Linux"
 
 report_matches \
   "Flutter tests and integration checks with network primitives (allowed by policy)" \

@@ -9,49 +9,6 @@ import (
 	"github.com/slan/service-biz/internal/repository"
 )
 
-func attachDeviceToDefaultNetwork(ctx context.Context, networks repository.NetworkRepository, ownerID, deviceID string, now int64) error {
-	items, err := networks.ListNetworksByOwner(ctx, ownerID)
-	if err != nil {
-		return err
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	target := items[0]
-	for _, network := range items {
-		if network.Default && network.Status == "active" {
-			target = network
-			break
-		}
-	}
-	return networks.SaveNetworkDevice(ctx, model.NetworkDevice{
-		NetworkID:      target.NetworkID,
-		DeviceID:       deviceID,
-		Enabled:        true,
-		MemberStatus:   model.NetworkMemberStatusActive,
-		PresenceStatus: model.DevicePresenceStatusOffline,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	})
-}
-
-func ensureDeviceAttachedToDefaultNetworkIfMissing(
-	ctx context.Context,
-	networks repository.NetworkRepository,
-	ownerID string,
-	deviceID string,
-	now int64,
-) error {
-	items, err := networks.ListNetworksByDevice(ctx, deviceID)
-	if err != nil {
-		return err
-	}
-	if len(items) > 0 {
-		return nil
-	}
-	return attachDeviceToDefaultNetwork(ctx, networks, ownerID, deviceID, now)
-}
-
 func registerInstalledDevice(
 	ctx context.Context,
 	users repository.UserRepository,

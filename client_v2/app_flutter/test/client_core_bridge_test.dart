@@ -37,6 +37,30 @@ Map<String, Object?> _nativePlatformResolverTransportPayload(
 }
 
 void main() {
+  test('desktop server base url persists across bridge instances', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('slan-ui-settings-');
+    final settingsFile = File('${directory.path}/client-ui.json');
+    addTearDown(() => directory.delete(recursive: true));
+
+    final first = MethodChannelClientCoreBridge(
+      desktopSettingsFile: settingsFile,
+    );
+    _closeBridgeOnTearDown(first);
+    await first.updateServerBaseUrl('private.example.com:28080/');
+
+    final second = MethodChannelClientCoreBridge(
+      desktopSettingsFile: settingsFile,
+    );
+    _closeBridgeOnTearDown(second);
+
+    expect(await second.serverBaseUrl(), 'http://private.example.com:28080');
+    expect(
+      jsonDecode(await settingsFile.readAsString()),
+      {'controlBaseUrl': 'http://private.example.com:28080'},
+    );
+  });
+
   test('control transport status preserves all network subscriptions', () {
     final status = ControlTransportStatus.fromJson({
       'mqttCredentialReady': true,

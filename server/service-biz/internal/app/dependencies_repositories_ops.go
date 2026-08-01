@@ -9,5 +9,5 @@ type OpsRepositories struct {
 	Operators        repository.OperatorRepository
 	OperatorSessions repository.OperatorSessionRepository
 	Audit            repository.AuditRepository
-	Catalog          repository.OpsRepository
+	Nodes            repository.OpsNodeRepository
 }

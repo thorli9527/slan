@@ -350,19 +350,17 @@ var _ repository.NetworkRepository = (*authUserRegistrationTestNetworks)(nil)
 var _ repository.UserRepository = (*authUserRegistrationTestUsers)(nil)
 var _ repository.UserSessionRepository = (*authUserRegistrationTestSessions)(nil)
 
-func TestRegisterUserCreatesDefaultSecurityGroup(t *testing.T) {
+func TestRegisterUserDoesNotCreateNetworkResources(t *testing.T) {
 	networks := &authUserRegistrationTestNetworks{}
 	devices := &authUserRegistrationTestDevices{}
 	service := AuthUserRegistrationService{
 		authUserDependencies: authUserDependencies{
-			Users:              &authUserRegistrationTestUsers{},
-			Sessions:           &authUserRegistrationTestSessions{},
-			Devices:            devices,
-			Networks:           networks,
-			NewUserID:          func() string { return "user-test-1" },
-			NewNetID:           func() string { return "net-test-1" },
-			NewSessID:          func(string) string { return "sess-test-1" },
-			NewSecurityGroupID: func() string { return "sg-test-1" },
+			Users:     &authUserRegistrationTestUsers{},
+			Sessions:  &authUserRegistrationTestSessions{},
+			Devices:   devices,
+			Networks:  networks,
+			NewUserID: func() string { return "user-test-1" },
+			NewSessID: func(string) string { return "sess-test-1" },
 			Now: func() time.Time {
 				return time.Unix(1700000000, 0)
 			},
@@ -381,58 +379,26 @@ func TestRegisterUserCreatesDefaultSecurityGroup(t *testing.T) {
 		t.Fatalf("RegisterUser missing user view: %+v", view)
 	}
 
-	groups, err := networks.ListSecurityGroups(context.Background(), "net-test-1")
-	if err != nil {
-		t.Fatalf("ListSecurityGroups returned error: %v", err)
-	}
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 default security group, got %d", len(groups))
-	}
-	if groups[0].Name != "Default Security Group" {
-		t.Fatalf("unexpected default security group: %+v", groups[0])
-	}
 	deviceGroups, err := devices.ListDeviceGroups(context.Background(), "user-test-1")
 	if err != nil {
 		t.Fatalf("ListDeviceGroups returned error: %v", err)
 	}
-	if len(deviceGroups) != 1 || deviceGroups[0].Name != defaultUserDeviceGroupName {
-		t.Fatalf("unexpected default device groups: %+v", deviceGroups)
+	if len(deviceGroups) != 0 {
+		t.Fatalf("registration created device groups: %+v", deviceGroups)
 	}
-	references, err := networks.ListNetworkDeviceGroupReferences(context.Background(), "net-test-1")
-	if err != nil {
-		t.Fatalf("ListNetworkDeviceGroupReferences returned error: %v", err)
+	if len(networks.networks) != 0 {
+		t.Fatalf("registration created networks: %+v", networks.networks)
 	}
-	if len(references) != 1 || references[0].GroupID != deviceGroups[0].GroupID {
-		t.Fatalf("unexpected default network group references: %+v", references)
+	if len(networks.groupRefs) != 0 {
+		t.Fatalf("registration created network group references: %+v", networks.groupRefs)
 	}
-	rules, err := networks.ListSecurityRules(context.Background(), groups[0].SecurityGroupID)
-	if err != nil {
-		t.Fatalf("ListSecurityRules returned error: %v", err)
+	if len(networks.securityGroups) != 0 {
+		t.Fatalf("registration created security groups: %+v", networks.securityGroups)
 	}
-	if len(rules) != 2 {
-		t.Fatalf("expected ingress and egress default rules, got %+v", rules)
+	if len(networks.securityRules) != 0 {
+		t.Fatalf("registration created security rules: %+v", networks.securityRules)
 	}
-	directions := map[string]bool{}
-	for _, rule := range rules {
-		directions[rule.Direction] = true
-		if rule.PeerType != "device_group" || rule.PeerValue != deviceGroups[0].GroupID || rule.Action != "allow" || rule.Protocol != "all" || rule.PortRange != "all" || !rule.Enabled {
-			t.Fatalf("unexpected default security rule: %+v", rule)
-		}
-	}
-	if !directions["ingress"] || !directions["egress"] {
-		t.Fatalf("default security rule directions missing: %+v", directions)
-	}
-	version, ok, err := networks.GetNetworkVersion(context.Background(), "net-test-1")
-	if err != nil {
-		t.Fatalf("GetNetworkVersion returned error: %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected default network version to be created")
-	}
-	if version.Version != 1 {
-		t.Fatalf("expected default network version 1, got %+v", version)
-	}
-	if version.Reason != "user_default_network_created" {
-		t.Fatalf("unexpected default network version reason: %+v", version)
+	if len(networks.versions) != 0 {
+		t.Fatalf("registration created network versions: %+v", networks.versions)
 	}
 }

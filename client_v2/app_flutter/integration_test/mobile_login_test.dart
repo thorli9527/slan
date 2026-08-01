@@ -73,6 +73,10 @@ void main() {
         'SLAN_TEST_BIZ_URL',
         defaultValue: _defaultTestControlBaseUrl,
       );
+      const opsUrl = String.fromEnvironment(
+        'SLAN_TEST_OPS_URL',
+        defaultValue: 'http://47.245.40.231:24201',
+      );
       const checkSwitch = bool.fromEnvironment(
         'SLAN_TEST_CHECK_SWITCH',
         defaultValue: false,
@@ -195,7 +199,7 @@ void main() {
           ? 'mobile-login-${DateTime.now().microsecondsSinceEpoch}@example.test'
           : configuredEmail.trim();
       if (registerUser) {
-        await _registerTestUser(bizUrl, email, password);
+        await _createTestUser(opsUrl, email, password);
       }
 
       final bridge = MethodChannelClientCoreBridge();
@@ -417,62 +421,48 @@ int _androidRuntimeStatsScore(Object? stats) {
   return score;
 }
 
-Future<void> _registerTestUser(
-  String bizUrl,
+Future<void> _createTestUser(
+  String opsUrl,
   String email,
   String password,
 ) async {
-  try {
-    final bridge = MethodChannelClientCoreBridge();
-    await bridge.updateServerBaseUrl(bizUrl);
-    final result = await bridge.requestLocalApi(
-      'localRegisterTestUser',
-      {
-        'email': email,
-        'password': password,
-      },
-    );
-    final accessToken = (result?['accessToken'] as String? ?? '').trim();
-    final deviceId = (result?['deviceId'] as String? ?? '').trim();
-    final auth = result?['auth'];
-    final session = auth is Map ? auth['session'] : null;
-    final nestedToken =
-        session is Map ? '${session['token'] ?? ''}'.trim() : '';
-    if (accessToken.isNotEmpty ||
-        deviceId.isNotEmpty ||
-        nestedToken.isNotEmpty) {
-      return;
-    }
-    debugPrint('SLAN_TEST_REGISTER_FALLBACK_LOCAL_API_EMPTY=$result');
-  } on Object catch (error) {
-    debugPrint('SLAN_TEST_REGISTER_FALLBACK_LOCAL_API_ERROR=$error');
-  }
-
-  final uri = Uri.parse(bizUrl).resolve('/api/app/auth/register');
+  const opsEmail = String.fromEnvironment(
+    'SLAN_TEST_OPS_EMAIL',
+    defaultValue: 'admin1',
+  );
+  const opsPassword = String.fromEnvironment(
+    'SLAN_TEST_OPS_PASSWORD',
+    defaultValue: 'admin1',
+  );
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 5);
   try {
-    final request =
-        await client.postUrl(uri).timeout(const Duration(seconds: 5));
-    request.headers.contentType = ContentType.json;
-    request.write(jsonEncode({
-      'email': email,
-      'password': password,
-    }));
-    final response = await request.close().timeout(const Duration(seconds: 10));
-    final body = await response
-        .transform(utf8.decoder)
-        .join()
-        .timeout(const Duration(seconds: 5));
-    if (response.statusCode == HttpStatus.conflict) {
-      return;
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      fail('register failed: HTTP ${response.statusCode}: $body');
-    }
+    final login = await _postTestJSON(
+        client,
+        Uri.parse(opsUrl).resolve('/api/ops/auth/login'),
+        null,
+        {'email': opsEmail, 'password': opsPassword});
+    final token = '${login['token'] ?? ''}'.trim();
+    if (token.isEmpty) fail('operator login returned no token');
+    await _postTestJSON(client, Uri.parse(opsUrl).resolve('/api/ops/users'),
+        token, {'email': email, 'password': password, 'name': email});
   } finally {
     client.close(force: true);
   }
+}
+
+Future<Map<String, dynamic>> _postTestJSON(HttpClient client, Uri uri,
+    String? token, Map<String, Object?> body) async {
+  final request = await client.postUrl(uri).timeout(const Duration(seconds: 5));
+  request.headers.contentType = ContentType.json;
+  if (token != null) request.headers.set('Authorization', 'Bearer $token');
+  request.write(jsonEncode(body));
+  final response = await request.close().timeout(const Duration(seconds: 10));
+  final text = await response.transform(utf8.decoder).join();
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    fail('POST $uri failed: HTTP ${response.statusCode}: $text');
+  }
+  return (jsonDecode(text) as Map).cast<String, dynamic>();
 }
 
 extension on WidgetTester {

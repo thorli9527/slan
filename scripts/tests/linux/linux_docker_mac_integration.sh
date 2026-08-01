@@ -281,7 +281,7 @@ resolve_network() {
   local networks_json
   networks_json="$(curl --silent --show-error --fail \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+    "${WEB_BASE_URL}/api/app/networks?userId=${USER_ID}")"
   NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
   [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
 }
@@ -289,7 +289,7 @@ resolve_network() {
 create_bootstrap_key() {
   local bootstrap_json
   bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
+    -X POST "${WEB_BASE_URL}/api/app/device-bootstrap-keys" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"Docker Linux Mac Check\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
@@ -348,8 +348,7 @@ install_client() {
   local local_package_in_container="/workspace/slan/${PACKAGE_PATH#$ROOT_DIR/}"
   docker_exec "
 set -euo pipefail
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh \
+bash /workspace/slan/client_v2/install/linux/install.sh \
   --server='${BIZ_URL}' \
   --installation-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
@@ -569,7 +568,7 @@ provision_linux_container() {
 
 resolve_security_group() {
   local groups_json
-  groups_json="$(curl --silent --show-error --fail "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
+  groups_json="$(curl --silent --show-error --fail "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/security-groups")"
   SECURITY_GROUP_ID="$(printf '%s' "$groups_json" | jq -r '.items[0].securityGroupId // empty')"
   [[ -n "$SECURITY_GROUP_ID" ]] || fail "network ${NETWORK_ID} has no security group"
 }
@@ -577,7 +576,7 @@ resolve_security_group() {
 create_dns_zone() {
   ZONE_NAME="linux-mac-$(date +%s).slan.test"
   local zone_json
-  zone_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
+  zone_json="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/zones" \
     "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
   [[ -n "$ZONE_ID" ]] || fail "dns zone create returned empty zoneId"
@@ -587,7 +586,7 @@ create_dns_record() {
   local name="$1"
   local target_device_id="$2"
   local record_json record_id
-  record_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  record_json="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
   [[ -n "$record_id" ]] || fail "dns record create returned empty recordId for ${name}"
@@ -601,7 +600,7 @@ add_rule() {
   local peer_value="$4"
   local priority="$5"
   local rule_json rule_id
-  rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  rule_json="$(create_json "${WEB_BASE_URL}/api/app/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
@@ -1081,19 +1080,19 @@ PY
   fi
   if [[ -n "$BOOTSTRAP_ID" && -n "$USER_TOKEN" && -n "$USER_ID" ]]; then
     curl --silent --show-error -X POST \
-      "${WEB_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
+      "${WEB_BASE_URL}/api/app/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
   fi
   if [[ "$KEEP_REMOTE_RESOURCES" != "1" ]]; then
     for rule_id in "${RULE_IDS[@]:-}"; do
-      best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${rule_id}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/security-groups/rules/${rule_id}"
     done
     for record_id in "${RECORD_IDS[@]:-}"; do
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${record_id}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records/${record_id}"
     done
-    [[ -n "$ZONE_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+    [[ -n "$ZONE_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
   else
     echo "kept remote network resources: networkId=$NETWORK_ID zoneId=${ZONE_ID:-} ruleCount=${#RULE_IDS[@]} recordCount=${#RECORD_IDS[@]}"
   fi

@@ -141,9 +141,9 @@ POST /api/app/device/session/bootstrap
 Web Console:
 
 ```text
-POST /api/web/device-bootstrap-keys
-GET  /api/web/device-bootstrap-keys
-POST /api/web/device-bootstrap-keys/{id}/revoke
+POST /api/app/device-bootstrap-keys
+GET  /api/app/device-bootstrap-keys
+POST /api/app/device-bootstrap-keys/{id}/revoke
 ```
 
 Client Device Session:
@@ -249,7 +249,7 @@ curl -fsSL https://staticlss.com/install.sh | sudo bash -s -- \
 macOS 示例逻辑：
 
 ```bash
-PKG_URL="$SERVER/downloads/slan-client/macos/latest/SLAN-Client-V2-macos.pkg"
+PKG_URL="https://artifacts.example.com/slan/SLAN-Client-V2-macos.pkg"
 curl -fsSL "$PKG_URL" -o /tmp/slan-client.pkg
 installer -pkg /tmp/slan-client.pkg -target /
 mkdir -p "/Library/Application Support/SLAN"
@@ -264,7 +264,7 @@ launchctl kickstart -k system/com.slan.client.v2 || true
 Linux 示例逻辑：
 
 ```bash
-TAR_URL="$SERVER/downloads/slan-client/linux/latest/slan-client-linux.tar.gz"
+TAR_URL="https://artifacts.example.com/slan/slan-client-linux.tar.gz"
 curl -fsSL "$TAR_URL" -o /tmp/slan-client-linux.tar.gz
 mkdir -p /opt/slan-client
 tar -xzf /tmp/slan-client-linux.tar.gz -C /opt/slan-client

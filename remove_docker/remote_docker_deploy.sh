@@ -9,7 +9,7 @@ ENV_FILE="${3:-${ENV_FILE:-.env.local}}"
 ENV_SOURCE="${ENV_SOURCE:-$ROOT_DIR/$ENV_FILE}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
 REMOTE_USER="${REMOTE_USER:-root}"
-APP_SERVICES="${APP_SERVICES:-server-biz server-biz-web-console server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b server-ui-web opt-ui caddy}"
+APP_SERVICES="${APP_SERVICES:-server-biz server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b opt-ui caddy}"
 INFRA_SERVICES="${INFRA_SERVICES:-postgres redis bifromq}"
 PRESERVE_ENV_KEYS="${PRESERVE_ENV_KEYS:-POSTGRES_PASSWORD SLAN_RELAY_TICKET_SECRET SLAN_INTERNAL_WIRE_TOKEN SLAN_WIRE_TICKET_SECRET SLAN_WIRE_TICKET_SECRETS SLAN_MQTT_PASSWORD_SECRET}"
 RUN_REMOTE_SMOKE="${RUN_REMOTE_SMOKE:-1}"
@@ -38,7 +38,7 @@ Optional environment variables:
   ENV_FILE=.env.prod
   ENV_SOURCE=/abs/path/to/.env.prod
   COMPOSE_FILE=docker-compose.local.yml
-  APP_SERVICES="server-biz server-biz-web-console ..."
+  APP_SERVICES="server-biz server-biz-ops ..."
   INFRA_SERVICES="postgres redis bifromq"
   PRESERVE_ENV_KEYS="POSTGRES_PASSWORD ..."
   RUN_REMOTE_SMOKE=1
@@ -145,8 +145,8 @@ if [ "$RUN_LOCAL_PRECHECKS" = "1" ]; then
   echo "==> Local prechecks: service-biz tests"
   (cd "$ROOT_DIR/server/service-biz" && go test ./...)
 
-  echo "==> Local prechecks: web-ui build"
-  (cd "$ROOT_DIR/server/web-ui" && npm run build)
+  echo "==> Local prechecks: opt-ui build"
+  (cd "$ROOT_DIR/server/opt-ui" && npm run build)
 
   echo "==> Local prechecks: client-core-service compile check"
   (cd "$ROOT_DIR/client_v2/rust" && cargo test -p client-core-service --no-run)
@@ -396,19 +396,16 @@ remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPO
 echo "==> Health checks"
 remote_ssh "cd '$REMOTE_DIR' && \
    docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-biz /bin/sh -lc 'wget -qO- http://127.0.0.1:8080/healthz' && echo && \
-   docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-biz-web-console /bin/sh -lc 'wget -qO- http://127.0.0.1:8080/healthz' && echo && \
    docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-biz-ops /bin/sh -lc 'wget -qO- http://127.0.0.1:8080/healthz' && echo && \
-   docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-ui-web /bin/sh -lc 'wget -qO- http://127.0.0.1/ | grep -q \"<app-root\"' && echo web-ui-ok && \
    docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T opt-ui /bin/sh -lc 'wget -qO- http://127.0.0.1/ | grep -q \"<ops-root\"' && echo ops-ui-ok"
 
 if [ "$RUN_REMOTE_SMOKE" = "1" ]; then
   SLAN_BIZ_PUBLIC_PORT="$(env_value SLAN_BIZ_PUBLIC_PORT)"
-  SLAN_WEB_PORT="$(env_value SLAN_WEB_PORT)"
   SLAN_BIZ_OPS_PUBLIC_PORT="$(env_value SLAN_BIZ_OPS_PUBLIC_PORT)"
   SLAN_INTERNAL_WIRE_TOKEN_VALUE="$(env_value SLAN_INTERNAL_WIRE_TOKEN)"
 
   APP_SMOKE_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}"
-  WEB_SMOKE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}"
+  WEB_SMOKE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}"
   OPS_SMOKE_URL="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}}"
 
   if [ -z "${SLAN_INTERNAL_WIRE_TOKEN_VALUE}" ]; then
@@ -433,7 +430,7 @@ fi
 if [ "$RUN_REMOTE_UI_OPS_SMOKE" = "1" ]; then
   echo "==> Remote UI/OPS smoke"
   SLAN_REMOTE_HOST="${REMOTE_HOST}" \
-  SLAN_REMOTE_WEB_BASE="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}" \
+  SLAN_REMOTE_WEB_BASE="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   SLAN_REMOTE_OPS_BASE="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_MAIN_PORT:-24201}}" \
   SLAN_REMOTE_BIZ_BASE="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   bash "$ROOT_DIR/scripts/remote_ui_ops_smoke.sh"
@@ -442,7 +439,7 @@ fi
 if [ "$RUN_REMOTE_APP_DNS_ACL_SMOKE" = "1" ]; then
   echo "==> Remote app DNS/ACL/message smoke"
   SLAN_BIZ_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
-  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}" \
+  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   SLAN_EXPECT_MQTT_HOST="${SLAN_EXPECT_MQTT_HOST:-${REMOTE_HOST}}" \
   bash "$ROOT_DIR/scripts/app_dns_acl_message_smoke.sh"
 fi
@@ -450,7 +447,7 @@ fi
 if [ "$RUN_POST_PUBLISH_CLIENT_VALIDATION" = "1" ]; then
   echo "==> Post-publish Linux/iOS client validation"
   SLAN_BIZ_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
-  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}" \
+  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   SLAN_OPS_BASE_URL="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}}" \
   SLAN_EXPECT_MQTT_HOST="${SLAN_EXPECT_MQTT_HOST:-${REMOTE_HOST}}" \
   bash "$ROOT_DIR/scripts/post_publish_client_validation.sh"

@@ -79,15 +79,15 @@ cleanup() {
   if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
     local auth
     auth="$(curl --silent --show-error --connect-timeout 5 --max-time 15 \
-      -X POST "${WEB_BASE_URL}/api/web/auth/login" \
+      -X POST "${WEB_BASE_URL}/api/app/auth/login" \
       -H 'Content-Type: application/json' \
       -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" 2>/dev/null || true)"
     USER_TOKEN="$(printf '%s' "$auth" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
     curl --silent --show-error --connect-timeout 5 --max-time 20 \
-      -X DELETE "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
+      -X DELETE "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
       -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
     curl --silent --show-error --connect-timeout 5 --max-time 20 \
-      -X DELETE "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
+      -X DELETE "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
       -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
   fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
@@ -189,7 +189,7 @@ run_ios_login_capture() {
 provision_network_device_group() {
   local auth networks response device_id
   auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/auth/login" \
+    -X POST "${WEB_BASE_URL}/api/app/auth/login" \
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
   USER_ID="$(printf '%s' "$auth" | sed -n 's/.*"userId":"\([^"]*\)".*/\1/p')"
@@ -197,11 +197,11 @@ provision_network_device_group() {
   [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || { echo "failed to authenticate iOS test admin" >&2; exit 1; }
   networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+    "${WEB_BASE_URL}/api/app/networks?userId=${USER_ID}")"
   NETWORK_ID="$(printf '%s' "$networks" | sed -n 's/.*"networkId":"\([^"]*\)".*/\1/p' | head -n 1)"
   [[ -n "$NETWORK_ID" ]] || { echo "failed to resolve iOS test network" >&2; exit 1; }
   response="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+    -X POST "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"name\":\"ios-flutter-$(date +%s%N)\",\"description\":\"Dual iOS Flutter devices\"}")"
@@ -209,13 +209,13 @@ provision_network_device_group() {
   [[ -n "$DEVICE_GROUP_ID" ]] || { echo "failed to create iOS test device group" >&2; exit 1; }
   for device_id in "$DEVICE_ID_A" "$DEVICE_ID_B"; do
     curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -X PUT "${WEB_BASE_URL}/api/app/users/${USER_ID}/devices/${device_id}/groups" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
   done
   curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+    -X POST "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null

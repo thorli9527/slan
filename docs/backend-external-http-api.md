@@ -50,27 +50,21 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 
 新增或修改外部业务接口时，必须先更新 OpenAPI 和 Go DTO，再更新 handler 实现。handler 中不应继续新增匿名 request struct；应使用 `*Request`/`*Response` 命名类型。
 
-## System And Downloads
+## System
 
 | Method | Path | Auth | Request | Response | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/healthz` | None | - | `{status}` | API 健康检查 |
-| GET | `/api/client-downloads` | None | - | `{items: ClientDownload[]}` | 客户端下载列表 |
-| GET | `/downloads/clients/{fileName}` | None | - | file/script | 下载客户端安装包或 `install.sh` |
 
 ## Auth And User Session
 
 | Method | Path | Auth | Request | Response | 用途 |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/api/auth/register` | None | `{email,password,name}` | `{auth, defaultNetwork}` | 注册用户并创建默认网络 |
 | POST | `/api/auth/login` | None | `{email,password}` | `{auth}` | 用户登录 |
 | POST | `/api/auth/renew` | User Bearer | - | `{auth}` | 续期用户 session |
 | POST | `/api/auth/logout` | User Bearer optional body | `{deviceToken?}` | `{status}` | 注销用户和可选设备 session |
 | PATCH | `/api/users/{userId}/password` | User context | `{oldPassword,newPassword}` | `{status}` | 修改用户密码 |
 | GET | `/api/users` | User/Web | - | `{items: User[]}` | 用户列表 |
-| GET | `/api/users/{userId}/entitlement` | User/Web | - | `DeviceQuota` | 用户套餐/设备额度 |
-| GET | `/api/user-aliases?ownerUserId=...` | User/Web | - | `{items: UserAlias[]}` | 用户别名列表 |
-| PATCH | `/api/user-aliases` | User/Web | `{ownerUserId,email,alias}` | `UserAlias` | 设置用户别名 |
 
 ## Device Login And Bootstrap
 
@@ -80,9 +74,9 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | POST | `/api/auth/console-login` | None | `{loginKey}` | `{auth}` | Web 使用 login key 登录 |
 | POST | `/api/auth/device-login-devices` | None | `{deviceId,name,platform,osName,osVersion,alias,publicKey,deviceVersion?}` | `{deviceId,loginUrl,mqtt}` | 设备发起扫码/控制台登录 |
 | POST | `/api/auth/device-login-devices/{deviceId}/complete` | User token in body | `{accessToken|token,action}` | `{status,deviceId,deliveryId}` | 用户确认设备登录并通过 MQTT 通知设备 |
-| POST | `/api/web/device-bootstrap-keys` | User Bearer or `userId` | `{userId?,networkId,deviceAlias?,ttlSeconds?}` | `DeviceBootstrapKey` | 创建无人值守设备引导 key |
-| GET | `/api/web/device-bootstrap-keys?userId=...` | User Bearer or query | - | `{items}` | 查询引导 key |
-| POST | `/api/web/device-bootstrap-keys/{keyId}/revoke` | User Bearer or body | `{userId?}` | `DeviceBootstrapKey` | 撤销引导 key |
+| POST | `/api/app/device-bootstrap-keys` | User Bearer or `userId` | `{userId?,networkId,deviceAlias?,ttlSeconds?}` | `DeviceBootstrapKey` | 创建无人值守设备引导 key |
+| GET | `/api/app/device-bootstrap-keys?userId=...` | User Bearer or query | - | `{items}` | 查询引导 key |
+| POST | `/api/app/device-bootstrap-keys/{keyId}/revoke` | User Bearer or body | `{userId?}` | `DeviceBootstrapKey` | 撤销引导 key |
 
 ## Device Session And Devices
 
@@ -93,7 +87,7 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | POST | `/api/app/device/session/renew` | Device Bearer | `{networkEnabled,rxBytesTotal,txBytesTotal}` | `{device,deviceSession,mqtt,networkConfigs}` | 设备 session 续期和运行态上报 |
 | GET | `/api/app/devices?userId=...` | User/Web | - | `{items: Device[]}` | 查询用户设备 |
 | GET | `/api/app/devices/visible?userId=...` | User/Web | - | `{items: Device[]}` | 查询用户可见设备 |
-| POST | `/api/app/devices/register` | User/Web | `{userId,deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,defaultNetworkDevice,mqtt}` | App 设备注册兼容入口 |
+| POST | `/api/app/devices/register` | User/Web | `{userId,deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,mqtt}` | App 设备注册兼容入口；不自动加入网络 |
 | POST | `/api/app/devices/{deviceId}/renew` | Device/User legacy | `{userId,networkEnabled,rxBytesTotal,txBytesTotal}` | `{device,mqtt,networkConfigs,leaseExpiresAt}` | App 设备续期兼容入口 |
 | GET | `/api/app/devices/{deviceId}/network-configs` | Device/User | - | `{deviceId,items}` | 设备网络配置列表 |
 | GET | `/api/app/devices/{deviceId}/mqtt-credential` | Device/User | - | `{mqtt}` | 获取 MQTT 凭据 |
@@ -183,9 +177,10 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | POST | `/api/ops/operators` | `OperatorUser` | `OperatorUser` | 创建运营账号 |
 | PATCH | `/api/ops/operators/{operatorId}` | `OperatorUser` | `OperatorUser` | 更新运营账号 |
 | POST | `/api/ops/operators/{operatorId}/password` | `{newPassword}` | `204` | 重置运营密码 |
-| GET | `/api/ops/customers` | - | `{items}` | 客户列表 |
-| PATCH | `/api/ops/customers/{customerId}` | `CustomerProfile` | `CustomerProfile` | 更新客户状态/资料 |
-| POST | `/api/ops/customers/{customerId}/assign-plan` | `{planCode,expiresAt,amount,period}` | `{customer,renewal}` | 分配套餐 |
+| GET | `/api/ops/users` | - | `{items}` | 全局用户列表 |
+| POST | `/api/ops/users` | `UserProfile` | `UserProfile` | 创建用户 |
+| PATCH | `/api/ops/users/{userId}` | `UserProfile` | `UserProfile` | 更新用户状态/资料 |
+| PATCH | `/api/ops/users/{userId}/password` | `{password}` | `UserProfile` | 设置用户密码 |
 | GET | `/api/ops/devices` | - | `{items}` | 设备运营视图 |
 | PATCH | `/api/ops/devices/{deviceId}` | `{alias,status,enabled}` | `OpsDeviceView` | 更新设备状态 |
 | DELETE | `/api/ops/devices/{deviceId}` | - | `204` | 删除设备 |
@@ -203,24 +198,7 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | PATCH | `/api/ops/punch-nodes/{nodeId}` | same as create | `OpsPunchNode` | 更新 punch 节点 |
 | DELETE | `/api/ops/punch-nodes/{nodeId}` | - | `204 No Content` | 删除 punch 节点 |
 
-## Ops Billing And Downloads
-
-| Method | Path | Request | Response | 用途 |
-| --- | --- | --- | --- | --- |
-| GET | `/api/ops/plans` | - | `{items}` | 套餐列表 |
-| POST | `/api/ops/plans` | `OpsPlan` | `OpsPlan` | 创建/更新套餐 |
-| PATCH | `/api/ops/plans/{planCode}` | `OpsPlan` | `OpsPlan` | 更新套餐 |
-| GET | `/api/ops/products` | - | `{items}` | 商品列表 |
-| POST | `/api/ops/products` | `Product` | `Product` | 创建商品 |
-| PATCH | `/api/ops/products/{productId}` | `Product` | `Product` | 更新商品 |
-| GET | `/api/ops/orders` | - | `{items}` | 订单列表 |
-| POST | `/api/ops/orders` | `Order` | `Order` | 创建订单 |
-| PATCH | `/api/ops/orders/{orderId}` | `Order` | `Order` | 更新订单 |
-| GET | `/api/ops/renewals` | - | `{items}` | 续费记录列表 |
-| PATCH | `/api/ops/renewals/{renewalId}` | `Renewal` | `Renewal` | 更新续费记录 |
-| GET | `/api/ops/client-downloads` | - | `{items}` | 客户端下载包运营列表 |
-| POST | `/api/ops/client-downloads` | multipart `{file,platform,version,channel,arch,releaseNotes,status}` | `ClientDownload` | 上传客户端包 |
-| DELETE | `/api/ops/client-downloads/{downloadId}` | - | `204` | 删除客户端包 |
+用户套餐、商品、订单、续费管理和客户端发布模块已删除，不再暴露对应路由。服务启动迁移会幂等删除相关历史表；业务服务不再上传、存储或下载客户端安装包，安装包由外部制品渠道交付。
 
 ## Direct Service HTTP Surfaces
 

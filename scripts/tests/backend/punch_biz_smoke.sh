@@ -38,7 +38,7 @@ cleanup_device() {
     punch-smoke-*${RUN_ID}*)
       [[ -n "${USER_ID}" ]] || return 0
       best_effort_curl -X DELETE \
-        "${WEB_BASE_URL}/api/web/devices/${device_id}?actorUserId=${USER_ID}" \
+        "${WEB_BASE_URL}/api/app/devices/${device_id}?actorUserId=${USER_ID}" \
         -H "Authorization: Bearer ${USER_TOKEN}"
       ;;
   esac
@@ -47,7 +47,7 @@ cleanup_device() {
 cleanup() {
   if [[ -n "${MEMBER_GROUP_ID}" && -n "${NETWORK_ID}" ]]; then
     best_effort_curl -X DELETE \
-      "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
+      "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
       -H "Authorization: Bearer ${USER_TOKEN}"
   fi
   if [[ "${DEVICE_A_CREATED}" == "1" ]]; then
@@ -58,7 +58,7 @@ cleanup() {
   fi
   if [[ -n "${MEMBER_GROUP_ID}" && -n "${USER_ID}" ]]; then
     best_effort_curl -X DELETE \
-      "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
+      "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
       -H "Authorization: Bearer ${USER_TOKEN}"
   fi
   rm -f "${DENY_FILE}"
@@ -116,7 +116,7 @@ curl_json -X POST "${BASE_URL}/api/app/devices/register" \
   -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_B}\",\"name\":\"Punch Android\",\"platform\":\"android\",\"osName\":\"Android\",\"osVersion\":\"15\",\"alias\":\"Punch Android\",\"publicKey\":\"punch-smoke-pub-b-${RUN_ID}\"}" >/dev/null
 DEVICE_B_CREATED=1
 
-MEMBER_GROUP="$(curl_json -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+MEMBER_GROUP="$(curl_json -X POST "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -d "{\"actorUserId\":\"${USER_ID}\",\"name\":\"Punch Network Members ${RUN_ID}\",\"description\":\"punch smoke network membership\"}")"
@@ -126,12 +126,12 @@ if [[ -z "${MEMBER_GROUP_ID}" ]]; then
   exit 1
 fi
 for member_device_id in "${DEVICE_A}" "${DEVICE_B}"; do
-  curl_json -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${member_device_id}/groups" \
+  curl_json -X PUT "${WEB_BASE_URL}/api/app/users/${USER_ID}/devices/${member_device_id}/groups" \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\"]}" >/dev/null
 done
-curl_json -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+curl_json -X POST "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${MEMBER_GROUP_ID}\"}" >/dev/null

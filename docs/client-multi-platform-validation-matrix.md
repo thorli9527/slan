@@ -12,7 +12,7 @@ It is intentionally execution-oriented:
 ## Environment
 
 - Control API: `http://47.245.40.231:28080`
-- Web UI: `http://47.245.40.231:24200`
+- Operations UI: `http://47.245.40.231:24201`
 - MQTT host observed in tests: `47.245.40.231`
 - Local macOS privileged service: verified healthy at `127.0.0.1:46392`
 - Android test devices:

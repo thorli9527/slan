@@ -25,30 +25,6 @@ func defaultOperator(now int64) model.Operator {
 	}
 }
 
-func defaultPlans(now int64) []model.Plan {
-	return []model.Plan{
-		{PlanCode: "free", Name: "免费版", DeviceLimit: 10, Status: "active", UpdatedAt: now},
-		{PlanCode: "pro", Name: "专业版", DeviceLimit: 130, Status: "active", UpdatedAt: now},
-		{PlanCode: "enterprise", Name: "企业版", DeviceLimit: 1000, Status: "active", UpdatedAt: now},
-	}
-}
-
-func defaultProducts(now int64) []model.Product {
-	return []model.Product{
-		{ProductID: "product000000000000000000000000000001", Name: "专业版月付", PlanCode: "pro", Price: 39, Status: "active", CreatedAt: now, UpdatedAt: now},
-		{ProductID: "product000000000000000000000000000002", Name: "专业版年付", PlanCode: "pro", Price: 299, Status: "active", CreatedAt: now, UpdatedAt: now},
-		{ProductID: "product000000000000000000000000000003", Name: "企业版年付", PlanCode: "enterprise", Price: 2999, Status: "active", CreatedAt: now, UpdatedAt: now},
-	}
-}
-
-func defaultDownloads(now int64) []model.ClientDownload {
-	return []model.ClientDownload{
-		{DownloadID: "download0000000000000000000000000001", Name: "slan-client-linux.tar.gz", Platform: "linux", Version: "0.1.0", URL: "/downloads/clients/slan-client-linux.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
-		{DownloadID: "download0000000000000000000000000002", Name: "slan-client-macos.pkg", Platform: "macos", Version: "0.1.0", URL: "/downloads/clients/slan-client-macos.pkg", Status: "active", CreatedAt: now, UpdatedAt: now},
-		{DownloadID: "download0000000000000000000000000003", Name: "slan-client-windows.zip", Platform: "windows", Version: "0.1.0", URL: "/downloads/clients/slan-client-windows.zip", Status: "active", CreatedAt: now, UpdatedAt: now},
-	}
-}
-
 func defaultRelayNode(now int64) model.RelayNode {
 	return model.RelayNode{
 		NodeID:    "relay000000000000000000000000000001",
@@ -86,8 +62,6 @@ func defaultSeedCounters() []counterSeed {
 	counters := []counterSeed{
 		{Name: "operator", Value: 1},
 		{Name: "relay_node", Value: 1},
-		{Name: "client_download", Value: 3},
-		{Name: "product", Value: 3},
 	}
 	if defaultPunchEnabled() {
 		counters = append(counters, counterSeed{Name: "punch_node", Value: 1})

@@ -37,13 +37,10 @@ func (s *GormStore) migrate() error {
 		&gormAuditEventRecord{},
 		&gormRelayNodeRecord{},
 		&gormPunchNodeRecord{},
-		&gormCustomerPlanRecord{},
-		&gormClientDownloadRecord{},
-		&gormPlanRecord{},
-		&gormProductRecord{},
-		&gormOrderRecord{},
-		&gormRenewalRecord{},
 	); err != nil {
+		return err
+	}
+	if err := s.dropRetiredFeatureStorage(); err != nil {
 		return err
 	}
 	if s.db.Migrator().HasColumn(&gormDNSZoneRecord{}, "expose_global") {
@@ -85,6 +82,24 @@ func (s *GormStore) migrate() error {
 		return err
 	}
 	return s.ensureIndexes()
+}
+
+func (s *GormStore) dropRetiredFeatureStorage() error {
+	for _, table := range []string{
+		"gorm_client_download_records",
+		"gorm_renewal_records",
+		"gorm_order_records",
+		"gorm_product_records",
+		"gorm_customer_plan_records",
+		"gorm_plan_records",
+	} {
+		if s.db.Migrator().HasTable(table) {
+			if err := s.db.Migrator().DropTable(table); err != nil {
+				return err
+			}
+		}
+	}
+	return s.db.Where("name IN ?", []string{"product", "order", "renewal", "client_download"}).Delete(&gormCounter{}).Error
 }
 
 func (s *GormStore) ensureUserScopedDeviceGroupAssignments() error {
@@ -174,7 +189,7 @@ func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
 	// corresponding network snapshot and client control event. Deleting rows here
 	// on every service start silently disconnects legacy or temporarily unmapped
 	// devices and leaves enabled clients with stale routes.
-	return s.db.Exec(`
+	if err := s.db.Exec(`
 		INSERT INTO gorm_network_device_group_reference_records (network_id, group_id, created_at, updated_at)
 		SELECT DISTINCT membership.network_id, group_id.value, EXTRACT(EPOCH FROM NOW())::BIGINT, EXTRACT(EPOCH FROM NOW())::BIGINT
 		FROM gorm_network_device_records membership
@@ -185,6 +200,27 @@ func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
 		CROSS JOIN LATERAL json_array_elements_text(assignment.group_ids::json) AS group_id(value)
 		JOIN gorm_device_group_records device_group ON device_group.group_id = group_id.value AND device_group.user_id = network.owner_id
 		ON CONFLICT (network_id, group_id) DO NOTHING
+	`).Error; err != nil {
+		return err
+	}
+	return s.db.Exec(`
+		UPDATE gorm_network_device_records membership
+		SET membership_source = CASE
+			WHEN EXISTS (
+				SELECT 1
+				FROM gorm_network_records network
+				JOIN gorm_device_group_assignment_records assignment
+				  ON assignment.user_id = network.owner_id
+				 AND assignment.device_id = membership.device_id
+				CROSS JOIN LATERAL json_array_elements_text(assignment.group_ids::json) AS group_id(value)
+				JOIN gorm_network_device_group_reference_records reference
+				  ON reference.network_id = membership.network_id
+				 AND reference.group_id = group_id.value
+				WHERE network.network_id = membership.network_id
+			) THEN 'device_group'
+			ELSE 'direct'
+		END
+		WHERE COALESCE(membership.membership_source, '') = ''
 	`).Error
 }
 

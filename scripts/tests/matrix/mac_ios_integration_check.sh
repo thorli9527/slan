@@ -18,6 +18,9 @@ fi
 SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$DEFAULT_MAC_SERVICE_BIN}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
+OPS_EMAIL="${SLAN_OPS_EMAIL:-admin1}"
+OPS_PASSWORD="${SLAN_OPS_PASSWORD:-admin1}"
 SERVICE_HOST="${SLAN_MAC_IOS_SERVICE_HOST:-127.0.0.1:46395}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 RUN_IOS_APP_DNS_ACL_SMOKE="${SLAN_RUN_IOS_APP_DNS_ACL_SMOKE:-1}"
@@ -86,29 +89,44 @@ web_api_auth() {
     -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")"
   WEB_ACCESS_TOKEN="$(printf '%s' "$auth" | jq -er '.auth.session.token')"
   TEST_USER_ID="$(printf '%s' "$auth" | jq -er '.auth.user.userId')"
-  TEST_NETWORK_ID="$(printf '%s' "$auth" | jq -er '.defaultNetwork.networkId')"
+}
+
+ops_api_auth() {
+  local auth
+  auth="$(curl --silent --show-error --fail \
+    -X POST "$OPS_BASE_URL/api/ops/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$OPS_EMAIL\",\"password\":\"$OPS_PASSWORD\"}")"
+  OPS_ACCESS_TOKEN="$(printf '%s' "$auth" | jq -er '.token')"
 }
 
 provision_network_device_group() {
-  local group
+  local group network
   web_api_auth
-  group="$(curl --silent --show-error --fail \
-    -X POST "$WEB_BASE_URL/api/web/users/$TEST_USER_ID/device-groups" \
-    -H "Authorization: Bearer $WEB_ACCESS_TOKEN" \
+  ops_api_auth
+  network="$(curl --silent --show-error --fail \
+    -X POST "$OPS_BASE_URL/api/ops/networks" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "{\"name\":\"mac-ios-$(date +%s%N)\",\"description\":\"Mac iOS integration devices\"}")"
+    -d "{\"ownerId\":\"$TEST_USER_ID\",\"name\":\"mac-ios-$(date +%s%N)\",\"cidr\":\"10.0.0.0/8\",\"intraGroupPolicy\":\"allow\"}")"
+  TEST_NETWORK_ID="$(printf '%s' "$network" | jq -er '.network.networkId')"
+  group="$(curl --silent --show-error --fail \
+    -X POST "$OPS_BASE_URL/api/ops/device-groups" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d "{\"ownerId\":\"$TEST_USER_ID\",\"name\":\"mac-ios-$(date +%s%N)\",\"description\":\"Mac iOS integration devices\"}")"
   TEST_DEVICE_GROUP_ID="$(printf '%s' "$group" | jq -er '.groupId')"
 
   curl --silent --show-error --fail \
-    -X PUT "$WEB_BASE_URL/api/web/users/$TEST_USER_ID/devices/$MAC_DEVICE_ID/groups" \
-    -H "Authorization: Bearer $WEB_ACCESS_TOKEN" \
+    -X PUT "$OPS_BASE_URL/api/ops/devices/$MAC_DEVICE_ID/groups" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "{\"groupIds\":[\"$TEST_DEVICE_GROUP_ID\"]}" >/dev/null
+    -d "{\"ownerId\":\"$TEST_USER_ID\",\"groupIds\":[\"$TEST_DEVICE_GROUP_ID\"]}" >/dev/null
   curl --silent --show-error --fail \
-    -X POST "$WEB_BASE_URL/api/web/networks/$TEST_NETWORK_ID/device-groups" \
-    -H "Authorization: Bearer $WEB_ACCESS_TOKEN" \
+    -X POST "$OPS_BASE_URL/api/ops/networks/$TEST_NETWORK_ID/device-groups" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "{\"groupId\":\"$TEST_DEVICE_GROUP_ID\"}" >/dev/null
+    -d "{\"ownerId\":\"$TEST_USER_ID\",\"groupId\":\"$TEST_DEVICE_GROUP_ID\"}" >/dev/null
   echo "+ provisioned Mac network membership: network=$TEST_NETWORK_ID group=$TEST_DEVICE_GROUP_ID"
 
   echo "+ restart Mac service with authorized network membership"
@@ -123,22 +141,28 @@ provision_network_device_group() {
   sleep "${SLAN_MAC_MQTT_SETTLE_SECONDS:-35}"
 
   curl --silent --show-error --fail \
-    -X PUT "$WEB_BASE_URL/api/web/users/$TEST_USER_ID/devices/$IOS_DEVICE_ID/groups" \
-    -H "Authorization: Bearer $WEB_ACCESS_TOKEN" \
+    -X PUT "$OPS_BASE_URL/api/ops/devices/$IOS_DEVICE_ID/groups" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "{\"groupIds\":[\"$TEST_DEVICE_GROUP_ID\"]}" >/dev/null
+    -d "{\"ownerId\":\"$TEST_USER_ID\",\"groupIds\":[\"$TEST_DEVICE_GROUP_ID\"]}" >/dev/null
   echo "+ provisioned iOS network membership: network=$TEST_NETWORK_ID group=$TEST_DEVICE_GROUP_ID"
 }
 
 cleanup_network_device_group() {
   [[ -n "$TEST_DEVICE_GROUP_ID" && -n "$TEST_NETWORK_ID" && -n "$TEST_USER_ID" ]] || return 0
-  web_api_auth >/dev/null 2>&1 || return 0
+  ops_api_auth >/dev/null 2>&1 || return 0
   curl --silent --show-error \
-    -X DELETE "$WEB_BASE_URL/api/web/networks/$TEST_NETWORK_ID/device-groups/$TEST_DEVICE_GROUP_ID" \
-    -H "Authorization: Bearer $WEB_ACCESS_TOKEN" >/dev/null 2>&1 || true
+    -X DELETE "$OPS_BASE_URL/api/ops/networks/$TEST_NETWORK_ID/device-groups/$TEST_DEVICE_GROUP_ID" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" -H 'Content-Type: application/json' \
+    -d "{\"ownerId\":\"$TEST_USER_ID\"}" >/dev/null 2>&1 || true
   curl --silent --show-error \
-    -X DELETE "$WEB_BASE_URL/api/web/users/$TEST_USER_ID/device-groups/$TEST_DEVICE_GROUP_ID" \
-    -H "Authorization: Bearer $WEB_ACCESS_TOKEN" >/dev/null 2>&1 || true
+    -X DELETE "$OPS_BASE_URL/api/ops/device-groups/$TEST_DEVICE_GROUP_ID" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" -H 'Content-Type: application/json' \
+    -d "{\"ownerId\":\"$TEST_USER_ID\"}" >/dev/null 2>&1 || true
+  curl --silent --show-error \
+    -X DELETE "$OPS_BASE_URL/api/ops/networks/$TEST_NETWORK_ID" \
+    -H "Authorization: Bearer $OPS_ACCESS_TOKEN" -H 'Content-Type: application/json' \
+    -d "{\"ownerId\":\"$TEST_USER_ID\"}" >/dev/null 2>&1 || true
 }
 
 run_mac_local_api_check() {
@@ -286,7 +310,7 @@ echo "+ start iOS flutter message harness"
 start_ios_flutter_message_harness
 capture_ios_device_id_or_die
 
-echo "+ attach Mac and iOS devices to the default network through a device group"
+echo "+ create a managed network and attach Mac and iOS devices through a device group"
 provision_network_device_group
 
 echo "+ wait mac receive iOS message"

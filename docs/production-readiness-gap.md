@@ -176,7 +176,7 @@ P0 未完成前，不建议对真实用户开放生产环境。
 - HTTP/MQTT 生产环境必须启用 TLS 或由可信反向代理终止 TLS。
 - 所有密钥、数据库密码、MQTT 凭证从环境或密钥系统注入。
 - 日志禁止输出 password、token、session、MQTT password；MQTT auth 请求字段名和审计 details 已统一脱敏 password/token/secret/key/authorization。
-- 登录成功、失败、限流、退出、consoleLoginKey 生成/消费、device login complete、设备注册、设备 session bootstrap/bind/renew、网络成员、DNS、security group/rule、public mapping、客户/设备/套餐/产品/订单/续费等 ops 操作、客户端网络控制 ACK、runtime 网络状态变化已有审计日志，details 会脱敏 password/token/secret/key。
+- 登录成功、失败、限流、退出、consoleLoginKey 生成/消费、device login complete、设备注册、设备 session bootstrap/bind/renew、网络成员、DNS、security group/rule、public mapping、用户/设备等 ops 操作、客户端网络控制 ACK、runtime 网络状态变化已有审计日志，details 会脱敏 password/token/secret/key。
 - ops 后台已有审计查询 API，支持按 actor/action/resource/status 过滤。
 - 关键写操作还需要扩展审计日志：审计告警规则和集中日志接入。
 

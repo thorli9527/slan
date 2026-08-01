@@ -21,7 +21,7 @@ const (
 	nodeHealthDown        = "down"
 )
 
-func validateRelayNodeModel(ctx context.Context, catalog repository.OpsRepository, item model.RelayNode) error {
+func validateRelayNodeModel(ctx context.Context, nodes repository.OpsNodeRepository, item model.RelayNode) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return invalidArgumentError("请输入节点名称")
 	}
@@ -50,10 +50,10 @@ func validateRelayNodeModel(ctx context.Context, catalog repository.OpsRepositor
 	if item.MaxSessions > 0 && item.ActiveSessions > item.MaxSessions {
 		return invalidArgumentError("当前会话数不能大于最大会话数")
 	}
-	return ensureRelayEndpointUnique(ctx, catalog, item.NodeID, net.JoinHostPort(host, strconv.Itoa(port)))
+	return ensureRelayEndpointUnique(ctx, nodes, item.NodeID, net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
-func validatePunchNodeModel(ctx context.Context, catalog repository.OpsRepository, item model.PunchNode) error {
+func validatePunchNodeModel(ctx context.Context, nodes repository.OpsNodeRepository, item model.PunchNode) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return invalidArgumentError("请输入打洞节点名称")
 	}
@@ -76,7 +76,7 @@ func validatePunchNodeModel(ctx context.Context, catalog repository.OpsRepositor
 	if item.MaxSessions > 0 && item.ActiveSessions > item.MaxSessions {
 		return invalidArgumentError("当前会话数不能大于最大会话数")
 	}
-	return ensurePunchEndpointUnique(ctx, catalog, item.NodeID, net.JoinHostPort(host, strconv.Itoa(port)))
+	return ensurePunchEndpointUnique(ctx, nodes, item.NodeID, net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
 func validRelayTransport(value string) bool {
@@ -117,8 +117,8 @@ func isIPv4Address(value string) bool {
 	return ip != nil && ip.To4() != nil
 }
 
-func ensureRelayEndpointUnique(ctx context.Context, catalog repository.OpsRepository, currentNodeID, endpoint string) error {
-	items, err := catalog.ListRelayNodes(ctx)
+func ensureRelayEndpointUnique(ctx context.Context, nodes repository.OpsNodeRepository, currentNodeID, endpoint string) error {
+	items, err := nodes.ListRelayNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -133,8 +133,8 @@ func ensureRelayEndpointUnique(ctx context.Context, catalog repository.OpsReposi
 	return nil
 }
 
-func ensurePunchEndpointUnique(ctx context.Context, catalog repository.OpsRepository, currentNodeID, endpoint string) error {
-	items, err := catalog.ListPunchNodes(ctx)
+func ensurePunchEndpointUnique(ctx context.Context, nodes repository.OpsNodeRepository, currentNodeID, endpoint string) error {
+	items, err := nodes.ListPunchNodes(ctx)
 	if err != nil {
 		return err
 	}

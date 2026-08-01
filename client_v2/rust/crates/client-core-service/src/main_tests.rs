@@ -304,6 +304,7 @@ fn stale_network_activation_result_preserves_current_runtime_state() {
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             client_core::AuthPayload {
+                user_authenticated: Some(true),
                 access_token: "new-token".to_string(),
                 refresh_token: None,
                 user_id: "new-user".to_string(),
@@ -345,6 +346,7 @@ fn stale_prepared_login_cannot_replace_current_runtime_session() {
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             client_core::AuthPayload {
+                user_authenticated: Some(true),
                 access_token: "new-token".to_string(),
                 refresh_token: None,
                 user_id: "new-user".to_string(),
@@ -381,6 +383,7 @@ fn stale_invalid_session_result_cannot_logout_new_runtime_session() {
         .call_named("test.login", None, |runtime| {
             runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(
                 client_core::AuthPayload {
+                    user_authenticated: Some(true),
                     access_token: "new-token".to_string(),
                     refresh_token: None,
                     user_id: "new-user".to_string(),
@@ -410,6 +413,7 @@ fn stale_logout_cannot_clear_current_runtime_session() {
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             client_core::AuthPayload {
+                user_authenticated: Some(true),
                 access_token: "new-token".to_string(),
                 refresh_token: None,
                 user_id: "new-user".to_string(),
@@ -435,6 +439,7 @@ fn prepared_runtime_refresh_applies_platform_snapshot_without_platform_read() {
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             client_core::AuthPayload {
+                user_authenticated: Some(true),
                 access_token: "token".to_string(),
                 refresh_token: None,
                 user_id: "user".to_string(),
@@ -464,6 +469,7 @@ fn prepared_runtime_refresh_preserves_enabled_network_on_transient_disabled_snap
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             client_core::AuthPayload {
+                user_authenticated: Some(true),
                 access_token: "token".to_string(),
                 refresh_token: None,
                 user_id: "user".to_string(),

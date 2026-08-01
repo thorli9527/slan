@@ -54,9 +54,7 @@ class SignedOutStatus extends StatelessWidget {
           ),
           SizedBox(height: desktop ? 7 : 10),
           Text(
-            desktop
-                ? '桌面端会通过浏览器完成登录，然后自动回到客户端同步设备状态。'
-                : '登录成功后即可启用虚拟网络，并接收当前设备的网络配置。',
+            '登录成功后即可启用虚拟网络，并接收当前设备的网络配置。',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
               height: 1.35,

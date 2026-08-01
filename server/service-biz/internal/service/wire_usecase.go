@@ -12,7 +12,7 @@ type WireServiceBase struct {
 	Ops      OpsNodeUseCase
 	Devices  repository.DeviceRepository
 	Networks repository.NetworkRepository
-	Catalog  repository.OpsRepository
+	Nodes    repository.OpsNodeRepository
 	Now      func() time.Time
 }
 
@@ -28,7 +28,7 @@ func (s WireNodeService) Authorize(_ context.Context, token string) error {
 }
 
 func (s WireNodeService) ListRelayNodes(ctx context.Context) ([]WireNodeView, error) {
-	items, err := s.Catalog.ListRelayNodes(ctx)
+	items, err := s.Nodes.ListRelayNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func (s WireNodeService) ListRelayNodes(ctx context.Context) ([]WireNodeView, er
 }
 
 func (s WireNodeService) ListDerpNodes(ctx context.Context) ([]WireNodeView, error) {
-	items, err := s.Catalog.ListRelayNodes(ctx)
+	items, err := s.Nodes.ListRelayNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (s WireNodeService) ListDerpNodes(ctx context.Context) ([]WireNodeView, err
 }
 
 func (s WireNodeService) DerpMap(ctx context.Context) (WireDerpMapView, error) {
-	items, err := s.Catalog.ListRelayNodes(ctx)
+	items, err := s.Nodes.ListRelayNodes(ctx)
 	if err != nil {
 		return WireDerpMapView{}, err
 	}
@@ -64,7 +64,7 @@ func (s WireNodeService) UpsertRelayNode(ctx context.Context, input WireUpsertNo
 	if err != nil {
 		return WireNodeView{}, err
 	}
-	node, ok, err := s.Catalog.GetRelayNode(ctx, normalizeWireNodeID(item.NodeID))
+	node, ok, err := s.Nodes.GetRelayNode(ctx, normalizeWireNodeID(item.NodeID))
 	if err != nil {
 		return WireNodeView{}, err
 	}
@@ -87,7 +87,7 @@ func (s WireNodeService) UpsertDerpNode(ctx context.Context, input WireUpsertNod
 	if err != nil {
 		return WireNodeView{}, err
 	}
-	node, ok, err := s.Catalog.GetRelayNode(ctx, normalizeWireNodeID(item.NodeID))
+	node, ok, err := s.Nodes.GetRelayNode(ctx, normalizeWireNodeID(item.NodeID))
 	if err != nil {
 		return WireNodeView{}, err
 	}
@@ -126,7 +126,7 @@ func (s WireNodeService) UpdateRelayNodeStatus(ctx context.Context, input WireNo
 	applyWireNodeHealth(&item, nil, input.Healthy)
 	applyWireTicketKeyStatus(&item, input.TicketKeyRotation)
 	item.UpdatedAt = wirekit.NowUnix()
-	if err := s.Catalog.SaveRelayNode(ctx, item); err != nil {
+	if err := s.Nodes.SaveRelayNode(ctx, item); err != nil {
 		return WireNodeView{}, err
 	}
 	return relayNodeView(item), nil
@@ -143,7 +143,7 @@ func (s WireNodeService) UpdateDerpNodeStatus(ctx context.Context, input WireNod
 	applyWireNodeHealth(&item, nil, input.Healthy)
 	applyWireTicketKeyStatus(&item, input.TicketKeyRotation)
 	item.UpdatedAt = wirekit.NowUnix()
-	if err := s.Catalog.SaveRelayNode(ctx, item); err != nil {
+	if err := s.Nodes.SaveRelayNode(ctx, item); err != nil {
 		return WireNodeView{}, err
 	}
 	return derpNodeView(item), nil

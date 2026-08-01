@@ -6,7 +6,7 @@ This document tracks the duplicated business contracts that currently exist
 across:
 
 - `server/service-biz` (backend source-of-truth in transition)
-- `server/web-ui/src/ui` (Web Console API contracts)
+- `server/opt-ui/src/app` (operations API contracts)
 - `client_v2/app_flutter/lib/bridge` (Flutter local service contracts)
 - `client_v2/rust/crates/client-core-service/src` (Rust control-plane contracts)
 
@@ -29,22 +29,22 @@ Current scope:
 - Verifies required contract and OpenAPI files exist.
 - Runs `go test ./...` for `server/service-biz`.
 - Runs `cargo check -p client-core-service`.
-- Verifies key Web Console and Flutter bridge contract files exist.
+- Verifies key operations UI and Flutter bridge contract files exist.
 
 Full drift checking against generated schema is still a production hardening
 item. Until that exists, full functional verification should also run
-`flutter analyze`, `flutter test`, `cargo test --workspace`, Web Console
+`flutter analyze`, `flutter test`, `cargo test --workspace`, operations UI
 `npm run build`, and the service smoke scripts.
 
 ## Current Sources
 
 ### Backend
 
-- Models: `server/service-biz/internal/biz/models.go`
-- Public API handlers: `server/service-biz/internal/biz/server.go`
-- MQTT API and auth: `server/service-biz/internal/biz/server_mqtt.go`
-- Wire internal API: `server/service-biz/internal/biz/wire_server.go`
-- Relay tickets: `server/service-biz/internal/biz/relay.go`
+- Models: `server/service-biz/internal/model`
+- Public API handlers: `server/service-biz/internal/api/app` and `server/service-biz/internal/api/ops`
+- Business services: `server/service-biz/internal/service`
+- MQTT API and auth: `server/service-biz/internal/api/mqtt`
+- Wire internal API: `server/service-biz/internal/api/wire`
 
 ### Canonical Slice Drafts
 
@@ -53,11 +53,11 @@ item. Until that exists, full functional verification should also run
 - `protocol/contracts/network.yaml`
 - `protocol/contracts/system.yaml`
 
-### Web
+### Operations UI
 
-- API service: `server/web-ui/src/ui/app-api.service.ts`
-- Web auth flow: `server/web-ui/src/ui/app-auth-flow.ts`
-- UI models: `server/web-ui/src/ui/app.models.ts`
+- API paths: `server/opt-ui/src/app/api-paths.ts`
+- Authentication and resource state: `server/opt-ui/src/app/app.component.ts`
+- Resource views: `server/opt-ui/src/app/features`
 
 ### Flutter
 
@@ -84,7 +84,7 @@ Backend:
 - `RefreshTokenRequest`
 - `AuthResponse`
 
-Web:
+Management:
 
 - `AuthResponse`
 - `AuthMode` is UI-local, not backend contract
@@ -108,7 +108,7 @@ Backend:
 
 - `ErrorResponse`
 
-Web:
+Management:
 
 - `ErrorResponse`
 
@@ -135,7 +135,7 @@ Backend:
 - `RegisterNodeRequest`
 - `Node`
 
-Web:
+Management:
 
 - `Device`
 
@@ -177,7 +177,7 @@ Backend:
 - `NetworkDetail`
 - `NetworkAssignment`
 
-Web:
+Management:
 
 - `Network`
 - `NetworkHome`
@@ -236,7 +236,7 @@ Backend:
 - `ControlSessionResponse`
 - `RelayTicket`
 
-Web:
+Management:
 
 - explicit transport types exist for `ControlPlaneConfig`,
   `BootstrapResponse`, `RelayTicket`, and related runtime DTOs, although the
@@ -275,7 +275,7 @@ Backend:
 - `RelayCluster`
 - `RelayNode`
 
-Web:
+Management:
 
 - no explicit relay topology contracts today
 

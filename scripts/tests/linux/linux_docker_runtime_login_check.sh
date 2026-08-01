@@ -92,7 +92,7 @@ cleanup() {
   fi
   if [[ -n "$BOOTSTRAP_ID" && -n "$USER_TOKEN" && -n "$USER_ID" ]]; then
     curl --silent --show-error --fail \
-      -X POST "${WEB_API_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
+      -X POST "${WEB_API_BASE_URL}/api/app/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
@@ -150,13 +150,13 @@ USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.
 log "resolve default network"
 networks_json="$(curl_retry --silent --show-error --fail \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${WEB_API_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+  "${WEB_API_BASE_URL}/api/app/networks?userId=${USER_ID}")"
 NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
 [[ -n "$NETWORK_ID" ]] || fail "failed to resolve test network"
 
 log "create bootstrap key"
 bootstrap_json="$(curl_retry --silent --show-error --fail \
-  -X POST "${WEB_API_BASE_URL}/api/web/device-bootstrap-keys" \
+  -X POST "${WEB_API_BASE_URL}/api/app/device-bootstrap-keys" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${DEVICE_ALIAS}\",\"ttlSeconds\":${TTL_SECONDS}}")"
@@ -212,20 +212,14 @@ if [[ -n "$LOCAL_PACKAGE_PATH" ]]; then
   local_package_in_container="/workspace/slan/${LOCAL_PACKAGE_PATH#$ROOT_DIR/}"
   docker_exec "
 set -euo pipefail
-curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh \
+bash /workspace/slan/client_v2/install/linux/install.sh \
   --server='${CONTAINER_BIZ_URL}' \
   --installation-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${local_package_in_container}'
 "
 else
-  log "download and execute install command inside container"
-  docker_exec "
-set -euo pipefail
-curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh --server='${CONTAINER_BIZ_URL}' --installation-key='${BOOTSTRAP_KEY}' --tray=disabled
-"
+  fail "SLAN_LINUX_CLIENT_PACKAGE is required because service-biz no longer distributes client packages"
 fi
 
 log "start client-core-service in foreground via console bootstrap"

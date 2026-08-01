@@ -14,7 +14,7 @@ func buildNetworkSnapshotPayload(
 	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsRepository,
+	ops repository.OpsNodeRepository,
 	nowFn func() time.Time,
 	networkID string,
 ) (map[string]any, error) {
@@ -93,7 +93,7 @@ func publishNetworkSnapshot(
 	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsRepository,
+	ops repository.OpsNodeRepository,
 	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,

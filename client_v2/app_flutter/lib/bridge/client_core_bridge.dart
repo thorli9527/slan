@@ -42,7 +42,7 @@ abstract interface class ClientCoreBridge {
   /// 当前控制面 API 地址。
   Future<String> serverBaseUrl();
 
-  /// 更新移动端控制面 API 地址。
+  /// 更新并持久化控制面 API 地址。
   Future<void> updateServerBaseUrl(String serverBaseUrl);
 
   /// 检查 Android VPN 权限并准备网络配置。
@@ -81,11 +81,13 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     @visibleForTesting ClientBridgeRuntimePlatform runtimePlatform =
         ClientBridgeRuntimePlatform.host,
     @visibleForTesting Future<void> Function(String url)? openExternalUrl,
+    @visibleForTesting File? desktopSettingsFile,
   })  : _plugin = ClientCorePlugin(),
         _localService = ClientCoreLocalService(host: localServiceHost),
         _useMobileControlPlaneOverride = useMobileControlPlane,
         _runtimePlatform = runtimePlatform,
         _openExternalUrlOverride = openExternalUrl,
+        _desktopSettingsFileOverride = desktopSettingsFile,
         _state = ValueNotifier<ClientViewState>(ClientViewState.initial()),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -106,6 +108,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// 测试时替代系统浏览器启动命令。
   final Future<void> Function(String url)? _openExternalUrlOverride;
+
+  /// 测试时覆盖桌面服务器设置文件。
+  final File? _desktopSettingsFileOverride;
 
   /// 当前 UI 状态。
   final ValueNotifier<ClientViewState> _state;
@@ -186,7 +191,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 最近一次移动端 MQTT 修复时间，避免高频重试。
   DateTime? _lastNativeMobileMqttRepairAt;
 
-  /// 运行期覆盖的控制面地址，主要给移动端服务器设置使用。
+  /// 运行期覆盖的控制面地址。
   String? _runtimeControlBaseUrl;
 
   /// bridge 是否已经关闭，关闭后不再接受后台状态回写。
@@ -227,20 +232,22 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// 返回当前控制面 API 地址。
   ///
-  /// 移动端会优先读取原生持久化设置，桌面端使用默认生产地址或环境变量。
+  /// 移动端读取原生设置，桌面端读取用户配置目录中的设置文件。
   @override
   Future<String> serverBaseUrl() async {
     await _loadServerBaseUrl();
     return _effectiveControlBaseUrl;
   }
 
-  /// 更新移动端控制面 API 地址并写入原生持久化存储。
+  /// 更新控制面 API 地址并写入平台持久化存储。
   @override
   Future<void> updateServerBaseUrl(String serverBaseUrl) async {
     final normalized = _normalizeServerBaseUrl(serverBaseUrl);
     _runtimeControlBaseUrl = normalized;
     if (_usesNativeMobileControlPlane) {
       await _plugin.setMobileServerBaseUrl(normalized);
+    } else {
+      await _persistDesktopServerBaseUrl(normalized);
     }
     ClientUiDiagnostics.unawaitedLog(
       'bridge.serverBaseUrl.updated',
@@ -1148,7 +1155,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// 加载运行期控制面地址。
   ///
-  /// 移动端优先读取原生持久化地址；没有配置时退回 dart-define 或生产默认值。
+  /// 优先读取平台持久化地址；没有配置时退回 dart-define 或生产默认值。
   Future<void> _loadServerBaseUrl() async {
     if (_runtimeControlBaseUrl != null) {
       return;
@@ -1156,10 +1163,63 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     var value = '';
     if (_usesNativeMobileControlPlane) {
       value = (await _plugin.mobileServerBaseUrl()) ?? '';
+    } else {
+      value = await _readDesktopServerBaseUrl();
     }
     _runtimeControlBaseUrl = _normalizeServerBaseUrl(
       value.isNotEmpty ? value : _defaultEmbeddedControlBaseUrl,
     );
+  }
+
+  Future<String> _readDesktopServerBaseUrl() async {
+    final file = _desktopSettingsFile;
+    try {
+      if (!await file.exists()) {
+        return '';
+      }
+      final json = jsonDecode(await file.readAsString());
+      return json is Map ? '${json['controlBaseUrl'] ?? ''}'.trim() : '';
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.serverBaseUrl.readFailed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      return '';
+    }
+  }
+
+  Future<void> _persistDesktopServerBaseUrl(String value) async {
+    final file = _desktopSettingsFile;
+    await file.parent.create(recursive: true);
+    final temporary = File('${file.path}.tmp');
+    await temporary.writeAsString(
+      jsonEncode({'controlBaseUrl': value}),
+      flush: true,
+    );
+    if (await file.exists()) {
+      await file.delete();
+    }
+    await temporary.rename(file.path);
+  }
+
+  File get _desktopSettingsFile =>
+      _desktopSettingsFileOverride ?? File(_defaultDesktopSettingsPath());
+
+  static String _defaultDesktopSettingsPath() {
+    final environment = Platform.environment;
+    if (Platform.isMacOS) {
+      final home = environment['HOME'] ?? '.';
+      return '$home/Library/Application Support/SLAN/client-ui.json';
+    }
+    if (Platform.isWindows) {
+      final appData = environment['APPDATA'] ??
+          '${environment['USERPROFILE'] ?? '.'}\\AppData\\Roaming';
+      return '$appData\\SLAN\\client-ui.json';
+    }
+    final configHome = environment['XDG_CONFIG_HOME'] ??
+        '${environment['HOME'] ?? '.'}/.config';
+    return '$configHome/slan/client-ui.json';
   }
 
   /// 当前实际用于控制面请求的 API 地址。

@@ -1,20 +1,17 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ClientDownloadsPageComponent } from './features/client-downloads/client-downloads-page.component';
-import { CustomersPageComponent } from './features/customers/customers-page.component';
 import { DevicesPageComponent } from './features/devices/devices-page.component';
+import { DeviceGroupsPageComponent } from './features/device-groups/device-groups-page.component';
+import { NetworksPageComponent } from './features/networks/networks-page.component';
 import { OperatorsPageComponent } from './features/operators/operators-page.component';
-import { OrdersPageComponent } from './features/orders/orders-page.component';
-import { OverviewPageComponent } from './features/overview/overview-page.component';
-import { ProductsPageComponent } from './features/products/products-page.component';
 import { PunchNodesPageComponent } from './features/punch-nodes/punch-nodes-page.component';
 import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
-import { RenewalsPageComponent } from './features/renewals/renewals-page.component';
+import { UsersPageComponent } from './features/users/users-page.component';
 import { OPS_API } from './api-paths';
 
 // 运营后台左侧导航的页面标识，必须和模板中的条件渲染保持一致。
-type NavId = 'overview' | 'operators' | 'relayNodes' | 'punchNodes' | 'customers' | 'devices' | 'clientDownloads' | 'products' | 'orders' | 'renewals';
+type NavId = 'overview' | 'operators' | 'relayNodes' | 'punchNodes' | 'users' | 'devices' | 'deviceGroups' | 'networks';
 
 // 后台操作员账号模型，用于登录后权限展示和账号维护。
 type OperatorUser = {
@@ -68,80 +65,20 @@ type PunchNode = {
   updatedAt: string;
 };
 
-// 客户套餐模型，定义设备数、Relay 配额、P2P 能力和高级功能开关。
-type CustomerPlan = {
-  code: string;
-  name: string;
-  ownDeviceLimit: number;
-  invitedDeviceLimit: number;
-  totalDeviceLimit: number;
-  relayMonthlyGb: number;
-  relayBandwidthMbps: number;
-  relayThrottleMbps: number;
-  p2pUnlimited: boolean;
-  customDomain: boolean;
-  acl: boolean;
-  dedicatedRelay: boolean;
-  auditLog: boolean;
-  apiAccess: boolean;
-  monthlyPrice: number;
-  yearlyPrice: number;
-  status?: 'active' | 'offline';
-};
-
-type ApiCustomerPlan = {
-  planCode: string;
-  name: string;
-  deviceLimit: number;
-  invitedDeviceLimit: number;
-  totalDeviceLimit: number;
-  relayMonthlyGb: number;
-  relayBandwidthMbps: number;
-  relayThrottleMbps: number;
-  p2pUnlimited: boolean;
-  customDomain: boolean;
-  acl: boolean;
-  dedicatedRelay: boolean;
-  auditLog: boolean;
-  apiAccess: boolean;
-  monthlyPrice: number;
-  yearlyPrice: number;
-  status?: 'active' | 'offline';
-};
-
-// 可售商品模型，覆盖套餐、流量包和企业合同包。
-type Product = {
-  productId: string;
-  name: string;
-  type: 'plan' | 'traffic_pack' | 'enterprise';
-  planCode?: CustomerPlan['code'];
-  period: 'monthly' | 'yearly' | 'one_time' | 'contract';
-  validDays: number;
-  relayTrafficGb: number;
-  relayBandwidthMbps: number;
-  listPrice: number;
-  salePrice: number;
-  currency: 'CNY';
-  autoRenew: boolean;
-  status: 'active' | 'offline';
-  description: string;
-};
-
-// 客户资源模型，聚合地域、套餐、设备数量和限流状态。
-type Customer = {
-  customerId: string;
+// 用户资源模型，聚合地域、设备数量和状态。
+type OpsUser = {
+  userId: string;
   email: string;
   name: string;
   country: string;
   province: string;
   city: string;
   ipRegion: string;
-  planCode: CustomerPlan['code'];
-  planExpiresAt: string;
   ownDevices: number;
   invitedDevices: number;
   relayUsedGb: number;
   status: 'active' | 'limited' | 'expired' | 'disabled';
+  updatedAt: string;
 };
 
 // 运营视角设备模型，展示全局虚拟地址、在线状态和累计流量。
@@ -169,55 +106,14 @@ type OpsDevice = {
   updatedAt: string;
 };
 
-// 客户端发布包模型，用于维护各平台安装包、渠道和校验信息。
-type ClientDownload = {
-  downloadId: string;
-  platform: 'macos' | 'windows' | 'ios' | 'linux' | 'android';
-  platformName: string;
-  version: string;
-  arch?: string;
-  channel: 'stable' | 'beta' | 'dev';
-  fileName: string;
-  fileSize: number;
-  sha256?: string;
-  downloadUrl: string;
-  releaseNotes?: string;
-  status: 'active' | 'offline';
-  createdAt: string;
-  updatedAt: string;
-};
-
-// 续费记录模型，记录人工或支付渠道完成的有效期延长操作。
-type Renewal = {
-  renewalId: string;
-  customerId?: string;
-  customerEmail: string;
-  planCode: CustomerPlan['code'];
-  period: 'monthly' | 'yearly' | 'custom';
-  amount: number;
-  paidAt: string;
-  validUntil: string;
-  source: 'manual' | 'wechat' | 'alipay' | 'bank';
-  operator: string;
-};
-
-// 订单模型，跟踪购买、支付和权益开通状态。
-type Order = {
-  orderId: string;
-  customerId?: string;
-  customerEmail: string;
-  productId?: string;
-  productName: string;
-  productType: Product['type'];
-  amount: number;
-  currency?: 'CNY';
-  payStatus: 'pending' | 'paid' | 'refunded' | 'closed';
-  provisionStatus: 'pending' | 'provisioned' | 'failed';
-  createdAt: string;
-  paidAt?: string;
-  validUntil?: string;
-  channel: 'manual' | 'wechat' | 'alipay' | 'bank';
-};
+type DeviceGroup = { groupId: string; userId: string; name: string; description: string; createdAt: string; updatedAt: string };
+type DeviceGroupMember = { groupId: string; deviceId: string; addedAt: number };
+type NetworkSummary = { network: { networkId: string; ownerId: string; name: string; cidr: string; intraGroupPolicy: string; status: string; default: boolean }; deviceCount: number; memberCount: number; zoneName: string };
+type NetworkDevice = { networkId: string; deviceId: string; ownerUserId: string; alias: string; enabled: boolean; status: string };
+type SecurityGroup = { securityGroupId: string; networkId: string; name: string; description: string };
+type SecurityRule = { ruleId: string; direction: string; protocol: string; portRange: string; peerType: string; peerValue: string; action: string; priority: number; enabled: boolean };
+type DNSZone = { zoneId: string; networkId: string; name: string; status: string };
+type DNSRecord = { recordId: string; networkId: string; zoneId: string; name: string; type: string; value: string; ttl: number };
 
 @Component({
   selector: 'ops-root',
@@ -225,16 +121,13 @@ type Order = {
   imports: [
     CommonModule,
     FormsModule,
-    OverviewPageComponent,
     OperatorsPageComponent,
     RelayNodesPageComponent,
     PunchNodesPageComponent,
-    CustomersPageComponent,
+    UsersPageComponent,
     DevicesPageComponent,
-    ClientDownloadsPageComponent,
-    ProductsPageComponent,
-    OrdersPageComponent,
-    RenewalsPageComponent,
+    DeviceGroupsPageComponent,
+    NetworksPageComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -246,16 +139,14 @@ export class AppComponent implements OnInit {
 
   // 导航配置同时驱动侧边栏文案和当前页面标题说明。
   readonly navItems: Array<{ id: NavId; label: string; desc: string }> = [
-    { id: 'overview', label: '运营管理', desc: '平台指标与待处理事项' },
+    { id: 'overview', label: '运营管理', desc: '平台核心指标' },
     { id: 'operators', label: '运营用户', desc: '后台账号与角色' },
     { id: 'relayNodes', label: '中继节点', desc: 'Relay/DERP 容量管理' },
     { id: 'punchNodes', label: '打洞节点', desc: 'P2P Punch 节点管理' },
-    { id: 'customers', label: '客户管理', desc: '客户资源与限流状态' },
+    { id: 'users', label: '用户管理', desc: '用户资料与账户状态' },
     { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
-    { id: 'clientDownloads', label: '客户端发布', desc: '安装包上传与下载' },
-    { id: 'products', label: '商品管理', desc: '客户级别、套餐商品与流量包' },
-    { id: 'orders', label: '订单管理', desc: '购买、支付与开通状态' },
-    { id: 'renewals', label: '续费管理', desc: '有效期和手动续费' },
+    { id: 'deviceGroups', label: '设备分组', desc: '全局设备分组与归属' },
+    { id: 'networks', label: '网络管理', desc: '网络、安全组与 DNS' },
   ];
 
   active: NavId = 'overview';
@@ -267,32 +158,31 @@ export class AppComponent implements OnInit {
   loginMessage = '';
   loading = false;
   apiMessage = '';
-  showAssignPlanDialog = false;
   showCurrentPasswordDialog = false;
   showOperatorPasswordDialog = false;
   showOperatorDialog = false;
   showRelayNodeDialog = false;
   showPunchNodeDialog = false;
+  showUserDialog = false;
+  showUserPasswordDialog = false;
   relayNodeMessage = '';
   punchNodeMessage = '';
-  showPlanDialog = false;
-  showProductDialog = false;
-  showOrderDialog = false;
-  showCustomerDialog = false;
   showDeviceDialog = false;
-  showRenewalDialog = false;
-  selectedCustomer: Customer | null = null;
+  showDeviceGroupDialog = false;
+  showNetworkDialog = false;
   selectedOperator: OperatorUser | null = null;
   selectedRelayNode: RelayNode | null = null;
   selectedPunchNode: PunchNode | null = null;
-  selectedPlan: CustomerPlan | null = null;
-  selectedProduct: Product | null = null;
-  selectedOrder: Order | null = null;
+  selectedUser: OpsUser | null = null;
   selectedDevice: OpsDevice | null = null;
-  selectedRenewal: Renewal | null = null;
-  assignPlanCode: CustomerPlan['code'] = 'pro';
-  assignExpiresAt = '2027-05-09';
-  renewalAmount = 299;
+  selectedDeviceGroup: DeviceGroup | null = null;
+  managedDeviceGroup: DeviceGroup | null = null;
+  selectedNetwork: NetworkSummary | null = null;
+  selectedSecurityGroup: SecurityGroup | null = null;
+  editingSecurityGroup: SecurityGroup | null = null;
+  editingSecurityRule: SecurityRule | null = null;
+  editingDNSZone: DNSZone | null = null;
+  editingDNSRecord: DNSRecord | null = null;
   oldPassword = '';
   newPassword = '';
   confirmPassword = '';
@@ -302,22 +192,20 @@ export class AppComponent implements OnInit {
   operatorForm: OperatorForm = {};
   relayNodeForm: RelayNodeForm = {};
   punchNodeForm: Partial<PunchNode> = {};
-  planForm: Partial<CustomerPlan> = {};
-  productForm: Partial<Product> = {};
-  orderForm: Partial<Order> = {};
-  customerForm: Partial<Customer> = {};
+  userForm: Partial<OpsUser> = {};
+  userPassword = '';
+  userConfirmPassword = '';
+  userPasswordMessage = '';
+  createUserPassword = '';
+  createUserConfirmPassword = '';
   deviceForm: Partial<OpsDevice> = {};
-  renewalForm: Partial<Renewal> = {};
-  downloadForm: Partial<ClientDownload> = {
-    platform: 'macos',
-    version: '2.0.0',
-    arch: 'universal',
-    channel: 'stable',
-    status: 'active',
-    releaseNotes: '',
-  };
-  selectedDownloadFile: File | null = null;
-  selectedDownloadFileName = '';
+  deviceGroupForm: Partial<DeviceGroup> = {};
+  networkForm: any = {};
+  securityGroupName = '';
+  securityGroupDescription = '';
+  ruleForm: any = { direction: 'ingress', protocol: 'all', portRange: 'all', action: 'allow', peerType: 'device_group', peerValue: '' };
+  dnsZoneName = '';
+  dnsRecordForm: any = { zoneId: '', name: '', type: 'A', value: '', ttl: 300 };
   deviceKeyword = '';
 
   // 传给 feature 子页面的视图模型，保持子页面只负责模板渲染。
@@ -330,7 +218,7 @@ export class AppComponent implements OnInit {
   }
 
   get apiMessageIsSuccess(): boolean {
-    return /(已保存|已启用|已停用|已删除|已下架|已创建|已更新|已指派|已续费)/.test(this.apiMessage);
+    return /(已保存|已启用|已停用|已删除|已创建|已更新|已指派|已加入|已离开)/.test(this.apiMessage);
   }
 
   ngOnInit(): void {
@@ -342,13 +230,19 @@ export class AppComponent implements OnInit {
   operators: OperatorUser[] = [];
   relayNodes: RelayNode[] = [];
   punchNodes: PunchNode[] = [];
-  plans: CustomerPlan[] = [];
-  products: Product[] = [];
-  customers: Customer[] = [];
-  renewals: Renewal[] = [];
-  orders: Order[] = [];
+  users: OpsUser[] = [];
   devices: OpsDevice[] = [];
-  clientDownloads: ClientDownload[] = [];
+  deviceGroups: DeviceGroup[] = [];
+  deviceGroupMembers: DeviceGroupMember[] = [];
+  networks: NetworkSummary[] = [];
+  networkDevices: NetworkDevice[] = [];
+  networkDeviceGroups: DeviceGroup[] = [];
+  networkGroupToAdd = '';
+  networkDeviceToAdd = '';
+  securityGroups: SecurityGroup[] = [];
+  securityRules: SecurityRule[] = [];
+  dnsZones: DNSZone[] = [];
+  dnsRecords: DNSRecord[] = [];
 
   async login(): Promise<void> {
     this.loginMessage = '';
@@ -390,17 +284,14 @@ export class AppComponent implements OnInit {
     this.loading = true;
     this.apiMessage = '';
     try {
-      const [operators, relayNodes, punchNodes, customers, devices, downloads, plans, products, orders, renewals] = await Promise.all([
+      const [operators, relayNodes, punchNodes, users, devices, deviceGroups, networks] = await Promise.all([
         this.request<{ items: OperatorUser[] }>('GET', OPS_API.operators),
         this.request<{ items: RelayNode[] }>('GET', OPS_API.relayNodes),
         this.request<{ items: PunchNode[] }>('GET', OPS_API.punchNodes),
-        this.request<{ items: Customer[] }>('GET', OPS_API.customers),
+        this.request<{ items: OpsUser[] }>('GET', OPS_API.users),
         this.request<{ items: OpsDevice[] }>('GET', OPS_API.devices),
-        this.request<{ items: ClientDownload[] }>('GET', OPS_API.clientDownloads),
-        this.request<{ items: ApiCustomerPlan[] }>('GET', OPS_API.plans),
-        this.request<{ items: Product[] }>('GET', OPS_API.products),
-        this.request<{ items: Order[] }>('GET', OPS_API.orders),
-        this.request<{ items: Renewal[] }>('GET', OPS_API.renewals),
+        this.request<{ items: DeviceGroup[]; members: DeviceGroupMember[] }>('GET', OPS_API.deviceGroups),
+        this.request<{ items: NetworkSummary[] }>('GET', OPS_API.networks),
       ]);
       this.operators = operators.items.map((item) => ({ ...item, lastLoginAt: this.formatDateTime(item.lastLoginAt) }));
       this.relayNodes = relayNodes.items;
@@ -409,37 +300,23 @@ export class AppComponent implements OnInit {
         createdAt: this.formatDateTime(item.createdAt),
         updatedAt: this.formatDateTime(item.updatedAt),
       }));
-      this.customers = customers.items.map((item) => ({ ...item, planExpiresAt: this.formatDate(item.planExpiresAt) }));
-      this.devices = devices.items.map((item) => this.formatDevice(item));
-      this.clientDownloads = downloads.items.map((item) => ({
+      this.users = users.items.map((item) => ({
         ...item,
-        createdAt: this.formatDateTime(item.createdAt),
         updatedAt: this.formatDateTime(item.updatedAt),
       }));
-      this.plans = plans.items.map((item) => this.mapPlan(item));
-      this.products = products.items;
-      this.orders = orders.items.map((item) => ({
-        ...item,
-        createdAt: this.formatDateTime(item.createdAt),
-        paidAt: item.paidAt ? this.formatDateTime(item.paidAt) : undefined,
-        validUntil: item.validUntil ? this.formatDate(item.validUntil) : undefined,
-      }));
-      this.renewals = renewals.items.map((item) => ({
-        ...item,
-        paidAt: this.formatDate(item.paidAt),
-        validUntil: this.formatDate(item.validUntil),
-      }));
+      this.devices = devices.items.map((item) => this.formatDevice(item));
+      this.deviceGroups = deviceGroups.items.map((item) => ({ ...item, createdAt: this.formatDateTime(item.createdAt), updatedAt: this.formatDateTime(item.updatedAt) }));
+      this.deviceGroupMembers = deviceGroups.members || [];
+      this.networks = networks.items;
     } catch (error) {
       this.operators = [];
       this.relayNodes = [];
       this.punchNodes = [];
-      this.customers = [];
+      this.users = [];
       this.devices = [];
-      this.clientDownloads = [];
-      this.plans = [];
-      this.products = [];
-      this.orders = [];
-      this.renewals = [];
+      this.deviceGroups = [];
+      this.deviceGroupMembers = [];
+      this.networks = [];
       this.apiMessage = this.errorMessage(error);
     } finally {
       this.loading = false;
@@ -505,10 +382,6 @@ export class AppComponent implements OnInit {
     return new Date(Number(value) * 1000).toISOString().replace('T', ' ').slice(0, 16);
   }
 
-  private dateToUnix(value: string): number {
-    return Math.floor(new Date(`${value}T00:00:00`).getTime() / 1000);
-  }
-
   private errorMessage(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.trim().toLowerCase();
@@ -532,8 +405,8 @@ export class AppComponent implements OnInit {
     return this.navItems.find((item) => item.id === this.active) ?? this.navItems[0];
   }
 
-  get totalCustomers(): number {
-    return this.customers.length;
+  get totalUsers(): number {
+    return this.users.length;
   }
 
   get filteredDevices(): OpsDevice[] {
@@ -561,8 +434,8 @@ export class AppComponent implements OnInit {
     return this.relayNodes.reduce((sum, node) => sum + node.usedTrafficGb, 0);
   }
 
-  get limitedCustomers(): number {
-    return this.customers.filter((customer) => customer.status === 'limited').length;
+  get limitedUsers(): number {
+    return this.users.filter((user) => user.status === 'limited').length;
   }
 
   get activeRelayNodes(): number {
@@ -597,88 +470,8 @@ export class AppComponent implements OnInit {
     return this.punchNodes.reduce((sum, node) => sum + node.activeSessions, 0);
   }
 
-  get paidOrders(): Order[] {
-    return this.orders.filter((order) => order.payStatus === 'paid');
-  }
-
-  get todayRevenue(): number {
-    return this.paidOrders
-      .filter((order) => order.paidAt?.startsWith('2026-05-09'))
-      .reduce((sum, order) => sum + order.amount, 0);
-  }
-
-  get monthlyRevenue(): number {
-    return this.paidOrders
-      .filter((order) => order.paidAt?.startsWith('2026-05'))
-      .reduce((sum, order) => sum + order.amount, 0);
-  }
-
-  get yearlyRevenue(): number {
-    return this.paidOrders
-      .filter((order) => order.paidAt?.startsWith('2026'))
-      .reduce((sum, order) => sum + order.amount, 0);
-  }
-
-  get pendingRevenue(): number {
-    return this.orders
-      .filter((order) => order.payStatus === 'pending')
-      .reduce((sum, order) => sum + order.amount, 0);
-  }
-
-  get paidOrderCount(): number {
-    return this.orders.filter((order) => order.payStatus === 'paid').length;
-  }
-
-  get pendingOrderCount(): number {
-    return this.orders.filter((order) => order.payStatus === 'pending').length;
-  }
-
-  get provisionedOrderCount(): number {
-    return this.orders.filter((order) => order.provisionStatus === 'provisioned').length;
-  }
-
-  get closedOrderCount(): number {
-    return this.orders.filter((order) => order.payStatus === 'closed' || order.payStatus === 'refunded').length;
-  }
-
-  get addressStats(): Array<{ label: string; count: number; percent: number }> {
-    const total = Math.max(1, this.customers.length);
-    const counts = new Map<string, number>();
-    for (const customer of this.customers) {
-      const label = `${customer.country} / ${customer.city}`;
-      counts.set(label, (counts.get(label) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .map(([label, count]) => ({ label, count, percent: Math.round((count / total) * 100) }))
-      .sort((a, b) => b.count - a.count);
-  }
-
-  get regionStats(): Array<{ label: string; count: number; percent: number }> {
-    const total = Math.max(1, this.customers.length);
-    const counts = new Map<string, number>();
-    for (const customer of this.customers) {
-      counts.set(customer.ipRegion, (counts.get(customer.ipRegion) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .map(([label, count]) => ({ label, count, percent: Math.round((count / total) * 100) }))
-      .sort((a, b) => b.count - a.count);
-  }
-
   setActive(id: NavId): void {
     this.active = id;
-  }
-
-  planName(code: CustomerPlan['code']): string {
-    return this.plans.find((plan) => plan.code === code)?.name ?? code;
-  }
-
-  planOf(code: CustomerPlan['code']): CustomerPlan {
-    return this.plans.find((plan) => plan.code === code) ?? this.plans[0];
-  }
-
-  customerRelayPercent(customer: Customer): number {
-    const plan = this.planOf(customer.planCode);
-    return Math.min(100, Math.round((customer.relayUsedGb / plan.relayMonthlyGb) * 100));
   }
 
   relayNodePercent(node: RelayNode): number {
@@ -705,19 +498,6 @@ export class AppComponent implements OnInit {
       return `${(bytes / 1024).toFixed(1)} KB`;
     }
     return `${bytes} B`;
-  }
-
-  openAssignPlan(customer: Customer): void {
-    this.selectedCustomer = customer;
-    this.assignPlanCode = customer.planCode;
-    this.assignExpiresAt = customer.planExpiresAt;
-    this.renewalAmount = this.planOf(customer.planCode).yearlyPrice;
-    this.showAssignPlanDialog = true;
-  }
-
-  closeAssignPlan(): void {
-    this.showAssignPlanDialog = false;
-    this.selectedCustomer = null;
   }
 
   openOperatorDialog(operator?: OperatorUser): void {
@@ -958,195 +738,53 @@ export class AppComponent implements OnInit {
     }
   }
 
-  openPlanDialog(plan?: CustomerPlan): void {
-    this.selectedPlan = plan ?? null;
-    this.planForm = plan ? { ...plan } : {
-      code: 'custom' as CustomerPlan['code'],
-      name: '',
-      ownDeviceLimit: 5,
-      invitedDeviceLimit: 5,
-      totalDeviceLimit: 10,
-      relayMonthlyGb: 50,
-      relayBandwidthMbps: 5,
-      relayThrottleMbps: 1,
-      p2pUnlimited: true,
-      customDomain: false,
-      acl: false,
-      dedicatedRelay: false,
-      auditLog: false,
-      apiAccess: false,
-      monthlyPrice: 0,
-      yearlyPrice: 0,
-    };
-    this.showPlanDialog = true;
+  openUserDialog(user?: OpsUser): void {
+    this.selectedUser = user ?? null;
+    this.userForm = user ? { ...user } : { status: 'active' };
+    this.createUserPassword = '';
+    this.createUserConfirmPassword = '';
+    this.showUserDialog = true;
   }
 
-  closePlanDialog(): void {
-    this.showPlanDialog = false;
-    this.selectedPlan = null;
+  closeUserDialog(): void {
+    this.showUserDialog = false;
+    this.selectedUser = null;
   }
 
-  async savePlanDialog(): Promise<void> {
-    if (!this.planForm.code?.trim() || !this.planForm.name?.trim()) {
-      this.apiMessage = '请输入套餐编码和名称';
+  async saveUserDialog(): Promise<void> {
+    if (!this.userForm.email?.trim()) {
+      this.apiMessage = '请输入用户邮箱';
+      return;
+    }
+    if (!this.selectedUser && (!this.createUserPassword || this.createUserPassword !== this.createUserConfirmPassword)) {
+      this.apiMessage = this.createUserPassword ? '两次输入的密码不一致' : '请输入用户密码';
       return;
     }
     try {
-      const isEdit = Boolean(this.selectedPlan);
-      const path = isEdit ? OPS_API.plan(this.selectedPlan!.code) : OPS_API.plans;
-      const payload = {
-        planCode: this.planForm.code,
-        name: this.planForm.name,
-        ownDeviceLimit: Number(this.planForm.ownDeviceLimit ?? 0),
-        invitedDeviceLimit: Number(this.planForm.invitedDeviceLimit ?? 0),
-        totalDeviceLimit: Number(this.planForm.totalDeviceLimit ?? 0),
-        relayMonthlyGb: Number(this.planForm.relayMonthlyGb ?? 0),
-        relayBandwidthMbps: Number(this.planForm.relayBandwidthMbps ?? 0),
-        relayThrottleMbps: Number(this.planForm.relayThrottleMbps ?? 0),
-        p2pUnlimited: Boolean(this.planForm.p2pUnlimited),
-        customDomain: Boolean(this.planForm.customDomain),
-        acl: Boolean(this.planForm.acl),
-        dedicatedRelay: Boolean(this.planForm.dedicatedRelay),
-        auditLog: Boolean(this.planForm.auditLog),
-        apiAccess: Boolean(this.planForm.apiAccess),
-        monthlyPrice: Number(this.planForm.monthlyPrice ?? 0),
-        yearlyPrice: Number(this.planForm.yearlyPrice ?? 0),
-        status: this.planForm.status ?? 'active',
-      };
-      const plan = this.mapPlan(await this.request<ApiCustomerPlan>(isEdit ? 'PATCH' : 'POST', path, payload));
-      this.plans = [plan, ...this.plans.filter((item) => item.code !== plan.code)];
-      this.closePlanDialog();
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  openProductDialog(product?: Product): void {
-    this.selectedProduct = product ?? null;
-    this.productForm = product ? { ...product } : {
-      name: '',
-      type: 'plan',
-      planCode: this.plans[0]?.code,
-      period: 'monthly',
-      validDays: 31,
-      relayTrafficGb: 50,
-      relayBandwidthMbps: 5,
-      listPrice: 0,
-      salePrice: 0,
-      currency: 'CNY',
-      autoRenew: false,
-      status: 'active',
-      description: '',
-    };
-    this.showProductDialog = true;
-  }
-
-  closeProductDialog(): void {
-    this.showProductDialog = false;
-    this.selectedProduct = null;
-  }
-
-  async saveProductDialog(): Promise<void> {
-    if (!this.productForm.name?.trim()) {
-      this.apiMessage = '请输入商品名称';
-      return;
-    }
-    try {
-      const isEdit = Boolean(this.selectedProduct);
-      const path = isEdit ? OPS_API.product(this.selectedProduct!.productId) : OPS_API.products;
-      const product = await this.request<Product>(isEdit ? 'PATCH' : 'POST', path, this.productForm);
-      this.products = [product, ...this.products.filter((item) => item.productId !== product.productId)];
-      this.closeProductDialog();
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  private mapPlan(plan: ApiCustomerPlan): CustomerPlan {
-    return {
-      code: plan.planCode,
-      name: plan.name,
-      ownDeviceLimit: plan.deviceLimit,
-      invitedDeviceLimit: plan.invitedDeviceLimit,
-      totalDeviceLimit: plan.totalDeviceLimit,
-      relayMonthlyGb: plan.relayMonthlyGb,
-      relayBandwidthMbps: plan.relayBandwidthMbps,
-      relayThrottleMbps: plan.relayThrottleMbps,
-      p2pUnlimited: plan.p2pUnlimited,
-      customDomain: plan.customDomain,
-      acl: plan.acl,
-      dedicatedRelay: plan.dedicatedRelay,
-      auditLog: plan.auditLog,
-      apiAccess: plan.apiAccess,
-      monthlyPrice: plan.monthlyPrice,
-      yearlyPrice: plan.yearlyPrice,
-      status: plan.status,
-    };
-  }
-
-  openOrderDialog(order?: Order): void {
-    this.selectedOrder = order ?? null;
-    if (order) {
-      this.orderForm = { ...order };
-      return void (this.showOrderDialog = true);
-    }
-    const customer = this.customers[0];
-    const product = this.products[0];
-    this.orderForm = {
-      customerId: customer?.customerId,
-      customerEmail: customer?.email,
-      productId: product?.productId,
-      productName: product?.name,
-      productType: product?.type,
-      amount: product?.salePrice ?? 0,
-      currency: 'CNY',
-      payStatus: 'pending',
-      provisionStatus: 'pending',
-      channel: 'manual',
-    } as Partial<Order>;
-    this.showOrderDialog = true;
-  }
-
-  closeOrderDialog(): void {
-    this.showOrderDialog = false;
-    this.selectedOrder = null;
-  }
-
-  async saveOrderDialog(): Promise<void> {
-    if (!this.orderForm.customerId || !this.orderForm.productId) {
-      this.apiMessage = '请选择客户和商品';
-      return;
-    }
-    try {
-      const product = this.products.find((item) => item.productId === this.orderForm.productId);
-      const customer = this.customers.find((item) => item.customerId === this.orderForm.customerId);
-      const isEdit = Boolean(this.selectedOrder);
-      const path = isEdit ? OPS_API.order(this.selectedOrder!.orderId) : OPS_API.orders;
-      const order = await this.request<Order>(isEdit ? 'PATCH' : 'POST', path, {
-        orderId: this.selectedOrder?.orderId,
-        customerId: this.orderForm.customerId,
-        customerEmail: customer?.email ?? this.orderForm.customerEmail,
-        productId: this.orderForm.productId,
-        productName: product?.name ?? this.orderForm.productName,
-        productType: product?.type ?? this.orderForm.productType,
-        amount: this.orderForm.amount,
-        currency: this.orderForm.currency ?? 'CNY',
-        payStatus: this.orderForm.payStatus,
-        provisionStatus: this.orderForm.provisionStatus,
-        channel: this.orderForm.channel,
-      });
+      const isEdit = Boolean(this.selectedUser);
+      const user = await this.request<OpsUser>(
+        isEdit ? 'PATCH' : 'POST',
+        isEdit ? OPS_API.user(this.selectedUser!.userId) : OPS_API.users,
+        {
+          email: this.userForm.email,
+          name: this.userForm.name,
+          country: this.userForm.country,
+          province: this.userForm.province,
+          city: this.userForm.city,
+          ipRegion: this.userForm.ipRegion,
+          status: this.userForm.status,
+          password: isEdit ? undefined : this.createUserPassword,
+        },
+      );
       const formatted = {
-        ...order,
-        createdAt: this.formatDateTime(order.createdAt),
-        paidAt: order.paidAt ? this.formatDateTime(order.paidAt) : undefined,
-        validUntil: order.validUntil ? this.formatDate(order.validUntil) : undefined,
+        ...user,
+        updatedAt: this.formatDateTime(user.updatedAt),
       };
-      this.orders = [formatted, ...this.orders.filter((item) => item.orderId !== order.orderId)];
-      this.closeOrderDialog();
+      this.users = [
+        formatted,
+        ...this.users.filter((item) => item.userId !== user.userId),
+      ];
+      this.closeUserDialog();
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
@@ -1154,30 +792,35 @@ export class AppComponent implements OnInit {
     }
   }
 
-  openCustomerDialog(customer: Customer): void {
-    this.selectedCustomer = customer;
-    this.customerForm = { ...customer };
-    this.showCustomerDialog = true;
+  openUserPasswordDialog(user: OpsUser): void {
+    this.selectedUser = user;
+    this.userPassword = '';
+    this.userConfirmPassword = '';
+    this.userPasswordMessage = '';
+    this.showUserPasswordDialog = true;
   }
 
-  closeCustomerDialog(): void {
-    this.showCustomerDialog = false;
-    this.selectedCustomer = null;
+  closeUserPasswordDialog(): void {
+    this.showUserPasswordDialog = false;
+    this.selectedUser = null;
   }
 
-  async saveCustomerDialog(): Promise<void> {
-    if (!this.selectedCustomer || !this.customerForm.email?.trim()) {
-      this.apiMessage = '请输入客户邮箱';
+  async saveUserPassword(): Promise<void> {
+    if (!this.selectedUser || !this.userPassword) {
+      this.userPasswordMessage = '请输入新密码';
+      return;
+    }
+    if (this.userPassword !== this.userConfirmPassword) {
+      this.userPasswordMessage = '两次输入的密码不一致';
       return;
     }
     try {
-      const customer = await this.request<Customer>('PATCH', OPS_API.customer(this.selectedCustomer.customerId), this.customerForm);
-      const formatted = { ...customer, planExpiresAt: this.formatDate(customer.planExpiresAt) };
-      this.customers = [formatted, ...this.customers.filter((item) => item.customerId !== customer.customerId)];
-      this.closeCustomerDialog();
+      await this.request<OpsUser>('PATCH', OPS_API.userPassword(this.selectedUser.userId), { password: this.userPassword });
+      this.closeUserPasswordDialog();
+      this.apiMessage = '用户密码已修改';
       this.notifyStateChanged();
     } catch (error) {
-      this.apiMessage = this.errorMessage(error);
+      this.userPasswordMessage = this.errorMessage(error);
       this.notifyStateChanged();
     }
   }
@@ -1206,138 +849,6 @@ export class AppComponent implements OnInit {
       const formatted = this.formatDevice(updated);
       this.devices = [formatted, ...this.devices.filter((item) => item.deviceId !== updated.deviceId)];
       this.closeDeviceDialog();
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  onClientDownloadFileSelected(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0] ?? null;
-    this.selectedDownloadFile = file;
-    this.selectedDownloadFileName = file?.name ?? '';
-  }
-
-  async uploadClientDownload(): Promise<void> {
-    this.apiMessage = '';
-    if (!this.downloadForm.platform || !this.downloadForm.version?.trim() || !this.selectedDownloadFile) {
-      this.apiMessage = '请选择平台、填写版本并选择安装包';
-      return;
-    }
-    const body = new FormData();
-    body.set('platform', this.downloadForm.platform);
-    body.set('version', this.downloadForm.version);
-    body.set('arch', this.downloadForm.arch ?? '');
-    body.set('channel', this.downloadForm.channel ?? 'stable');
-    body.set('status', this.downloadForm.status ?? 'active');
-    body.set('releaseNotes', this.downloadForm.releaseNotes ?? '');
-    body.set('file', this.selectedDownloadFile);
-    try {
-      const token = localStorage.getItem(this.opsTokenKey);
-      const response = await fetch(OPS_API.clientDownloads, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body,
-      });
-      if (!response.ok) {
-        if (response.status === 401) {
-          this.logout('登录已过期，请重新登录');
-        }
-        throw new Error(await response.text() || `HTTP ${response.status}`);
-      }
-      const item = await response.json() as ClientDownload;
-      this.clientDownloads = [
-        { ...item, createdAt: this.formatDateTime(item.createdAt), updatedAt: this.formatDateTime(item.updatedAt) },
-        ...this.clientDownloads.filter((download) => download.downloadId !== item.downloadId),
-      ];
-      this.selectedDownloadFile = null;
-      this.selectedDownloadFileName = '';
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  async deleteClientDownload(item: ClientDownload): Promise<void> {
-    try {
-      await this.request('DELETE', OPS_API.clientDownload(item.downloadId));
-      this.clientDownloads = this.clientDownloads.filter((download) => download.downloadId !== item.downloadId);
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  async saveAssignPlan(): Promise<void> {
-    if (!this.selectedCustomer) {
-      return;
-    }
-    this.apiMessage = '';
-    try {
-      const response = await this.request<{ customer: Customer; renewal: Renewal }>('POST', OPS_API.customerAssignPlan(this.selectedCustomer.customerId), {
-        planCode: this.assignPlanCode,
-        expiresAt: this.dateToUnix(this.assignExpiresAt),
-        amount: this.renewalAmount,
-        period: 'custom',
-      });
-      Object.assign(this.selectedCustomer, {
-        ...response.customer,
-        planExpiresAt: this.formatDate(response.customer.planExpiresAt),
-      });
-      this.renewals = [
-        {
-          ...response.renewal,
-          paidAt: this.formatDate(response.renewal.paidAt),
-          validUntil: this.formatDate(response.renewal.validUntil),
-        },
-        ...this.renewals,
-      ];
-      this.closeAssignPlan();
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  openRenewalDialog(renewal: Renewal): void {
-    this.selectedRenewal = renewal;
-    this.renewalForm = { ...renewal };
-    this.showRenewalDialog = true;
-  }
-
-  closeRenewalDialog(): void {
-    this.showRenewalDialog = false;
-    this.selectedRenewal = null;
-  }
-
-  async saveRenewalDialog(): Promise<void> {
-    if (!this.selectedRenewal || !this.renewalForm.customerEmail || !this.renewalForm.planCode) {
-      this.apiMessage = '请选择客户和套餐';
-      return;
-    }
-    try {
-      const renewal = await this.request<Renewal>('PATCH', OPS_API.renewal(this.selectedRenewal.renewalId), {
-        ...this.renewalForm,
-        paidAt: this.dateToUnix(String(this.renewalForm.paidAt)),
-        validUntil: this.dateToUnix(String(this.renewalForm.validUntil)),
-      });
-      const formatted = {
-        ...renewal,
-        paidAt: this.formatDate(renewal.paidAt),
-        validUntil: this.formatDate(renewal.validUntil),
-      };
-      this.renewals = [formatted, ...this.renewals.filter((item) => item.renewalId !== renewal.renewalId)];
-      const customer = this.customers.find((item) => item.customerId === renewal.customerId);
-      if (customer) {
-        customer.planCode = renewal.planCode;
-        customer.planExpiresAt = formatted.validUntil;
-      }
-      this.closeRenewalDialog();
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
@@ -1496,21 +1007,6 @@ export class AppComponent implements OnInit {
     }
   }
 
-  async toggleProduct(product: Product): Promise<void> {
-    const nextStatus = product.status === 'active' ? 'offline' : 'active';
-    try {
-      const updated = await this.request<Product>('PATCH', OPS_API.product(product.productId), {
-        ...product,
-        status: nextStatus,
-      });
-      Object.assign(product, updated);
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
   async toggleDevice(device: OpsDevice): Promise<void> {
     const enabled = !device.deviceEnabled;
     try {
@@ -1540,6 +1036,113 @@ export class AppComponent implements OnInit {
       this.notifyStateChanged();
     }
   }
+
+  userEmail(userId: string): string {
+    return this.users.find((item) => item.userId === userId)?.email || userId;
+  }
+
+  openDeviceGroupDialog(group?: DeviceGroup): void {
+    this.selectedDeviceGroup = group ?? null;
+    this.deviceGroupForm = group ? { ...group } : { userId: this.users[0]?.userId };
+    this.showDeviceGroupDialog = true;
+  }
+
+  closeDeviceGroupDialog(): void { this.showDeviceGroupDialog = false; this.selectedDeviceGroup = null; }
+
+  async saveDeviceGroup(): Promise<void> {
+    const ownerId = this.deviceGroupForm.userId?.trim();
+    if (!ownerId || !this.deviceGroupForm.name?.trim()) { this.apiMessage = '请选择所属用户并输入分组名称'; return; }
+    try {
+      const editing = Boolean(this.selectedDeviceGroup);
+      const item = await this.request<DeviceGroup>(editing ? 'PATCH' : 'POST', editing ? OPS_API.deviceGroup(this.selectedDeviceGroup!.groupId) : OPS_API.deviceGroups, { ownerId, name: this.deviceGroupForm.name, description: this.deviceGroupForm.description });
+      const formatted = { ...item, createdAt: this.formatDateTime(item.createdAt), updatedAt: this.formatDateTime(item.updatedAt) };
+      this.deviceGroups = [formatted, ...this.deviceGroups.filter((group) => group.groupId !== item.groupId)];
+      this.closeDeviceGroupDialog(); this.apiMessage = '设备分组已保存'; this.notifyStateChanged();
+    } catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+
+  async deleteDeviceGroup(group: DeviceGroup): Promise<void> {
+    if (!confirm(`确认删除设备分组 ${group.name}？相关网络引用也会被清理。`)) return;
+    try { await this.request('DELETE', OPS_API.deviceGroup(group.groupId), { ownerId: group.userId }); this.deviceGroups = this.deviceGroups.filter((item) => item.groupId !== group.groupId); this.apiMessage = '设备分组已删除'; this.notifyStateChanged(); }
+    catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+
+  manageDeviceGroup(group: DeviceGroup): void { this.managedDeviceGroup = group; }
+  devicesForManagedGroup(): OpsDevice[] { return this.managedDeviceGroup ? this.devices.filter((device) => device.ownerId === this.managedDeviceGroup!.userId) : []; }
+  deviceInManagedGroup(deviceId: string): boolean { return Boolean(this.managedDeviceGroup && this.deviceGroupMembers.some((member) => member.groupId === this.managedDeviceGroup!.groupId && member.deviceId === deviceId)); }
+  async toggleManagedGroupDevice(device: OpsDevice): Promise<void> {
+    if (!this.managedDeviceGroup) return;
+    const current = this.deviceGroupMembers.filter((member) => member.deviceId === device.deviceId).map((member) => member.groupId);
+    const groupId = this.managedDeviceGroup.groupId;
+    const groupIds = current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId];
+    try {
+      await this.request('PUT', OPS_API.deviceGroupsForDevice(device.deviceId), { ownerId: this.managedDeviceGroup.userId, groupIds });
+      this.deviceGroupMembers = this.deviceGroupMembers.filter((member) => member.deviceId !== device.deviceId);
+      this.deviceGroupMembers.push(...groupIds.map((id) => ({ groupId: id, deviceId: device.deviceId, addedAt: Math.floor(Date.now() / 1000) })));
+      this.apiMessage = '设备分组成员已更新'; this.notifyStateChanged();
+    } catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+
+  openNetworkDialog(item?: NetworkSummary): void {
+    this.networkForm = item ? { ...item.network } : { ownerId: this.users[0]?.userId, intraGroupPolicy: 'allow', status: 'active' };
+    this.showNetworkDialog = true;
+  }
+  closeNetworkDialog(): void { this.showNetworkDialog = false; }
+  async saveNetwork(): Promise<void> {
+    if (!this.networkForm.ownerId || !this.networkForm.name?.trim()) { this.apiMessage = '请选择所属用户并输入网络名称'; return; }
+    try {
+      const editing = Boolean(this.networkForm.networkId);
+      const item = await this.request<NetworkSummary>(editing ? 'PATCH' : 'POST', editing ? OPS_API.network(this.networkForm.networkId) : OPS_API.networks, this.networkForm);
+      this.networks = [item, ...this.networks.filter((network) => network.network.networkId !== item.network.networkId)];
+      this.showNetworkDialog = false; this.apiMessage = '网络已保存'; this.notifyStateChanged();
+    } catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+  async deleteNetwork(item: NetworkSummary): Promise<void> {
+    if (!confirm(`确认删除网络 ${item.network.name}？网络内安全组和 DNS 数据将一并删除。`)) return;
+    try { await this.request('DELETE', OPS_API.network(item.network.networkId), { ownerId: item.network.ownerId }); this.networks = this.networks.filter((network) => network.network.networkId !== item.network.networkId); if (this.selectedNetwork?.network.networkId === item.network.networkId) this.selectedNetwork = null; this.apiMessage = '网络已删除'; this.notifyStateChanged(); }
+    catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+  async selectNetwork(item: NetworkSummary): Promise<void> {
+    this.selectedNetwork = item; this.selectedSecurityGroup = null; this.securityRules = [];
+    this.ruleForm = { direction: 'ingress', protocol: 'all', portRange: 'all', action: 'allow', peerType: 'device_group', peerValue: this.deviceGroups.find((group) => group.userId === item.network.ownerId)?.groupId || '' };
+    try {
+      const [groups, zones, records, networkDevices, networkGroups] = await Promise.all([
+        this.request<{items: SecurityGroup[]}>('GET', OPS_API.securityGroups(item.network.networkId)),
+        this.request<{items: DNSZone[]}>('GET', OPS_API.dnsZones(item.network.networkId)),
+        this.request<{items: DNSRecord[]}>('GET', OPS_API.dnsRecords(item.network.networkId)),
+        this.request<{items: NetworkDevice[]}>('GET', OPS_API.networkDevices(item.network.networkId)),
+        this.request<{items: DeviceGroup[]}>('GET', OPS_API.networkDeviceGroups(item.network.networkId)),
+      ]);
+      this.securityGroups = groups.items; this.dnsZones = zones.items; this.dnsRecords = records.items; this.networkDevices = networkDevices.items; this.networkDeviceGroups = networkGroups.items;
+      this.networkDeviceToAdd = this.availableNetworkDevices()[0]?.deviceId || '';
+      this.networkGroupToAdd = this.deviceGroups.find((group) => group.userId === item.network.ownerId && !this.networkDeviceGroups.some((current) => current.groupId === group.groupId))?.groupId || '';
+      this.notifyStateChanged();
+    } catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+  async addNetworkDeviceGroup(): Promise<void> { if (!this.selectedNetwork || !this.networkGroupToAdd) return; try { const response = await this.request<{items: DeviceGroup[]}>('POST', OPS_API.networkDeviceGroups(this.selectedNetwork.network.networkId), { ownerId: this.selectedNetwork.network.ownerId, groupId: this.networkGroupToAdd }); this.networkDeviceGroups = response.items; this.networkGroupToAdd = ''; this.apiMessage = '网络引用分组已更新'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  availableNetworkDevices(): OpsDevice[] { return this.selectedNetwork ? this.devices.filter((device) => device.ownerId === this.selectedNetwork!.network.ownerId && !this.networkDevices.some((member) => member.deviceId === device.deviceId)) : []; }
+  async addNetworkDevice(): Promise<void> { if (!this.selectedNetwork || !this.networkDeviceToAdd) return; try { const item = await this.request<NetworkDevice>('POST', OPS_API.networkDevice(this.selectedNetwork.network.networkId, this.networkDeviceToAdd), { ownerId: this.selectedNetwork.network.ownerId }); this.networkDevices = [...this.networkDevices.filter((member) => member.deviceId !== item.deviceId), item]; this.networkDeviceToAdd = this.availableNetworkDevices()[0]?.deviceId || ''; this.apiMessage = '设备已加入网络并通知客户端'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  async removeNetworkDevice(device: NetworkDevice): Promise<void> { if (!this.selectedNetwork || !confirm(`确认将设备 ${device.alias || device.deviceId} 移出网络？`)) return; try { await this.request('DELETE', OPS_API.networkDevice(this.selectedNetwork.network.networkId, device.deviceId), { ownerId: this.selectedNetwork.network.ownerId }); this.networkDevices = this.networkDevices.filter((member) => member.deviceId !== device.deviceId); this.networkDeviceToAdd = this.availableNetworkDevices()[0]?.deviceId || ''; this.apiMessage = '设备已离开网络并通知客户端'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  availableNetworkDeviceGroups(): DeviceGroup[] { return this.selectedNetwork ? this.deviceGroups.filter((group) => group.userId === this.selectedNetwork!.network.ownerId && !this.networkDeviceGroups.some((current) => current.groupId === group.groupId)) : []; }
+  async removeNetworkDeviceGroup(group: DeviceGroup): Promise<void> { if (!this.selectedNetwork) return; try { const response = await this.request<{items: DeviceGroup[]}>('DELETE', OPS_API.networkDeviceGroup(this.selectedNetwork.network.networkId, group.groupId), { ownerId: this.selectedNetwork.network.ownerId }); this.networkDeviceGroups = response.items; this.apiMessage = '网络引用分组已移除'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  editSecurityGroup(group: SecurityGroup): void { this.editingSecurityGroup = group; this.securityGroupName = group.name; this.securityGroupDescription = group.description; }
+  async createSecurityGroup(): Promise<void> {
+    if (!this.selectedNetwork || !this.securityGroupName.trim()) return;
+    try { const editing = Boolean(this.editingSecurityGroup); const item = await this.request<SecurityGroup>(editing ? 'PATCH' : 'POST', editing ? OPS_API.securityGroup(this.editingSecurityGroup!.securityGroupId) : OPS_API.securityGroups(this.selectedNetwork.network.networkId), { ownerId: this.selectedNetwork.network.ownerId, name: this.securityGroupName, description: this.securityGroupDescription }); this.securityGroups = [...this.securityGroups.filter((group) => group.securityGroupId !== item.securityGroupId), item]; this.securityGroupName = ''; this.securityGroupDescription = ''; this.editingSecurityGroup = null; this.apiMessage = '安全组已保存'; this.notifyStateChanged(); }
+    catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); }
+  }
+  async selectSecurityGroup(group: SecurityGroup): Promise<void> { this.selectedSecurityGroup = group; try { this.securityRules = (await this.request<{items: SecurityRule[]}>('GET', OPS_API.securityRules(group.securityGroupId))).items; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  async deleteSecurityGroup(group: SecurityGroup): Promise<void> { if (!this.selectedNetwork || !confirm(`确认删除安全组 ${group.name}？`)) return; try { await this.request('DELETE', OPS_API.securityGroup(group.securityGroupId), { ownerId: this.selectedNetwork.network.ownerId }); this.securityGroups = this.securityGroups.filter((item) => item.securityGroupId !== group.securityGroupId); if (this.selectedSecurityGroup?.securityGroupId === group.securityGroupId) this.selectedSecurityGroup = null; this.apiMessage = '安全组已删除'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  editSecurityRule(rule: SecurityRule): void { this.editingSecurityRule = rule; this.ruleForm = { ...rule }; }
+  async createSecurityRule(): Promise<void> { if (!this.selectedNetwork || !this.selectedSecurityGroup || !this.ruleForm.peerValue) { this.apiMessage = '请选择规则来源设备或设备分组'; return; } try { const editing = Boolean(this.editingSecurityRule); const item = await this.request<SecurityRule>(editing ? 'PATCH' : 'POST', editing ? OPS_API.securityRule(this.editingSecurityRule!.ruleId) : OPS_API.securityRules(this.selectedSecurityGroup.securityGroupId), { ownerId: this.selectedNetwork.network.ownerId, ...this.ruleForm, priority: Number(this.ruleForm.priority || 100), enabled: this.ruleForm.enabled !== false }); this.securityRules = [...this.securityRules.filter((rule) => rule.ruleId !== item.ruleId), item]; this.editingSecurityRule = null; this.apiMessage = '安全规则已保存'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); this.notifyStateChanged(); } }
+  async deleteSecurityRule(rule: SecurityRule): Promise<void> { if (!this.selectedNetwork) return; try { await this.request('DELETE', OPS_API.securityRule(rule.ruleId), { ownerId: this.selectedNetwork.network.ownerId }); this.securityRules = this.securityRules.filter((item) => item.ruleId !== rule.ruleId); this.apiMessage = '安全规则已删除'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+
+  editDNSZone(zone: DNSZone): void { this.editingDNSZone = zone; this.dnsZoneName = zone.name; }
+  async createDNSZone(): Promise<void> { if (!this.selectedNetwork || !this.dnsZoneName.trim()) return; try { const editing = Boolean(this.editingDNSZone); const item = await this.request<DNSZone>(editing ? 'PATCH' : 'POST', editing ? OPS_API.dnsZone(this.editingDNSZone!.zoneId) : OPS_API.dnsZones(this.selectedNetwork.network.networkId), { ownerId: this.selectedNetwork.network.ownerId, name: this.dnsZoneName, status: this.editingDNSZone?.status || 'active' }); this.dnsZones = [...this.dnsZones.filter((zone) => zone.zoneId !== item.zoneId), item]; this.dnsZoneName = ''; this.editingDNSZone = null; this.apiMessage = 'DNS 区域已保存'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  async deleteDNSZone(zone: DNSZone): Promise<void> { if (!this.selectedNetwork || !confirm(`确认删除 DNS 区域 ${zone.name}？`)) return; try { await this.request('DELETE', OPS_API.dnsZone(zone.zoneId), { ownerId: this.selectedNetwork.network.ownerId }); this.dnsZones = this.dnsZones.filter((item) => item.zoneId !== zone.zoneId); this.apiMessage = 'DNS 区域已删除'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  editDNSRecord(record: DNSRecord): void { this.editingDNSRecord = record; this.dnsRecordForm = { ...record }; }
+  async createDNSRecord(): Promise<void> { if (!this.selectedNetwork || !this.dnsRecordForm.name?.trim() || !this.dnsRecordForm.value?.trim()) return; try { const editing = Boolean(this.editingDNSRecord); const item = await this.request<DNSRecord>(editing ? 'PATCH' : 'POST', editing ? OPS_API.dnsRecord(this.editingDNSRecord!.recordId) : OPS_API.dnsRecords(this.selectedNetwork.network.networkId), { ownerId: this.selectedNetwork.network.ownerId, ...this.dnsRecordForm, ttl: Number(this.dnsRecordForm.ttl || 300) }); this.dnsRecords = [...this.dnsRecords.filter((record) => record.recordId !== item.recordId), item]; this.dnsRecordForm = { zoneId: '', name: '', type: 'A', value: '', ttl: 300 }; this.editingDNSRecord = null; this.apiMessage = 'DNS 记录已保存'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  async deleteDNSRecord(record: DNSRecord): Promise<void> { if (!this.selectedNetwork) return; try { await this.request('DELETE', OPS_API.dnsRecord(record.recordId), { ownerId: this.selectedNetwork.network.ownerId }); this.dnsRecords = this.dnsRecords.filter((item) => item.recordId !== record.recordId); this.apiMessage = 'DNS 记录已删除'; this.notifyStateChanged(); } catch (error) { this.apiMessage = this.errorMessage(error); } }
 
   private formatDevice(device: OpsDevice): OpsDevice {
     return {

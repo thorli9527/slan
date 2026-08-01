@@ -19,4 +19,3 @@ func (r sendClientMessageRequest) toInput() servicepkg.SendClientMessageInput {
 		Metadata:       r.Metadata,
 	}
 }
-

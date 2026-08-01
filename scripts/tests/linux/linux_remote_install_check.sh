@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/ops_test_network.sh"
 
 REMOTE_HOST="${SLAN_REMOTE_LINUX_HOST:-100.87.66.24}"
 REMOTE_USER="${SLAN_REMOTE_LINUX_USER:-root}"
@@ -16,6 +17,7 @@ REMOTE_SSH_KEY="${SLAN_REMOTE_LINUX_SSH_KEY:-}"
 REMOTE_DIR="${SLAN_REMOTE_LINUX_WORK_DIR:-/tmp/slan-linux-remote-install-check}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 TRAY_MODE="${SLAN_LINUX_TRAY_MODE:-disabled}"
 BUILD_REMOTE_PACKAGE="${SLAN_REMOTE_LINUX_BUILD_PACKAGE_REMOTE:-1}"
 SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1}"
@@ -23,6 +25,13 @@ SERVICE_PORT="${SLAN_CLIENT_CORE_SERVICE_PORT:-46392}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 TTL_SECONDS="${SLAN_REMOTE_LINUX_BOOTSTRAP_TTL_SECONDS:-1800}"
 DEVICE_ALIAS="${SLAN_REMOTE_LINUX_DEVICE_ALIAS:-Remote Linux Install Check}"
+TEST_USER_ID=""
+TEST_NETWORK_ID=""
+
+cleanup_test_network() {
+  slan_ops_delete_test_network "$OPS_BASE_URL" "$TEST_USER_ID" "$TEST_NETWORK_ID"
+}
+trap cleanup_test_network EXIT
 
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
   EMAIL="$SLAN_TEST_EMAIL"
@@ -162,7 +171,7 @@ main() {
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
 
-  local auth_json user_id user_token networks_json network_id bootstrap_json bootstrap_id bootstrap_key install_command
+  local auth_json user_id user_token network_id bootstrap_json bootstrap_id bootstrap_key install_command
   auth_json="$(curl --silent --show-error --fail \
     -X POST "${BIZ_URL}/api/app/auth/login" \
     -H 'Content-Type: application/json' \
@@ -171,16 +180,16 @@ main() {
   user_token="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
   [[ -n "$user_id" && -n "$user_token" ]] || fail "failed to login bootstrap test user"
 
-  log "resolve default network"
-  networks_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${user_token}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${user_id}")"
-  network_id="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
-  [[ -n "$network_id" ]] || fail "failed to resolve default network"
+  log "create managed test network"
+  slan_ops_create_test_network "$OPS_BASE_URL" "$user_id" "linux-remote-$(date +%s%N)" \
+    || fail "failed to create managed test network"
+  network_id="$SLAN_OPS_TEST_NETWORK_ID"
+  TEST_USER_ID="$user_id"
+  TEST_NETWORK_ID="$network_id"
 
   log "create bootstrap installation key"
   bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
+    -X POST "${WEB_BASE_URL}/api/app/device-bootstrap-keys" \
     -H "Authorization: Bearer ${user_token}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${user_id}\",\"networkId\":\"${network_id}\",\"deviceAlias\":\"${DEVICE_ALIAS}\",\"ttlSeconds\":${TTL_SECONDS}}")"
@@ -214,11 +223,13 @@ fi
 
   log "upload Linux package to remote host"
   remote_expect_scp "$package_path" "$REMOTE_DIR/$package_name"
+  remote_expect_ssh "mkdir -p '$REMOTE_DIR/lib'"
+  remote_expect_scp "$ROOT_DIR/client_v2/install/linux/install.sh" "$REMOTE_DIR/install.sh"
+  remote_expect_scp "$ROOT_DIR/client_v2/install/linux/lib/slan-linux-install.sh" "$REMOTE_DIR/lib/slan-linux-install.sh"
 
   log "run remote Linux installer"
   remote_expect_ssh "bash -lc '
 set -euo pipefail
-curl -fsSL \"${BIZ_URL%/}/downloads/clients/install.sh\" -o \"$REMOTE_DIR/install.sh\"
 ${install_command}
 '"
 

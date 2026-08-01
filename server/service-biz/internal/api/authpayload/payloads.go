@@ -32,8 +32,8 @@ func ConsoleLoginKey(view servicepkg.ConsoleLoginKeyView) map[string]any {
 	}
 }
 
-func SessionWithDefaultNetwork(view servicepkg.AuthSessionView, defaultNetwork *servicepkg.NetworkSummaryView) map[string]any {
-	payload := map[string]any{
+func LoginSession(view servicepkg.AuthSessionView) map[string]any {
+	return map[string]any{
 		"auth":         Session(view),
 		"accessToken":  sessionAccessToken(view),
 		"refreshToken": sessionRefreshToken(view),
@@ -41,20 +41,6 @@ func SessionWithDefaultNetwork(view servicepkg.AuthSessionView, defaultNetwork *
 		"email":        sessionEmail(view),
 		"expiresIn":    sessionExpiresIn(view),
 	}
-	if defaultNetwork != nil {
-		network := defaultNetwork.Network
-		payload["defaultNetwork"] = map[string]any{
-			"networkId": network.NetworkID,
-			"name":      network.Name,
-			"status":    network.Status,
-		}
-		payload["activeNetworkId"] = network.NetworkID
-	}
-	return payload
-}
-
-func AppSession(view servicepkg.AuthSessionView, defaultNetwork *servicepkg.NetworkSummaryView) map[string]any {
-	return SessionWithDefaultNetwork(view, defaultNetwork)
 }
 
 func sessionUserID(view servicepkg.AuthSessionView) string {

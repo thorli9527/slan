@@ -212,7 +212,7 @@ func (s *networkAccessTestNetworks) ListNetworksByDevice(_ context.Context, devi
 	items := make([]model.Network, 0)
 	for networkID, memberships := range s.networkDevices {
 		for _, membership := range memberships {
-			if membership.DeviceID != deviceID {
+			if membership.DeviceID != deviceID || !networkMemberActive(membership) {
 				continue
 			}
 			if item, ok := s.networks[networkID]; ok {
@@ -232,7 +232,11 @@ func (s *networkAccessTestNetworks) SaveNetwork(_ context.Context, item model.Ne
 	return nil
 }
 
-func (s *networkAccessTestNetworks) DeleteNetwork(context.Context, string) error { return nil }
+func (s *networkAccessTestNetworks) DeleteNetwork(_ context.Context, networkID string) error {
+	delete(s.networks, networkID)
+	delete(s.networkDevices, networkID)
+	return nil
+}
 func (s *networkAccessTestNetworks) ListNetworkDevices(_ context.Context, networkID string) ([]model.NetworkDevice, error) {
 	items := s.networkDevices[networkID]
 	out := make([]model.NetworkDevice, len(items))

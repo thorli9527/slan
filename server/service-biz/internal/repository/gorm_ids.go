@@ -29,7 +29,3 @@ func (s *GormStore) NewSecurityGroupID() string      { return s.nextID("security
 func (s *GormStore) NewSecurityRuleID() string       { return s.nextID("security_rule", "sgr") }
 func (s *GormStore) NewRelayNodeID() string          { return s.nextID("relay_node", "relay") }
 func (s *GormStore) NewPunchNodeID() string          { return s.nextID("punch_node", "punch") }
-func (s *GormStore) NewClientDownloadID() string     { return s.nextID("client_download", "download") }
-func (s *GormStore) NewProductID() string            { return s.nextID("product", "product") }
-func (s *GormStore) NewOrderID() string              { return s.nextID("order", "order") }
-func (s *GormStore) NewRenewalID() string            { return s.nextID("renewal", "renewal") }

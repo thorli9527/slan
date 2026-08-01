@@ -10,7 +10,7 @@ import (
 	"github.com/slan/service-biz/internal/repository"
 )
 
-func listRelayNodeEntities(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsRepository, nowFn func() time.Time, networkID string) ([]model.RelayNode, error) {
+func listRelayNodeEntities(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsNodeRepository, nowFn func() time.Time, networkID string) ([]model.RelayNode, error) {
 	networkID = normalizeNetworkID(networkID)
 	if networkID == "" {
 		return nil, ErrInvalidArgument
@@ -96,7 +96,7 @@ func relayCandidatesFromNodes(items []model.RelayNode) []RelayCandidateView {
 	return views
 }
 
-func listPunchNodeEntities(ctx context.Context, ops repository.OpsRepository, nowFn func() time.Time) ([]model.PunchNode, error) {
+func listPunchNodeEntities(ctx context.Context, ops repository.OpsNodeRepository, nowFn func() time.Time) ([]model.PunchNode, error) {
 	if ops != nil {
 		items, err := ops.ListPunchNodes(ctx)
 		if err != nil {

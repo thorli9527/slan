@@ -6,7 +6,7 @@ endpoint values.
 ## Production Defaults
 
 - control plane base URL: `http://47.245.40.231:28080`
-- Web Console URL: `http://47.245.40.231:24200`
+- unified business API URL: `http://47.245.40.231:28080`
 
 ## Expected Consumers
 
@@ -28,7 +28,7 @@ These defaults are expected to stay aligned in the main client entrypoints:
 - Shell-based validation and publish scripts should prefer
   `scripts/lib/client_default_endpoints.sh` instead of repeating raw endpoint
   literals.
-- New shell entrypoints that consume client-facing control/Web/Ops defaults
+- New shell entrypoints that consume client-facing control/management/Ops defaults
   should source `scripts/lib/client_default_endpoints.sh` first, then layer any
   localhost or remote-special-case overrides on top.
 - New packaged client entrypoints should update this document and
@@ -36,7 +36,5 @@ These defaults are expected to stay aligned in the main client entrypoints:
   and the guard stay aligned.
 - For release or refactor checks, prefer `bash scripts/check_client_stack_guard.sh`
   so boundary, endpoint, and protocol-facing client guards run together.
-- Host-mapping behavior for Web Console derivation is defined separately in
-  `client_v2/docs/web-console-url-resolution.md`.
 - Rust remains the owner of `/api/app/...` business API access; these values are
   packaged defaults only.

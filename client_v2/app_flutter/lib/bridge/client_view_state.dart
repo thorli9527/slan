@@ -6,6 +6,7 @@ class ClientViewState {
     required this.syncing,
     required this.switchEnabled,
     this.syncReason,
+    this.userAuthenticated,
     this.userLabel,
     this.deviceId,
     this.virtualIp,
@@ -26,6 +27,11 @@ class ClientViewState {
 
   /// 是否已登录。
   final bool signedIn;
+
+  /// 是否已完成用户认证。设备 token 可维持后台会话，但不等同于用户登录。
+  final bool? userAuthenticated;
+
+  bool get hasUserSession => userAuthenticated ?? signedIn;
 
   /// 当前用户展示名或邮箱。
   final String? userLabel;
@@ -100,6 +106,7 @@ class ClientViewState {
     final networkEnabled = json['networkEnabled'] == true;
     return ClientViewState(
       signedIn: json['signedIn'] == true,
+      userAuthenticated: json['userAuthenticated'] as bool?,
       userLabel: json['userLabel'] as String?,
       deviceId: json['deviceId'] as String?,
       virtualIp: _virtualIp(json['virtualIp']),
@@ -130,6 +137,7 @@ class ClientViewState {
   /// 字段按业务语义处理，notice/error 传入 null 表示清除当前提示或错误。
   ClientViewState copyWith({
     bool? signedIn,
+    bool? userAuthenticated,
     String? userLabel,
     String? deviceId,
     String? virtualIp,
@@ -155,6 +163,7 @@ class ClientViewState {
   }) {
     return ClientViewState(
       signedIn: signedIn ?? this.signedIn,
+      userAuthenticated: userAuthenticated ?? this.userAuthenticated,
       userLabel: userLabel ?? this.userLabel,
       deviceId: deviceId ?? this.deviceId,
       virtualIp: clearVirtualIp
@@ -190,6 +199,7 @@ class ClientViewState {
     return identical(this, other) ||
         other is ClientViewState &&
             signedIn == other.signedIn &&
+            userAuthenticated == other.userAuthenticated &&
             userLabel == other.userLabel &&
             deviceId == other.deviceId &&
             virtualIp == other.virtualIp &&
@@ -218,6 +228,7 @@ class ClientViewState {
   int get hashCode {
     return Object.hashAll([
       signedIn,
+      userAuthenticated,
       userLabel,
       deviceId,
       virtualIp,

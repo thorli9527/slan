@@ -42,30 +42,6 @@ services:
       postgres:
         condition: service_healthy
 
-  server-biz-web-console:
-    image: slan-service-biz:latest
-    build:
-      context: ./server/service-biz
-      dockerfile: Dockerfile
-    environment:
-      SLAN_BIZ_ADDR: ":8080"
-      SLAN_BIZ_ROUTE_SET: "web"
-      SLAN_SERVICE_BIZ_DB_HOST: postgres
-      SLAN_SERVICE_BIZ_DB_PORT: 5432
-      SLAN_SERVICE_BIZ_DB_USER: ${SLAN_BIZ_DB_USER:-slan}
-      SLAN_SERVICE_BIZ_DB_PASSWORD: ${SLAN_BIZ_DB_PASSWORD:-slan}
-      SLAN_SERVICE_BIZ_DB_NAME: ${SLAN_BIZ_DB_NAME:-slan}
-      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
-      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
-      SLAN_RELAY_ENDPOINTS: ${SLAN_RELAY_ENDPOINTS:-}
-      SLAN_WIRE_RELAY_PUBLIC_HOST: ${SLAN_WIRE_RELAY_PUBLIC_HOST:-}
-      SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: ${SLAN_WIRE_RELAY_PUBLIC_UDP_PORT:-29110}
-    ports:
-      - "${SLAN_BIZ_WEB_PORT:-39081}:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   server-biz-ops:
     image: slan-service-biz:latest
     build:
@@ -89,17 +65,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-  server-ui-web:
-    image: slan-server-ui-web:latest
-    build:
-      context: ./server/web-ui
-      dockerfile: Dockerfile
-    ports:
-      - "${SLAN_BIZ_WEB_UI_PORT:-24300}:80"
-    depends_on:
-      server-biz-web-console:
-        condition: service_started
 
   opt-ui:
     image: slan-opt-ui:latest

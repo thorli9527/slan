@@ -18,4 +18,3 @@ func (s *GormStore) AcquireAdvisoryLock(lockID int64) error {
 func (s *GormStore) DialectName() string {
 	return s.db.Dialector.Name()
 }
-

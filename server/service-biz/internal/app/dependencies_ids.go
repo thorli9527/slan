@@ -1,12 +1,11 @@
 package app
 
 type IDGenerators struct {
-	Auth     AuthIDGenerators
-	Device   DeviceIDGenerators
-	Network  NetworkIDGenerators
-	Ops      OpsIDGenerators
-	Wire     WireIDGenerators
-	Download DownloadIDGenerators
+	Auth    AuthIDGenerators
+	Device  DeviceIDGenerators
+	Network NetworkIDGenerators
+	Ops     OpsIDGenerators
+	Wire    WireIDGenerators
 }
 
 type AuthIDGenerators struct {
@@ -28,15 +27,9 @@ type NetworkIDGenerators struct {
 type OpsIDGenerators struct {
 	NewSessionID  func(string) string
 	NewOperatorID func() string
-	NewProductID  func() string
-	NewOrderID    func() string
 }
 
 type WireIDGenerators struct {
 	NewRelayNodeID func() string
 	NewPunchNodeID func() string
-}
-
-type DownloadIDGenerators struct {
-	NewDownloadID func() string
 }

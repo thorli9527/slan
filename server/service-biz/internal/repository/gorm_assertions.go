@@ -9,5 +9,5 @@ var (
 	_ OperatorRepository        = (*GormStore)(nil)
 	_ OperatorSessionRepository = (*GormStore)(nil)
 	_ AuditRepository           = (*GormStore)(nil)
-	_ OpsRepository             = (*GormStore)(nil)
+	_ OpsNodeRepository         = (*GormStore)(nil)
 )

@@ -35,7 +35,7 @@ func (h AuthHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusCreated, appAuthSessionPayload(r.Context(), h.NetworkCore, view))
+	serviceapi.WriteJSON(w, http.StatusCreated, appAuthSessionPayload(view))
 }
 
 func (h AuthHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +50,7 @@ func (h AuthHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusOK, appAuthSessionPayload(r.Context(), h.NetworkCore, view))
+	serviceapi.WriteJSON(w, http.StatusOK, appAuthSessionPayload(view))
 }
 
 func (h AuthHandler) RenewUserSession(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +63,7 @@ func (h AuthHandler) RenewUserSession(w http.ResponseWriter, r *http.Request) {
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusOK, appAuthSessionPayload(r.Context(), h.NetworkCore, view))
+	serviceapi.WriteJSON(w, http.StatusOK, appAuthSessionPayload(view))
 }
 
 func (h AuthHandler) LogoutUser(w http.ResponseWriter, r *http.Request) {

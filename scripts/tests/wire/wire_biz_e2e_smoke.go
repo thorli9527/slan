@@ -22,9 +22,8 @@ var httpClient = &http.Client{
 }
 
 type authResponse struct {
-	AccessToken    string          `json:"accessToken,omitempty"`
-	Auth           authPayload     `json:"auth,omitempty"`
-	DefaultNetwork networkResponse `json:"defaultNetwork,omitempty"`
+	AccessToken string      `json:"accessToken,omitempty"`
+	Auth        authPayload `json:"auth,omitempty"`
 }
 
 type authPayload struct {
@@ -41,10 +40,9 @@ type authSession struct {
 }
 
 type deviceResponse struct {
-	DeviceID             string              `json:"deviceId,omitempty"`
-	CurrentVirtualIP     string              `json:"currentVirtualIp,omitempty"`
-	Device               devicePayload       `json:"device,omitempty"`
-	DefaultNetworkDevice networkDeviceRecord `json:"defaultNetworkDevice,omitempty"`
+	DeviceID         string        `json:"deviceId,omitempty"`
+	CurrentVirtualIP string        `json:"currentVirtualIp,omitempty"`
+	Device           devicePayload `json:"device,omitempty"`
 }
 
 type devicePayload struct {
@@ -176,6 +174,7 @@ func main() {
 	defer exitOnFailure()
 
 	bizURL := env("SLAN_BIZ_E2E_BIZ_URL", "http://127.0.0.1:28080")
+	opsURL := env("SLAN_OPS_BASE_URL", bizURL)
 	wireURL := env("SLAN_BIZ_E2E_WIRE_URL", "http://127.0.0.1:29100")
 	wireBURL := env("SLAN_BIZ_E2E_WIRE_B_URL", "http://127.0.0.1:29101")
 	relayAdminURL := env("SLAN_BIZ_E2E_RELAY_ADMIN_URL", "http://127.0.0.1:29111")
@@ -234,6 +233,31 @@ func main() {
 	}
 	defer cleanupSmokeDevice(bizURL, userID, deviceID)
 
+	var opsAuth struct {
+		Token string `json:"token"`
+	}
+	postJSON(opsURL+"/api/ops/auth/login", "", map[string]any{
+		"email":    env("SLAN_OPS_EMAIL", "admin1"),
+		"password": env("SLAN_OPS_PASSWORD", "admin1"),
+	}, &opsAuth)
+	if opsAuth.Token == "" {
+		fail("missing operator access token")
+	}
+	var network struct {
+		Network networkResponse `json:"network"`
+	}
+	postJSON(opsURL+"/api/ops/networks", opsAuth.Token, map[string]any{
+		"ownerId":          userID,
+		"name":             "wire-e2e-" + suffix,
+		"cidr":             "10.0.0.0/8",
+		"intraGroupPolicy": "allow",
+	}, &network)
+	networkID := network.Network.NetworkID
+	if networkID == "" {
+		fail("operator network creation returned no network id")
+	}
+	defer deleteJSON(opsURL+"/api/ops/networks/"+url.PathEscape(networkID), opsAuth.Token, map[string]any{"ownerId": userID})
+
 	var device deviceResponse
 	postJSON(bizURL+"/api/app/devices/register", auth.AccessToken, map[string]any{
 		"userId":    userID,
@@ -251,12 +275,12 @@ func main() {
 		fail("unexpected device response: %+v", device)
 	}
 
-	networkID := auth.DefaultNetwork.NetworkID
-	if networkID == "" {
-		networkID = device.DefaultNetworkDevice.NetworkID
-	}
-	if networkID == "" {
-		fail("missing default network: auth=%+v device=%+v", auth, device)
+	var member networkDeviceRecord
+	postJSON(opsURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/devices/"+url.PathEscape(deviceID), opsAuth.Token, map[string]any{
+		"ownerId": userID,
+	}, &member)
+	if member.DeviceID != deviceID {
+		fail("operator network membership returned unexpected device: %+v", member)
 	}
 
 	expectGETStatus(bizURL+"/internal/wire/peers/"+nodeID+"/authz", nil, http.StatusUnauthorized)
@@ -486,14 +510,7 @@ func main() {
 	smokeRelay(relayAddr, relayResp.Ticket, nodeID)
 	smokeDerp(derpAddr, derpResp.Ticket, nodeID)
 
-	disabledValue := false
-	var disabled networkDeviceRecord
-	patchJSON(bizURL+"/api/web/networks/"+networkID+"/devices/"+deviceID, auth.AccessToken, map[string]any{
-		"enabled": disabledValue,
-	}, &disabled)
-	if disabled.DeviceID != deviceID || disabled.Enabled {
-		fail("unexpected disabled network device response: %+v want device=%s enabled=false", disabled, deviceID)
-	}
+	deleteJSON(opsURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/devices/"+url.PathEscape(deviceID), opsAuth.Token, map[string]any{"ownerId": userID})
 
 	expectPostStatus(wireURL+"/relay/tickets", "", map[string]any{
 		"peerId":     nodeID,
@@ -659,7 +676,7 @@ func cleanupSmokeDevice(bizURL, userID, deviceID string) {
 	}
 	req, err := http.NewRequest(
 		http.MethodDelete,
-		bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
 		nil,
 	)
 	if err != nil {
@@ -788,6 +805,24 @@ func postJSON(url, token string, in, out any) {
 	}
 	if out != nil {
 		must(json.Unmarshal(body, out))
+	}
+}
+
+func deleteJSON(url, token string, in any) {
+	payload, err := json.Marshal(in)
+	must(err)
+	req, err := http.NewRequest(http.MethodDelete, url, bytes.NewReader(payload))
+	must(err)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("DELETE %s status=%d body=%s", url, resp.StatusCode, string(body))
 	}
 }
 

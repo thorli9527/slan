@@ -12,11 +12,6 @@ ops.slan.localhost {
 	reverse_proxy opt-ui:80
 }
 
-web.slan.localhost {
-	tls internal
-	reverse_proxy server-ui-web:80
-}
-
 main.slan.localhost {
 	tls internal
 	reverse_proxy opt-ui:80

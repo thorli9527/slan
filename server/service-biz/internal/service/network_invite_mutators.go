@@ -58,12 +58,13 @@ func acceptNetworkInvite(invite model.DeviceInvite, userID string, networkDevice
 
 func newNetworkDeviceMembership(networkID, deviceID string, enabled bool, now int64) model.NetworkDevice {
 	return model.NetworkDevice{
-		NetworkID:      networkID,
-		DeviceID:       deviceID,
-		Enabled:        enabled,
-		MemberStatus:   model.NetworkMemberStatusActive,
-		PresenceStatus: model.DevicePresenceStatusOffline,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		NetworkID:        networkID,
+		DeviceID:         deviceID,
+		Enabled:          enabled,
+		MemberStatus:     model.NetworkMemberStatusActive,
+		MembershipSource: model.NetworkMembershipSourceDirect,
+		PresenceStatus:   model.DevicePresenceStatusOffline,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 }

@@ -19,13 +19,8 @@ type AuthUserAccountUseCase interface {
 	ChangeUserPassword(ctx context.Context, input ChangeUserPasswordInput) (ChangedUserPasswordView, error)
 }
 
-type AuthUserEntitlementUseCase interface {
-	UserEntitlement(ctx context.Context, userID string) (UserEntitlementView, error)
-}
-
 type AuthUserUseCase interface {
 	AuthUserRegistrationUseCase
 	AuthUserSessionUseCase
 	AuthUserAccountUseCase
-	AuthUserEntitlementUseCase
 }

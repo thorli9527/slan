@@ -72,49 +72,11 @@ services:
       SLAN_SERVICE_BIZ_DB_NAME: slan
       SLAN_SERVICE_BIZ_DB_SSLMODE: disable
       SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
-      SLAN_CLIENT_DOWNLOAD_DIR: /var/lib/slan/client-downloads
       SLAN_CLIENT_LOG_DIR: /var/lib/slan/client-logs
     ports:
       - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
     volumes:
-      - slan-client-downloads:/var/lib/slan/client-downloads
       - slan-client-logs:/var/lib/slan/client-logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  server-biz-web-console:
-    image: slan-service-biz:latest
-    build:
-      context: ./server/service-biz
-      dockerfile: Dockerfile
-    environment:
-      SLAN_BIZ_ADDR: ":8080"
-      SLAN_BIZ_ROUTE_SET: "web"
-      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
-      SLAN_RELAY_TICKET_SECRET: "${SLAN_RELAY_TICKET_SECRET:-change-me-relay-ticket-secret}"
-      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
-      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
-      SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
-      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
-      SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
-      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
-      SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-}"
-      SLAN_WIRE_RELAY_PUBLIC_HOST: "${SLAN_WIRE_RELAY_PUBLIC_HOST:-47.245.40.231}"
-      SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: "${SLAN_WIRE_RELAY_PUBLIC_UDP_PORT:-29110}"
-      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-}"
-      SLAN_SERVICE_BIZ_DB_HOST: postgres
-      SLAN_SERVICE_BIZ_DB_PORT: 5432
-      SLAN_SERVICE_BIZ_DB_USER: postgres
-      SLAN_SERVICE_BIZ_DB_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
-      SLAN_SERVICE_BIZ_DB_NAME: slan
-      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
-      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
-      SLAN_CLIENT_DOWNLOAD_DIR: /var/lib/slan/client-downloads
-    ports:
-      - "${SLAN_BIZ_CONSOLE_PUBLIC_PORT:-28081}:8080"
-    volumes:
-      - slan-client-downloads:/var/lib/slan/client-downloads
     depends_on:
       postgres:
         condition: service_healthy
@@ -146,11 +108,8 @@ services:
       SLAN_SERVICE_BIZ_DB_NAME: slan
       SLAN_SERVICE_BIZ_DB_SSLMODE: disable
       SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
-      SLAN_CLIENT_DOWNLOAD_DIR: /var/lib/slan/client-downloads
     ports:
       - "${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}:8080"
-    volumes:
-      - slan-client-downloads:/var/lib/slan/client-downloads
     depends_on:
       postgres:
         condition: service_healthy
@@ -310,17 +269,6 @@ services:
       server-wire:
         condition: service_started
 
-  server-ui-web:
-    image: slan-server-ui-web:latest
-    build:
-      context: ./server/web-ui
-      dockerfile: Dockerfile
-    ports:
-      - "${SLAN_WEB_PORT:-24200}:80"
-    depends_on:
-      server-biz-web-console:
-        condition: service_started
-
   opt-ui:
     image: slan-opt-ui:latest
     build:
@@ -344,11 +292,7 @@ services:
     depends_on:
       server-biz:
         condition: service_started
-      server-biz-web-console:
-        condition: service_started
       server-biz-ops:
-        condition: service_started
-      server-ui-web:
         condition: service_started
       opt-ui:
         condition: service_started
@@ -356,7 +300,6 @@ services:
 volumes:
   slan-postgres-data:
   slan-redis-data:
-  slan-client-downloads:
   slan-client-logs:
   slan-caddy-data:
   slan-caddy-config:

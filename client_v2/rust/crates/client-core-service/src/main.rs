@@ -1030,11 +1030,11 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
                 &context.state_notifier,
             )
         }
-        LocalServiceMethod::LocalRegisterTestUser => return handle_register_test_user(request),
         LocalServiceMethod::LocalAcceptNetworkInvite => {
             return handle_accept_network_invite(request, &context.runtime)
         }
         LocalServiceMethod::LocalSendClientMessage => return handle_send_client_message(request),
+        LocalServiceMethod::LocalRegisterTestUser => return handle_register_test_user(request),
         LocalServiceMethod::LocalDiagnosticsExport => {
             return handle_export_diagnostics(&context.runtime)
         }
@@ -2312,15 +2312,6 @@ fn handle_ingest_platform_runtime_state(
     .context("encode platform runtime state ingest response")
 }
 
-fn handle_register_test_user(request: ServiceRequest) -> Result<String> {
-    let input: RegisterTestUserRequest =
-        serde_json::from_value(request.args).context("decode register test user request")?;
-    let auth = ControlPlaneClient::from_env()
-        .register_user_with_password(&input.email, &input.password)
-        .context("register test user")?;
-    serde_json::to_string(&auth).context("encode register test user response")
-}
-
 fn control_transport_status() -> Result<ControlTransportStatus> {
     let session = load_session()?;
     Ok(control_transport::control_transport_status(&session))
@@ -2446,6 +2437,15 @@ fn handle_send_client_message(request: ServiceRequest) -> Result<String> {
         "qos": response.qos,
     }))
     .context("encode send client message response")
+}
+
+fn handle_register_test_user(request: ServiceRequest) -> Result<String> {
+    let input: RegisterTestUserRequest =
+        serde_json::from_value(request.args).context("decode register test user request")?;
+    let auth = ControlPlaneClient::from_env()
+        .register_user_with_password(&input.email, &input.password)
+        .context("register test user")?;
+    serde_json::to_string(&auth).context("encode register test user response")
 }
 
 fn control_transport_tick_plan(args: Value) -> Result<ControlTransportTickPlan> {

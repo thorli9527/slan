@@ -13,20 +13,19 @@
 - Relay 回退建连
 - 断开与状态收敛
 
-## 1. 用户注册与登录
+## 1. 用户创建与登录
 
 ```mermaid
 sequenceDiagram
     autonumber
+    participant Ops as 运营端
     participant User as 用户
     participant App as App
     participant Biz as Biz
 
-    User->>App: 输入邮箱和密码
-    App->>Biz: POST /auth/register
-    Biz-->>App: AuthResponse(accessToken, refreshToken)
-
-    User->>App: 再次登录
+    Ops->>Biz: POST /api/ops/users
+    Biz-->>Ops: User
+    User->>App: 输入运营端分配的账号和密码
     App->>Biz: POST /auth/login
     Biz-->>App: AuthResponse(accessToken, refreshToken)
     App-->>User: 展示已登录状态

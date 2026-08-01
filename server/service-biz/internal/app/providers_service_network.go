@@ -14,6 +14,7 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 			Networks:           repos.Networks,
 			Ops:                repos.Ops,
 			EventPublisher:     eventPublisher,
+			DevicePublisher:    devicePublisher,
 			VersionPushTracker: servicepkg.NewNetworkVersionPushTracker(),
 			NewNetworkID:       ids.NewNetworkID,
 			Now:                deps.now(),

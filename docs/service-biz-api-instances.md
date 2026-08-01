@@ -1,6 +1,6 @@
 # Service Biz API Instances
 
-`service-biz` 使用同一镜像运行三个实例，通过 `SLAN_BIZ_ROUTE_SET` 分离 App、Web Console 和 Ops 接口。新增接口时必须先确认调用方归属，再加入对应路由文件：
+`service-biz` 运行统一业务 API 实例和独立 Ops 实例。原 App/Web 路由已合并到统一业务实例，并提供 `/api/app` 主路径。`internal/api/management` 目前仅是管理 Handler 的内部实现目录，不再发布 `旧 Web API 前缀` 路径或对应独立服务：
 
 - App API: `server/service-biz/internal/biz/app_api_routes.go`
 - Web Console API: `server/service-biz/internal/biz/web_console_api_routes.go`
@@ -10,29 +10,25 @@
 
 | 实例 | Route set | 默认端口 | 调用方 | 备注 |
 | --- | --- | --- | --- | --- |
-| App API | `app` | `28080` | 桌面端、移动端、wire/relay/derp、BifroMQ | 唯一启动 MQTT subscriber / retry worker 的业务实例 |
-| Web Console API | `web` | `28081` | `/opt/web-console` / `server-ui-web` | 面向普通用户控制台，不暴露 ops、MQTT、内部 wire |
+| Unified API | `all` | `28080` | 桌面端、移动端、运营资源管理、wire/relay/derp、BifroMQ | `/api/app` 为主入口，仅兼容 `/api/app` |
 | Ops API | `ops` | `28082` | 运维/运营控制台 `opt-ui` | 只暴露 `/api/ops/*` 管理接口 |
 
 ## Shared
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
-| `GET` | `/healthz` | 无 | 健康检查；部署脚本用它确认三个实例都可用 |
-| `GET` | `/api/client-downloads` | 无 | 公共客户端下载列表；App/Web/Ops 都可能展示下载入口 |
-| `GET` | `/downloads/clients/{fileName}` | 无 | 客户端安装包下载；文件名必须来自已登记下载记录 |
+| `GET` | `/healthz` | 无 | 健康检查；部署脚本用它确认业务和 Ops 实例可用 |
 
-## App API
+## Unified Business API
 
-App API 服务桌面端和移动端控制面。它同时注册 `/internal/wire/*` 和 `/mqtt/*`，并默认启动 MQTT control subscriber / delivery retry worker。
+统一业务 API 服务桌面端、移动端和业务资源管理。它同时注册 `/internal/wire/*` 和 `/mqtt/*`，并默认启动 MQTT control subscriber / delivery retry worker。
 
 ### Auth And Device Session
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | 无 | 移动端集成测试和首次账号注册入口；创建用户会初始化默认资源 |
-| `POST` | `/api/auth/login` | 无 | 桌面/移动端账号密码登录；可携带本机 `deviceId` 绑定登录上下文 |
-| `POST` | `/api/auth/renew` | 用户 token | 刷新用户会话；客户端重新拉取登录态时使用 |
+| `POST` | `/api/app/auth/login` | 无 | 桌面/移动端账号密码登录；可携带本机 `deviceId` 绑定登录上下文 |
+| `POST` | `/api/app/auth/renew` | 用户 token | 刷新用户会话；客户端重新拉取登录态时使用 |
 | `POST` | `/api/app/auth/logout` | 用户 token | 用户退出登录；可同时传入 device token 清理设备会话 |
 | `POST` | `/api/app/auth/console-login-keys` | 用户 token | App 生成 Web Console 快捷登录 key；不要放到 Ops 实例 |
 | `POST` | `/api/app/auth/device-login-devices` | 无 | App 发起设备登录准备流程；Web Console 也需要该接口来配合确认 |
@@ -83,29 +79,29 @@ App API 服务桌面端和移动端控制面。它同时注册 `/internal/wire/*
 | `PATCH` | `/internal/wire/admin/derp-nodes/{regionId}/{nodeId}/status` | DERP 状态更新 |
 | `DELETE` | `/internal/wire/admin/derp-nodes/{regionId}/{nodeId}` | DERP 删除 |
 
-## Web Console API
+## Management Compatibility Routes
 
-Web Console API 服务 `/opt/web-console`。它不注册 `/api/ops/*`、`/api/device/session/*`、`/mqtt/*`、`/internal/wire/*`。
+原 Web 管理接口现由统一业务 API 的 `/api/app` 提供。`旧 Web API 前缀` 路径、独立 Web Console 服务和 UI 均已删除。
+
+用户创建以及网络、设备分组、DNS 和安全组管理只通过 Ops API。统一业务 API 仅提供用户登录、设备运行时和只读配置接口。
 
 ### Auth
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | 无 | Web Console 注册账号 |
-| `POST` | `/api/auth/login` | 无 | Web Console 账号密码登录 |
-| `POST` | `/api/auth/renew` | 用户 token | 刷新 Web Console 会话 |
-| `POST` | `/api/auth/logout` | 用户 token | 退出 Web Console |
-| `POST` | `/api/auth/console-login-keys` | 用户 token | 生成一次性控制台登录 key |
-| `POST` | `/api/auth/console-login` | login key | App 跳转 Web Console 时使用 key 换取 Web 会话 |
-| `POST` | `/api/auth/device-login-devices` | 无 | 准备设备登录确认流程 |
-| `POST` | `/api/auth/device-login-devices/{deviceId}/complete` | 用户 token | 用户在 Web Console 确认某设备登录 |
+| `POST` | `/api/app/auth/login` | 无 | 用户名密码登录 |
+| `POST` | `/api/app/auth/renew` | 用户 token | 刷新用户会话 |
+| `POST` | `/api/app/auth/logout` | 用户 token | 退出登录 |
+| `POST` | `/api/app/auth/console-login-keys` | 用户 token | 旧客户端控制台快捷登录兼容接口 |
+| `POST` | `/api/app/auth/console-login` | login key | 旧客户端控制台快捷登录兼容接口 |
+| `POST` | `/api/app/auth/device-login-devices` | 无 | 旧浏览器登录准备流程兼容接口 |
+| `POST` | `/api/app/auth/device-login-devices/{deviceId}/complete` | 用户 token | 旧浏览器登录完成流程兼容接口 |
 
 ### Users And Aliases
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
 | `GET` | `/api/users` | 用户 token | 管理可见用户列表；当前主要用于控制台初始化 |
-| `GET` | `/api/users/{userId}/entitlement` | 用户 token | 获取套餐/配额信息 |
 | `PATCH` | `/api/users/{userId}/password` | 用户 token | 修改账号密码 |
 | `GET` | `/api/users/{userId}/user-aliases` | 用户 token | 获取指定用户别名 |
 | `GET` | `/api/user-aliases` | 用户 token/query | 获取当前用户或指定 owner 的别名 |
@@ -130,9 +126,9 @@ Web Console API 服务 `/opt/web-console`。它不注册 `/api/ops/*`、`/api/de
 | `GET` | `/api/device-invites` | 用户 token/query | 查询设备邀请 |
 | `POST` | `/api/device-invites/accept` | 用户 token | 接受设备邀请 |
 | `GET` | `/api/users/{userId}/device-invites` | 用户 token | 指定用户设备邀请 |
-| `POST` | `/api/web/device-bootstrap-keys` | 用户 token | 生成安装/接入 key |
-| `GET` | `/api/web/device-bootstrap-keys` | 用户 token/query | 查询接入 key |
-| `POST` | `/api/web/device-bootstrap-keys/{keyId}/revoke` | 用户 token | 撤销接入 key |
+| `POST` | `/api/app/device-bootstrap-keys` | 用户 token | 生成安装/接入 key |
+| `GET` | `/api/app/device-bootstrap-keys` | 用户 token/query | 查询接入 key |
+| `POST` | `/api/app/device-bootstrap-keys/{keyId}/revoke` | 用户 token | 撤销接入 key |
 | `GET` | `/api/users/{userId}/device-bootstrap-keys` | 用户 token | 查询指定用户接入 key |
 
 ### Networks
@@ -180,7 +176,9 @@ Web Console API 服务 `/opt/web-console`。它不注册 `/api/ops/*`、`/api/de
 
 ## Ops API
 
-Ops API 服务运维/运营控制台。它不注册 Web Console 普通业务接口、App 设备 session、MQTT webhook、内部 wire 路由。
+Ops API 服务运维/运营控制台。它不注册客户端设备 session、MQTT webhook 或内部 wire 路由。
+
+除 `POST /api/ops/auth/login` 外，所有 Ops 路由必须携带有效 Operator Bearer token；服务端校验会话有效期和运营账号 active 状态。资源写操作成功后统一记录 operator、动作、资源类型和资源 ID 到审计事件表。
 
 ### Auth And Audit
 
@@ -215,43 +213,34 @@ Ops API 服务运维/运营控制台。它不注册 Web Console 普通业务接�
 | `PATCH` | `/api/ops/punch-nodes/{nodeId}/status` | Operator token | 修改 Punch 节点状态 |
 | `DELETE` | `/api/ops/punch-nodes/{nodeId}` | Operator token | 删除 Punch 节点 |
 
-### Customers And Devices
+### Users And Devices
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
-| `GET` | `/api/ops/customers` | Operator token | 客户列表 |
-| `PATCH` | `/api/ops/customers/{customerId}` | Operator token | 修改客户状态、名称等 |
-| `POST` | `/api/ops/customers/{customerId}/assign-plan` | Operator token | 给客户分配套餐 |
+| `GET` | `/api/ops/users` | Operator token | 全局用户列表 |
+| `POST` | `/api/ops/users` | Operator token | 新增用户 |
+| `PATCH` | `/api/ops/users/{userId}` | Operator token | 修改用户状态、名称等 |
+| `PATCH` | `/api/ops/users/{userId}/password` | Operator token | 设置用户密码 |
 | `GET` | `/api/ops/devices` | Operator token | 全局设备列表 |
 | `PATCH` | `/api/ops/devices/{deviceId}` | Operator token | 运维侧修改设备状态等 |
 | `DELETE` | `/api/ops/devices/{deviceId}` | Operator token | 运维侧删除设备 |
 
-### Plans Products Orders Renewals
+### Global Networks And Notifications
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
-| `GET` | `/api/ops/plans` | Operator token | 套餐列表 |
-| `POST` | `/api/ops/plans` | Operator token | 创建/更新套餐 |
-| `PATCH` | `/api/ops/plans/{planCode}` | Operator token | 修改套餐 |
-| `GET` | `/api/ops/products` | Operator token | 商品列表 |
-| `POST` | `/api/ops/products` | Operator token | 创建商品 |
-| `PATCH` | `/api/ops/products/{productId}` | Operator token | 修改商品 |
-| `GET` | `/api/ops/orders` | Operator token | 订单列表 |
-| `POST` | `/api/ops/orders` | Operator token | 创建订单 |
-| `PATCH` | `/api/ops/orders/{orderId}` | Operator token | 修改订单 |
-| `GET` | `/api/ops/renewals` | Operator token | 续费记录列表 |
-| `PATCH` | `/api/ops/renewals/{renewalId}` | Operator token | 修改续费记录 |
+| `GET` | `/api/ops/networks` | Operator token | 全局网络列表 |
+| `GET` | `/api/ops/networks/{networkId}/devices` | Operator token | 网络设备列表 |
+| `POST` | `/api/ops/networks/{networkId}/devices/{deviceId}` | Operator token | 单设备加入网络并通知网络成员及目标客户端 |
+| `DELETE` | `/api/ops/networks/{networkId}/devices/{deviceId}` | Operator token | 单设备离开网络并通知网络成员及目标客户端 |
+| `POST/PATCH/DELETE` | `/api/ops/networks/{networkId}/dns/*`、`/api/ops/dns/*` | Operator token | DNS 变更并广播 resolver、版本和全量快照事件 |
+| `POST/PATCH/DELETE` | `/api/ops/networks/{networkId}/security-groups/*`、`/api/ops/security-*` | Operator token | 安全组变更并广播 ACL、版本和全量快照事件 |
 
-### Client Downloads
+单设备入网/离网会更新网络配置版本，向网络广播 `member_added` 或 `member_removed` 和 `network_snapshot`，并向目标设备发布 `device_network_membership_changed`。重复加入已存在的有效成员不会重复推送。离网使用持久化的 `excluded` 成员来源标记，防止设备被后续分组同步自动重新加入；再次由运营端加入时才恢复 active 状态。数据库启动迁移会为旧成员回填 `direct` 或 `device_group` 来源。
 
-| Method | Path | Auth | 备注 |
-| --- | --- | --- | --- |
-| `GET` | `/api/ops/client-downloads` | Operator token | 管理客户端下载记录 |
-| `POST` | `/api/ops/client-downloads` | Operator token | 上传/登记客户端安装包 |
-| `DELETE` | `/api/ops/client-downloads/{downloadId}` | Operator token | 删除客户端安装包记录 |
+用户套餐、商品、订单、续费管理和客户端发布模块已退役，不再注册相关路由。服务启动迁移会幂等删除对应历史表；客户端安装包由外部制品渠道交付，业务服务不再提供上传、存储或下载接口。
 
 ## Isolation rules
 
-- App API should not expose `/api/ops/*`.
-- Web Console API should not expose `/api/ops/*`, `/api/device/session/*`, `/mqtt/*`, or `/internal/wire/*`.
-- Ops API should not expose Web Console APIs, App device session APIs, `/mqtt/*`, or `/internal/wire/*`.
+- Unified business API must not expose `/api/ops/*`.
+- Ops API must not expose business session APIs, `/mqtt/*`, or `/internal/wire/*`.

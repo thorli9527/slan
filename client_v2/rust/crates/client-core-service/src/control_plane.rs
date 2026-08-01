@@ -1083,6 +1083,7 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
             .get("session")
             .ok_or_else(|| anyhow::anyhow!("login response missing auth.session"))?;
         return Ok(AuthPayload {
+            user_authenticated: Some(true),
             access_token: required_string(session, "token")?,
             refresh_token: optional_string(session, "refreshToken")
                 .or_else(|| optional_string(session, "token")),
@@ -1095,6 +1096,7 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
         });
     }
     Ok(AuthPayload {
+        user_authenticated: Some(true),
         access_token: required_string(response, "accessToken")?,
         refresh_token: optional_string(response, "refreshToken"),
         user_id: required_string(response, "userId")?,

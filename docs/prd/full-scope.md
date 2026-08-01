@@ -58,11 +58,11 @@ SLAN is a cross-platform secure networking platform for developers and teams. It
 
 - User analytics.
 - Network monitoring.
-- Billing support.
 - Administrative reports.
 
 ## Current Product Decisions
 
+- Commercial plans, billing, products, orders, and renewals are retired and out of scope.
 - The web console does not expose a dedicated device management page.
 - The web console does not expose manual subnet creation.
 - Network creation is explicit and dialog based.

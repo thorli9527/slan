@@ -14,7 +14,8 @@ check_no_legacy_new_names() {
     --glob '!**/.git/**' \
     --glob '!**/target/**' \
     --glob '!**/node_modules/**' \
-    --glob '!scripts/check_protocol_contracts.sh'; then
+    --glob '!scripts/check_protocol_contracts.sh' \
+    --glob '!scripts/tests/guard/check_protocol_contracts.sh'; then
     echo "legacy -new project names remain" >&2
     return 1
   fi
@@ -27,6 +28,74 @@ check_required_contracts() {
 	test -s "$ROOT_DIR/protocol/contracts/network.yaml"
 	test -s "$ROOT_DIR/protocol/contracts/system.yaml"
 	rg -q 'option go_package = "github.com/slan/protocol/protobuf/control;control";' "$ROOT_DIR/protocol/protobuf/control.proto"
+}
+
+check_no_retired_public_api_prefixes() {
+  if rg -n '/api/(v2|web)(/|["`])' \
+    "$ROOT_DIR/client_v2" \
+    "$ROOT_DIR/protocol" \
+    "$ROOT_DIR/docs" \
+    --glob '!**/*_test.go' \
+    --glob '!**/target/**' \
+    --glob '!**/build/**' \
+    --glob '!**/.dart_tool/**'; then
+    echo "retired /api/v2 or /api/web contract remains" >&2
+    return 1
+  fi
+}
+
+check_no_retired_plan_contracts() {
+  if rg -n 'assign-plan|/plans(:|/)|/plan-config:|/users/\{userId\}/plan:|/plan:|PlanStatus:|PlanConfig:|UserPlanOverride:|planOverride:|planCode:|freeDeviceLimit:' \
+    "$ROOT_DIR/protocol/openapi"; then
+    echo "retired plan contract remains in OpenAPI" >&2
+    return 1
+  fi
+}
+
+check_no_retired_ops_customer_contracts() {
+  if rg -n 'OpsCustomer|CustomerID|CustomerDirectory|/api/ops/customers' \
+    "$ROOT_DIR/server/service-biz/internal" \
+    "$ROOT_DIR/server/opt-ui/src" \
+    --glob '!**/*_test.go'; then
+    echo "retired ops customer contract remains" >&2
+    return 1
+  fi
+}
+
+check_no_retired_download_contracts() {
+  if rg -n 'ClientDownload|client-downloads|downloads/clients|ClientDownloadUpload' \
+    "$ROOT_DIR/protocol/openapi" \
+    "$ROOT_DIR/server/service-biz/internal" \
+    --glob '!**/*_test.go' \
+    --glob '!**/gorm_migrate.go'; then
+    echo "retired client upload/download contract remains" >&2
+    return 1
+  fi
+}
+
+check_node_repository_naming() {
+  if rg -n '\bCatalog\b|\bcatalog\b' \
+    "$ROOT_DIR/server/service-biz/internal/service/ops_node_usecase.go" \
+    "$ROOT_DIR/server/service-biz/internal/service/ops_node_validation.go" \
+    "$ROOT_DIR/server/service-biz/internal/service/wire_usecase.go" \
+    "$ROOT_DIR/server/service-biz/internal/service/wire_node_require.go"; then
+    echo "node repository still uses retired catalog naming" >&2
+    return 1
+  fi
+}
+
+check_no_retired_web_prefix() {
+	if [ -d "$ROOT_DIR/server/service-biz/internal/api/web" ]; then
+		echo "retired internal/api/web package remains" >&2
+		return 1
+	fi
+  if rg -n '"/api/web(?:/|")' \
+    "$ROOT_DIR/server/service-biz" \
+    "$ROOT_DIR/server/opt-ui/src" \
+    --glob '!**/*_test.go'; then
+    echo "retired /api/web route remains" >&2
+    return 1
+  fi
 }
 
 check_server_contract_compile() {
@@ -49,10 +118,8 @@ check_client_contract_compile() {
 }
 
 check_web_contract_compile() {
-  test -s "$ROOT_DIR/server/web-ui/src/ui/app-api.service.ts"
-  test -s "$ROOT_DIR/server/web-ui/src/ui/app-auth-flow.ts"
-  test -s "$ROOT_DIR/server/web-ui/src/ui/app.models.ts"
   test -s "$ROOT_DIR/server/opt-ui/src/app/app.component.ts"
+  test -s "$ROOT_DIR/server/opt-ui/src/app/api-paths.ts"
 }
 
 check_client_boundary_guard() {
@@ -65,6 +132,12 @@ check_client_api_surface_audit() {
 
 check_no_legacy_new_names
 check_required_contracts
+check_no_retired_public_api_prefixes
+check_no_retired_plan_contracts
+check_no_retired_ops_customer_contracts
+check_no_retired_download_contracts
+check_node_repository_naming
+check_no_retired_web_prefix
 check_server_contract_compile
 check_client_contract_compile
 check_web_contract_compile

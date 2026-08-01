@@ -143,13 +143,18 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 		if _, ok := existingByID[deviceID]; ok {
 			continue
 		}
-		if err := s.Networks.SaveNetworkDevice(ctx, newNetworkDeviceMembership(network.NetworkID, deviceID, true, now)); err != nil {
+		member := newNetworkDeviceMembership(network.NetworkID, deviceID, true, now)
+		member.MembershipSource = model.NetworkMembershipSourceDeviceGroup
+		if err := s.Networks.SaveNetworkDevice(ctx, member); err != nil {
 			return err
 		}
 		changedDevices[deviceID] = "joined"
 	}
-	for deviceID := range existingByID {
+	for deviceID, member := range existingByID {
 		if _, ok := desired[deviceID]; ok {
+			continue
+		}
+		if member.MembershipSource == model.NetworkMembershipSourceDirect || member.MembershipSource == model.NetworkMembershipSourceExcluded {
 			continue
 		}
 		if err := s.Networks.DeleteNetworkDevice(ctx, network.NetworkID, deviceID); err != nil {

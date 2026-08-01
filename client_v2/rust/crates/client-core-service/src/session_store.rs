@@ -91,6 +91,7 @@ pub(crate) struct PendingConsoleLogin {
 impl From<PersistedSession> for AuthPayload {
     fn from(session: PersistedSession) -> Self {
         Self {
+            user_authenticated: Some(session.session_kind == "user"),
             access_token: session.access_token,
             refresh_token: session.refresh_token,
             user_id: session.user_id,
@@ -1476,6 +1477,17 @@ mod tests {
 
         assert!(session_is_expired(&session));
         assert!(device_session_should_renew(&session));
+    }
+
+    #[test]
+    fn standalone_device_session_is_not_user_authenticated() {
+        let mut session = PersistedSession::empty();
+        session.session_kind = "device".to_string();
+        session.access_token = "device-token".to_string();
+
+        let payload = AuthPayload::from(session);
+
+        assert_eq!(payload.user_authenticated, Some(false));
     }
 
     #[test]

@@ -14,19 +14,16 @@ type AuthUserService struct {
 	Registration AuthUserRegistrationUseCase
 	Sessions     AuthUserSessionUseCase
 	Accounts     AuthUserAccountUseCase
-	Entitlements AuthUserEntitlementUseCase
 }
 
 type authUserDependencies struct {
-	Users              repository.UserRepository
-	Sessions           repository.UserSessionRepository
-	Devices            repository.DeviceRepository
-	Networks           repository.NetworkRepository
-	NewUserID          func() string
-	NewNetID           func() string
-	NewSessID          func(string) string
-	NewSecurityGroupID func() string
-	Now                func() time.Time
+	Users     repository.UserRepository
+	Sessions  repository.UserSessionRepository
+	Devices   repository.DeviceRepository
+	Networks  repository.NetworkRepository
+	NewUserID func() string
+	NewSessID func(string) string
+	Now       func() time.Time
 }
 
 type AuthUserRegistrationService struct {
@@ -38,10 +35,6 @@ type AuthUserSessionService struct {
 }
 
 type AuthUserAccountService struct {
-	authUserDependencies
-}
-
-type AuthUserEntitlementService struct {
 	authUserDependencies
 }
 
@@ -102,27 +95,22 @@ func NewAuthUserService(
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
 	newUserID func() string,
-	newNetworkID func() string,
 	newSessionID func(string) string,
-	newSecurityGroupID func() string,
 	now func() time.Time,
 ) AuthUserService {
 	deps := authUserDependencies{
-		Users:              users,
-		Sessions:           sessions,
-		Devices:            devices,
-		Networks:           networks,
-		NewUserID:          newUserID,
-		NewNetID:           newNetworkID,
-		NewSessID:          newSessionID,
-		NewSecurityGroupID: newSecurityGroupID,
-		Now:                now,
+		Users:     users,
+		Sessions:  sessions,
+		Devices:   devices,
+		Networks:  networks,
+		NewUserID: newUserID,
+		NewSessID: newSessionID,
+		Now:       now,
 	}
 	return AuthUserService{
 		Registration: AuthUserRegistrationService{authUserDependencies: deps},
 		Sessions:     AuthUserSessionService{authUserDependencies: deps},
 		Accounts:     AuthUserAccountService{authUserDependencies: deps},
-		Entitlements: AuthUserEntitlementService{authUserDependencies: deps},
 	}
 }
 
@@ -204,10 +192,6 @@ func (s AuthUserService) ChangeUserPassword(ctx context.Context, input ChangeUse
 	return s.Accounts.ChangeUserPassword(ctx, input)
 }
 
-func (s AuthUserService) UserEntitlement(ctx context.Context, userID string) (UserEntitlementView, error) {
-	return s.Entitlements.UserEntitlement(ctx, userID)
-}
-
 func (s AuthConsoleService) CreateConsoleLoginKey(ctx context.Context, input CreateConsoleLoginKeyInput) (ConsoleLoginKeyView, error) {
 	return s.Keys.CreateConsoleLoginKey(ctx, input)
 }
@@ -234,10 +218,6 @@ func newAuthUserID(next func() string) string {
 
 func newAuthSessionID(next func(string) string) string {
 	return scopedID(next, "sess")
-}
-
-func newAuthNetworkID(next func() string) string {
-	return generatedID(next, "net")
 }
 
 func newAuthDeviceID(devices repository.DeviceRepository) string {

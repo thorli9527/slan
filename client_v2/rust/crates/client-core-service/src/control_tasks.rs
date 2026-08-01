@@ -163,7 +163,16 @@ impl ControlTaskQueue {
             .unwrap_or_else(|| format!("{}-task-{now}", direction.as_str()));
         if let Some(index) = self.tasks.iter().position(|task| task.id == task_id) {
             if self.tasks[index].status == ControlTaskStatus::Succeeded {
-                return Ok(self.tasks[index].clone());
+                self.tasks[index].acknowledged_at_ms = None;
+                self.tasks[index].updated_at_ms = now;
+                let task = self.tasks[index].clone();
+                self.persist()?;
+                return Ok(task);
+            }
+            if self.tasks[index].status == ControlTaskStatus::Failed {
+                self.tasks[index].status = ControlTaskStatus::Pending;
+                self.tasks[index].acknowledged_at_ms = None;
+                self.tasks[index].error = None;
             }
             self.tasks[index].require_ui_refresh = request.require_ui_refresh;
             self.tasks[index].updated_at_ms = now;
@@ -268,8 +277,13 @@ impl ControlTaskQueue {
 
     pub fn mark_acknowledged(&mut self, task_id: &str) -> Result<()> {
         if let Some(task) = self.tasks.iter_mut().find(|task| task.id == task_id) {
-            task.acknowledged_at_ms = Some(current_timestamp_ms());
-            task.updated_at_ms = current_timestamp_ms();
+            if matches!(
+                task.status,
+                ControlTaskStatus::Succeeded | ControlTaskStatus::Failed
+            ) {
+                task.acknowledged_at_ms = Some(current_timestamp_ms());
+                task.updated_at_ms = current_timestamp_ms();
+            }
         }
         prune_completed_task_history(&mut self.tasks);
         self.persist()
@@ -292,6 +306,7 @@ impl ControlTaskQueue {
         if let Some(task) = self.tasks.iter_mut().find(|task| task.id == task_id) {
             task.status = status;
             task.error = error;
+            task.acknowledged_at_ms = None;
             task.updated_at_ms = current_timestamp_ms();
         }
         prune_completed_task_history(&mut self.tasks);
@@ -536,6 +551,97 @@ mod tests {
         assert_eq!(queue.tasks.len(), 1);
         assert_eq!(queue.tasks[0].delivery_id.as_deref(), Some("delivery-1"));
         assert!(!queue.tasks[0].require_ui_refresh);
+    }
+
+    #[test]
+    fn repeated_downstream_delivery_retries_failures_and_reopens_success_ack() {
+        let path = queue_path("redelivery");
+        let mut queue = ControlTaskQueue {
+            path: path.clone(),
+            tasks: Vec::new(),
+        };
+        let failed = queue
+            .enqueue_downstream(
+                ControlTaskAction::ReconcileNetworkState,
+                "delivery-failed",
+                false,
+            )
+            .expect("enqueue failed task");
+        queue
+            .mark_failed(&failed.id, "configure failed".to_string())
+            .expect("mark failed");
+        queue
+            .mark_acknowledged(&failed.id)
+            .expect("mark failed ack sent");
+
+        let retried = queue
+            .enqueue_downstream(
+                ControlTaskAction::ReconcileNetworkState,
+                "delivery-failed",
+                false,
+            )
+            .expect("redeliver failed task");
+        assert_eq!(retried.status, ControlTaskStatus::Pending);
+        assert_eq!(retried.error, None);
+        assert_eq!(retried.acknowledged_at_ms, None);
+        let retry = queue
+            .take_next_pending()
+            .expect("take retry")
+            .expect("retry");
+        assert_eq!(retry.id, failed.id);
+        queue
+            .mark_acknowledged(&failed.id)
+            .expect("late failed ack completion");
+        assert_eq!(
+            queue
+                .tasks
+                .iter()
+                .find(|task| task.id == failed.id)
+                .expect("retried task")
+                .acknowledged_at_ms,
+            None
+        );
+        queue
+            .mark_succeeded(&failed.id)
+            .expect("retry succeeds after late failed ack");
+        assert!(queue
+            .pending_downstream_acks()
+            .iter()
+            .any(|task| task.id == failed.id && task.status == ControlTaskStatus::Succeeded));
+
+        let succeeded = queue
+            .enqueue_downstream(
+                ControlTaskAction::ReconcileNetworkState,
+                "delivery-succeeded",
+                false,
+            )
+            .expect("enqueue succeeded task");
+        queue.mark_succeeded(&succeeded.id).expect("mark succeeded");
+        queue
+            .mark_acknowledged(&succeeded.id)
+            .expect("mark succeeded ack sent");
+        let redelivered = queue
+            .enqueue_downstream(
+                ControlTaskAction::ReconcileNetworkState,
+                "delivery-succeeded",
+                false,
+            )
+            .expect("redeliver succeeded task");
+        assert_eq!(redelivered.status, ControlTaskStatus::Succeeded);
+        assert_eq!(redelivered.acknowledged_at_ms, None);
+        assert!(queue
+            .pending_downstream_acks()
+            .iter()
+            .any(|task| task.id == succeeded.id));
+
+        let restored = ControlTaskQueue {
+            path,
+            tasks: parse_tasks(&fs::read_to_string(&queue.path).expect("read persisted tasks")),
+        };
+        assert!(restored
+            .pending_downstream_acks()
+            .iter()
+            .any(|task| task.id == succeeded.id));
     }
 
     #[test]

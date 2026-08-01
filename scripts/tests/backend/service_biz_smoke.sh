@@ -11,6 +11,7 @@ if [ ! -e "$ROOT_DIR/.git" ]; then
   ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 fi
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/ops_test_network.sh"
 PORT="${SLAN_BIZ_SMOKE_PORT:-39080}"
 START_LOCAL_BIZ="${SLAN_BIZ_SMOKE_START:-1}"
 if [[ -n "${SLAN_APP_BASE_URL:-}" ]]; then
@@ -183,14 +184,37 @@ fi
 
 log "running app-plane checks"
 USER_EMAIL="smoke-${RUN_ID}@staticlss.com"
-USER_AUTH="$(http_json -X POST "${APP_BASE_URL}/api/app/auth/register" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${USER_EMAIL}\",\"password\":\"password\",\"name\":\"Smoke\"}")"
+USER_AUTH="$(slan_ops_provision_test_user \
+  "${OPS_BASE_URL}" "${APP_BASE_URL}" "${USER_EMAIL}" "password" "Smoke")" || \
+  fail "ops user provisioning failed"
 USER_ID="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"userId":"\([^"]*\)".*/\1/p')"
-NETWORK_ID="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"networkId":"\([^"]*\)".*/\1/p')"
 USER_TOKEN="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-if [[ -z "${USER_ID}" || -z "${NETWORK_ID}" || -z "${USER_TOKEN}" ]]; then
-  fail "missing registered user, token, or default network"
+if [[ -z "${USER_ID}" || -z "${USER_TOKEN}" ]]; then
+  fail "missing provisioned user or token"
+fi
+
+OPS_AUTH="$(http_json -X POST "${OPS_BASE_URL}/api/ops/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin1","password":"admin1"}')"
+OPS_TOKEN="$(printf '%s' "${OPS_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+if [[ -z "${OPS_TOKEN}" ]]; then
+  fail "missing ops token: ${OPS_AUTH}"
+fi
+NETWORK="$(http_json -X POST "${OPS_BASE_URL}/api/ops/networks" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"ownerId\":\"${USER_ID}\",\"name\":\"smoke-${RUN_ID}\",\"cidr\":\"10.0.0.0/8\",\"intraGroupPolicy\":\"allow\"}")"
+NETWORK_ID="$(printf '%s' "${NETWORK}" | sed -n 's/.*"networkId":"\([^"]*\)".*/\1/p')"
+if [[ -z "${NETWORK_ID}" ]]; then
+  fail "ops network creation did not return networkId: ${NETWORK}"
+fi
+SECURITY_GROUP="$(http_json -X POST "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/security-groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"ownerId\":\"${USER_ID}\",\"name\":\"smoke-default\",\"description\":\"service business smoke ACL\"}")"
+SECURITY_GROUP_ID="$(printf '%s' "${SECURITY_GROUP}" | sed -n 's/.*"securityGroupId":"\([^"]*\)".*/\1/p')"
+if [[ -z "${SECURITY_GROUP_ID}" ]]; then
+  fail "ops security group creation did not return securityGroupId: ${SECURITY_GROUP}"
 fi
 
 DEVICE_ID="smoke-mac-${RUN_ID}"
@@ -221,24 +245,24 @@ if [[ -z "${DEVICE_TOKEN}" || -z "${DST_DEVICE_TOKEN}" ]]; then
   fail "missing device session token"
 fi
 
-MEMBER_GROUP="$(http_json -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+MEMBER_GROUP="$(http_json -X POST "${OPS_BASE_URL}/api/ops/device-groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"name\":\"Smoke Network Members\",\"description\":\"network membership smoke\"}")"
+  -d "{\"ownerId\":\"${USER_ID}\",\"name\":\"Smoke Network Members\",\"description\":\"network membership smoke\"}")"
 MEMBER_GROUP_ID="$(printf '%s' "${MEMBER_GROUP}" | sed -n 's/.*"groupId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${MEMBER_GROUP_ID}" ]]; then
   fail "missing network member group id"
 fi
 for member_device_id in "${DEVICE_ID}" "${DST_DEVICE_ID}"; do
-  http_call "" -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${member_device_id}/groups" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
+  http_call "" -X PUT "${OPS_BASE_URL}/api/ops/devices/${member_device_id}/groups" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
-    -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\"]}" >/dev/null || fail "failed to assign network member group"
+    -d "{\"ownerId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\"]}" >/dev/null || fail "failed to assign network member group"
 done
-http_call "" -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+http_call "" -X POST "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${MEMBER_GROUP_ID}\"}" >/dev/null || fail "failed to reference network member group"
+  -d "{\"ownerId\":\"${USER_ID}\",\"groupId\":\"${MEMBER_GROUP_ID}\"}" >/dev/null || fail "failed to reference network member group"
 
 http_call "" "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/mqtt-credential" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "mqtt credential lookup failed"
@@ -295,41 +319,41 @@ if [[ -z "${RELAY_TICKET_ID}" ]]; then
   fail "relay ticket was not issued: ${RELAY_TICKET}"
 fi
 
-log "running web-plane checks"
-SECURITY_GROUPS="$(http_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups" \
-  -H "Authorization: Bearer ${USER_TOKEN}")"
+log "running ops-managed network checks"
+SECURITY_GROUPS="$(http_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/security-groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}")"
 SECURITY_GROUP_ID="$(printf '%s' "${SECURITY_GROUPS}" | sed -n 's/.*"securityGroupId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${SECURITY_GROUP_ID}" ]]; then
   fail "missing security group: ${SECURITY_GROUPS}"
 fi
-DEVICE_GROUP_JSON="$(http_json -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+DEVICE_GROUP_JSON="$(http_json -X POST "${OPS_BASE_URL}/api/ops/device-groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"name\":\"Smoke ACL Group\",\"description\":\"device group smoke\"}")"
+  -d "{\"ownerId\":\"${USER_ID}\",\"name\":\"Smoke ACL Group\",\"description\":\"device group smoke\"}")"
 DEVICE_GROUP_ID="$(printf '%s' "${DEVICE_GROUP_JSON}" | sed -n 's/.*"groupId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${DEVICE_GROUP_ID}" ]]; then
   fail "missing device group id: ${DEVICE_GROUP_JSON}"
 fi
-http_call "" -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${DEVICE_ID}/groups" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+http_call "" -X PUT "${OPS_BASE_URL}/api/ops/devices/${DEVICE_ID}/groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\",\"${DEVICE_GROUP_ID}\"]}" >/dev/null || fail "failed to assign device group"
-http_call "" -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -d "{\"ownerId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\",\"${DEVICE_GROUP_ID}\"]}" >/dev/null || fail "failed to assign device group"
+http_call "" -X POST "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null || fail "failed to reference ACL device group"
-GROUP_RULE="$(http_json -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -d "{\"ownerId\":\"${USER_ID}\",\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null || fail "failed to reference ACL device group"
+GROUP_RULE="$(http_json -X POST "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":4,\"action\":\"allow\",\"protocol\":\"tcp\",\"portFrom\":443,\"portTo\":443,\"peerType\":\"device_group\",\"peerValue\":\"${DEVICE_GROUP_ID}\",\"description\":\"allow smoke group ingress\",\"enabled\":true}")"
+  -d "{\"ownerId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":4,\"action\":\"allow\",\"protocol\":\"tcp\",\"portRange\":\"443\",\"peerType\":\"device_group\",\"peerValue\":\"${DEVICE_GROUP_ID}\",\"description\":\"allow smoke group ingress\",\"enabled\":true}")"
 GROUP_RULE_ID="$(printf '%s' "${GROUP_RULE}" | sed -n 's/.*"ruleId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${GROUP_RULE_ID}" ]]; then
   fail "missing device_group security rule id: ${GROUP_RULE}"
 fi
-GROUP_RULE_UPDATED="$(http_json -X PATCH "${WEB_BASE_URL}/api/web/security-groups/rules/${GROUP_RULE_ID}?actorUserId=${USER_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+GROUP_RULE_UPDATED="$(http_json -X PATCH "${OPS_BASE_URL}/api/ops/security-rules/${GROUP_RULE_ID}" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"allow\",\"protocol\":\"tcp\",\"portFrom\":443,\"portTo\":443,\"peerType\":\"device_group\",\"peerValue\":\"${DEVICE_GROUP_ID}\",\"description\":\"updated smoke group ingress\",\"enabled\":true}")"
+  -d "{\"ownerId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"allow\",\"protocol\":\"tcp\",\"portRange\":\"443\",\"peerType\":\"device_group\",\"peerValue\":\"${DEVICE_GROUP_ID}\",\"description\":\"updated smoke group ingress\",\"enabled\":true}")"
 if ! printf '%s' "${GROUP_RULE_UPDATED}" | grep -q '"priority":5'; then
   fail "security rule update did not persist priority: ${GROUP_RULE_UPDATED}"
 fi
@@ -344,15 +368,17 @@ fi
 if ! printf '%s' "${GROUP_RULE_CONFIG}" | grep -q "\"resolvedPeerNodeId\":\"node-${DEVICE_ID}\""; then
   fail "device_group ACL rule missing resolved peer node: ${GROUP_RULE_CONFIG}"
 fi
-http_call "" -X DELETE "${WEB_BASE_URL}/api/web/security-groups/rules/${GROUP_RULE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "failed to delete device_group rule"
-http_call "" -X DELETE "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "failed to delete device group"
+http_call "" -X DELETE "${OPS_BASE_URL}/api/ops/security-rules/${GROUP_RULE_ID}" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" -H 'Content-Type: application/json' \
+  -d "{\"ownerId\":\"${USER_ID}\"}" >/dev/null || fail "failed to delete device_group rule"
+http_call "" -X DELETE "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" -H 'Content-Type: application/json' \
+  -d "{\"ownerId\":\"${USER_ID}\"}" >/dev/null || fail "failed to delete device group"
 
-INGRESS_DENY_RULE="$(http_json -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+INGRESS_DENY_RULE="$(http_json -X POST "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"deny\",\"protocol\":\"all\",\"portFrom\":0,\"portTo\":0,\"peerType\":\"device\",\"peerValue\":\"${DEVICE_ID}\",\"description\":\"deny smoke peer ingress\",\"enabled\":true}")"
+  -d "{\"ownerId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"deny\",\"protocol\":\"all\",\"portRange\":\"all\",\"peerType\":\"device\",\"peerValue\":\"${DEVICE_ID}\",\"description\":\"deny smoke peer ingress\",\"enabled\":true}")"
 INGRESS_DENY_RULE_ID="$(printf '%s' "${INGRESS_DENY_RULE}" | sed -n 's/.*"ruleId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${INGRESS_DENY_RULE_ID}" ]]; then
   fail "missing ingress deny security rule id: ${INGRESS_DENY_RULE}"
@@ -372,13 +398,14 @@ INGRESS_DENIED_TICKET_STATUS="$(curl --silent --show-error --output /tmp/slan-se
 if [[ "${INGRESS_DENIED_TICKET_STATUS}" == "200" || "${INGRESS_DENIED_TICKET_STATUS}" == "201" ]]; then
   fail "ingress ACL deny still allowed relay ticket: $(cat /tmp/slan-service-biz-ingress-denied-ticket.json)"
 fi
-http_call "" -X DELETE "${WEB_BASE_URL}/api/web/security-groups/rules/${INGRESS_DENY_RULE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "failed to delete ingress deny rule"
+http_call "" -X DELETE "${OPS_BASE_URL}/api/ops/security-rules/${INGRESS_DENY_RULE_ID}" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" -H 'Content-Type: application/json' \
+  -d "{\"ownerId\":\"${USER_ID}\"}" >/dev/null || fail "failed to delete ingress deny rule"
 
-http_call "" -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+http_call "" -X POST "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"egress\",\"priority\":10,\"action\":\"deny\",\"protocol\":\"all\",\"portFrom\":0,\"portTo\":0,\"peerType\":\"device\",\"peerValue\":\"${DST_DEVICE_ID}\",\"description\":\"deny smoke peer\",\"enabled\":true}" >/dev/null || fail "failed to create egress deny rule"
+  -d "{\"ownerId\":\"${USER_ID}\",\"direction\":\"egress\",\"priority\":10,\"action\":\"deny\",\"protocol\":\"all\",\"portRange\":\"all\",\"peerType\":\"device\",\"peerValue\":\"${DST_DEVICE_ID}\",\"description\":\"deny smoke peer\",\"enabled\":true}" >/dev/null || fail "failed to create egress deny rule"
 DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${DENIED_CONFIG}" | grep -q '"securityRuleCount":1'; then
@@ -396,14 +423,6 @@ if [[ "${DENIED_TICKET_STATUS}" == "200" || "${DENIED_TICKET_STATUS}" == "201" ]
 fi
 
 log "running ops-plane checks"
-OPS_AUTH="$(http_json -X POST "${OPS_BASE_URL}/api/ops/auth/login" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin1","password":"admin1"}')"
-OPS_TOKEN="$(printf '%s' "${OPS_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-if [[ -z "${OPS_TOKEN}" ]]; then
-  fail "missing ops token: ${OPS_AUTH}"
-fi
-
 http_call "" "${OPS_BASE_URL}/api/ops/operators" \
   -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null || fail "ops operators list failed"
 http_call "" "${OPS_BASE_URL}/api/ops/relay-nodes" \

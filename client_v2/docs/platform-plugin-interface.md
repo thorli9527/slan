@@ -39,7 +39,6 @@ Flutter and platform plugins should use these service methods for control-plane 
 | `localControlStatus` | core-service | MQTT/control connection status. |
 | `localPlatformNetworkConfig` | core-service | Final IP/DNS/routes/MTU/relay/path config plus current server network configs for platform application. |
 | `ingestPlatformRuntimeState` | core-service | Receive platform runtime, traffic, heartbeat, and error reports; Rust updates local state and reports the normalized runtime to the control plane. |
-| `localRegisterTestUser` | core-service | Test-only user registration through Rust control-plane client. |
 | `localNetworkShutdown` | core-service | Disable local network and clear runtime state. |
 | `localDiagnosticsExport` | core-service | Unified diagnostics. |
 

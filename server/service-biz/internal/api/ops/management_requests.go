@@ -67,45 +67,39 @@ func (r updateNodeStatusRequest) normalizedStatus() string {
 	return "disabled"
 }
 
-type updateCustomerRequest struct {
-	CustomerID string `json:"customerId"`
-	Email      string `json:"email"`
-	Name       string `json:"name"`
-	Country    string `json:"country"`
-	Province   string `json:"province"`
-	City       string `json:"city"`
-	IPRegion   string `json:"ipRegion"`
-	Status     string `json:"status"`
+type updateUserRequest struct {
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Country  string `json:"country"`
+	Province string `json:"province"`
+	City     string `json:"city"`
+	IPRegion string `json:"ipRegion"`
+	Status   string `json:"status"`
 }
 
-func (r updateCustomerRequest) toInput() servicepkg.UpdateCustomerInput {
-	return servicepkg.UpdateCustomerInput{
-		CustomerID: r.CustomerID,
-		Email:      r.Email,
-		Name:       r.Name,
-		Country:    r.Country,
-		Province:   r.Province,
-		City:       r.City,
-		IPRegion:   r.IPRegion,
-		Status:     r.Status,
-	}
+type createUserRequest struct {
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Password string `json:"password"`
 }
 
-type assignCustomerPlanRequest struct {
-	CustomerID string `json:"customerId"`
-	PlanCode   string `json:"planCode"`
-	ExpiresAt  int64  `json:"expiresAt"`
-	Amount     int64  `json:"amount"`
-	Period     string `json:"period"`
+func (r createUserRequest) toInput() servicepkg.CreateUserInput {
+	return servicepkg.CreateUserInput{Email: r.Email, Name: r.Name, Password: r.Password}
 }
 
-func (r assignCustomerPlanRequest) toInput() servicepkg.AssignCustomerPlanInput {
-	return servicepkg.AssignCustomerPlanInput{
-		CustomerID: r.CustomerID,
-		PlanCode:   r.PlanCode,
-		ExpiresAt:  r.ExpiresAt,
-		Amount:     r.Amount,
-		Period:     r.Period,
+type setUserPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+func (r updateUserRequest) toInput() servicepkg.UpdateUserInput {
+	return servicepkg.UpdateUserInput{
+		Email:    r.Email,
+		Name:     r.Name,
+		Country:  r.Country,
+		Province: r.Province,
+		City:     r.City,
+		IPRegion: r.IPRegion,
+		Status:   r.Status,
 	}
 }
 

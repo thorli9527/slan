@@ -5,7 +5,6 @@ import servicepkg "github.com/slan/service-biz/internal/service"
 type Services struct {
 	Auth      AuthServices
 	Devices   DeviceServices
-	Downloads DownloadServices
 	Network   NetworkServices
 	Ops       OpsServices
 	Wire      WireServices
@@ -43,12 +42,8 @@ type OpsServices struct {
 	DashboardOverview servicepkg.OpsDashboardService
 	AuditOverview     servicepkg.OpsAuditService
 	NodeRegistry      servicepkg.OpsNodeService
-	CustomerDirectory servicepkg.OpsCustomerService
+	UserDirectory     servicepkg.OpsUserService
 	DeviceDirectory   servicepkg.OpsManagedDeviceService
-	DownloadCatalog   servicepkg.OpsCatalogDownloadService
-	PlanCatalog       servicepkg.OpsCatalogPlanService
-	ProductCatalog    servicepkg.OpsCatalogProductService
-	OrderCatalog      servicepkg.OpsCatalogOrderService
 }
 
 type WireServices struct {
@@ -58,8 +53,4 @@ type WireServices struct {
 
 type MQTTServices struct {
 	BrokerWebhook servicepkg.MQTTWebhookService
-}
-
-type DownloadServices struct {
-	ClientDelivery servicepkg.ClientDownloadService
 }

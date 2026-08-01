@@ -6,10 +6,9 @@
 
 Flutter owns:
 
-- Login entry and browser-to-client MQTT handoff
+- Username/password login entry
 - Current account, current IP, network enabled/syncing/error UI
 - Enable/disable intent from the switch
-- Web Console button
 
 Rust `client-core-service` owns:
 

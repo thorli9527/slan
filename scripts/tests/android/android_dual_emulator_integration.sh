@@ -230,7 +230,7 @@ register_user_if_needed() {
 ensure_network_context() {
   local auth networks groups
   auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/auth/login" \
+    -X POST "${WEB_BASE_URL}/api/app/auth/login" \
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
   USER_ID="$(extract_json_field "$auth" "userId")"
@@ -242,13 +242,13 @@ ensure_network_context() {
 
   networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+    "${WEB_BASE_URL}/api/app/networks?userId=${USER_ID}")"
   NETWORK_ID="$(extract_json_field "$networks" "networkId")"
   [[ -n "$NETWORK_ID" ]] || fail "failed to parse network id"
 
   groups="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
+    "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/security-groups")"
   SECURITY_GROUP_ID="$(extract_json_field "$groups" "securityGroupId")"
   [[ -n "$SECURITY_GROUP_ID" ]] || fail "failed to parse security group id"
 }
@@ -260,7 +260,7 @@ create_security_rule() {
   local port="$4"
   local priority="$5"
   local response rule_id
-  response="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  response="$(create_json "${WEB_BASE_URL}/api/app/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(extract_json_field "$response" "ruleId")"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
@@ -272,18 +272,18 @@ provision_dns_acl_resources() {
 
   local response record_id
   ZONE_NAME="android-dual-$(date +%s)-${RANDOM}.lan"
-  response="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
+  response="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/zones" \
     "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(extract_json_field "$response" "zoneId")"
   [[ -n "$ZONE_ID" ]] || fail "failed to create dns zone"
 
-  response="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"android-a\",\"recordType\":\"A\",\"targetDeviceId\":\"${DEVICE_ID_A}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(extract_json_field "$response" "recordId")"
   [[ -n "$record_id" ]] || fail "failed to create dns record for android-a"
   RECORD_IDS+=("$record_id")
 
-  response="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"android-b\",\"recordType\":\"A\",\"targetDeviceId\":\"${DEVICE_ID_B}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(extract_json_field "$response" "recordId")"
   [[ -n "$record_id" ]] || fail "failed to create dns record for android-b"
@@ -303,19 +303,19 @@ provision_dns_acl_resources() {
 provision_network_device_group() {
   ensure_network_context
   local response device_id
-  response="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+  response="$(create_json "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups" \
     "{\"name\":\"android-dual-$(date +%s%N)\",\"description\":\"Dual Android integration devices\"}")"
   DEVICE_GROUP_ID="$(extract_json_field "$response" "groupId")"
   [[ -n "$DEVICE_GROUP_ID" ]] || fail "failed to create Android device group"
 
   for device_id in "$DEVICE_ID_A" "$DEVICE_ID_B"; do
     curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -X PUT "${WEB_BASE_URL}/api/app/users/${USER_ID}/devices/${device_id}/groups" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
   done
-  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups" \
     "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
   log "attached Android device group ${DEVICE_GROUP_ID} to network ${NETWORK_ID}"
 }
@@ -877,16 +877,16 @@ cleanup() {
   if [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/security-groups/rules/${RULE_IDS[$index]}"
     done
     for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
     done
-    [[ -n "$ZONE_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
-    [[ -n "$DEVICE_GROUP_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
+    [[ -n "$ZONE_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+    [[ -n "$DEVICE_GROUP_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
   fi
   [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]] && \
-    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
+    best_effort_delete "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
   slan_cleanup_remote_test_devices "$WEB_BASE_URL" "$EMAIL" "$PASSWORD" 1
   if [[ $status -ne 0 || "${SLAN_KEEP_ANDROID_DUAL_WORK_DIR:-0}" == "1" ]]; then
     echo "kept work dir: $WORK_DIR"

@@ -96,7 +96,7 @@ ensure_network_context() {
 
   local auth networks groups
   auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${ADMIN_BIZ_URL}/api/web/auth/login" \
+    -X POST "${ADMIN_BIZ_URL}/api/app/auth/login" \
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
   USER_ID="$(extract_json_field "$auth" "userId")"
@@ -106,7 +106,7 @@ ensure_network_context() {
   }
 
   networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    "${ADMIN_BIZ_URL}/api/web/networks?userId=${USER_ID}")"
+    "${ADMIN_BIZ_URL}/api/app/networks?userId=${USER_ID}")"
   NETWORK_ID="$(extract_json_field "$networks" "networkId")"
   [[ -n "$NETWORK_ID" ]] || {
     echo "failed to parse network id for user ${USER_ID}" >&2
@@ -114,7 +114,7 @@ ensure_network_context() {
   }
 
   groups="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
+    "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/security-groups")"
   SECURITY_GROUP_ID="$(extract_json_field "$groups" "securityGroupId")"
   [[ -n "$SECURITY_GROUP_ID" ]] || {
     echo "failed to parse security group id for network ${NETWORK_ID}" >&2
@@ -127,7 +127,7 @@ create_security_rule() {
   local peer_value="$2"
   local priority="$3"
   local response rule_id
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  response="$(create_json "${ADMIN_BIZ_URL}/api/app/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"tcp\",\"portFrom\":443,\"portTo\":443,\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(extract_json_field "$response" "ruleId")"
   [[ -n "$rule_id" ]] || {
@@ -146,7 +146,7 @@ provision_dns_acl_resources() {
   ensure_network_context
 
   ZONE_NAME="android-mac-${RANDOM}-$(date +%s).lan"
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
+  response="$(create_json "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/zones" \
     "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(extract_json_field "$response" "zoneId")"
   [[ -n "$ZONE_ID" ]] || {
@@ -154,7 +154,7 @@ provision_dns_acl_resources() {
     return 1
   }
 
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"mac\",\"recordType\":\"A\",\"targetDeviceId\":\"${mac_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(extract_json_field "$response" "recordId")"
   [[ -n "$record_id" ]] || {
@@ -163,7 +163,7 @@ provision_dns_acl_resources() {
   }
   RECORD_IDS+=("$record_id")
 
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"android\",\"recordType\":\"A\",\"targetDeviceId\":\"${android_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(extract_json_field "$response" "recordId")"
   [[ -n "$record_id" ]] || {
@@ -329,13 +329,13 @@ cleanup() {
   if [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${ADMIN_BIZ_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
+      best_effort_delete "${ADMIN_BIZ_URL}/api/app/security-groups/rules/${RULE_IDS[$index]}"
     done
     for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+      best_effort_delete "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
     done
     if [[ -n "$ZONE_ID" ]]; then
-      best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+      best_effort_delete "${ADMIN_BIZ_URL}/api/app/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
     fi
   fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"

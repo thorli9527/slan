@@ -8,27 +8,27 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *GormStore) ListNetworksByOwner(_ context.Context, ownerID string) ([]model.Network, error) {
-	return listModels(s.db.Where("owner_id = ?", ownerID).Order("network_id asc"), func(row gormNetworkRecord) model.Network {
+func (s *GormStore) ListNetworksByOwner(ctx context.Context, ownerID string) ([]model.Network, error) {
+	return listModels(s.db.WithContext(ctx).Where("owner_id = ?", ownerID).Order("network_id asc"), func(row gormNetworkRecord) model.Network {
 		return row.model()
 	})
 }
 
-func (s *GormStore) GetNetwork(_ context.Context, networkID string) (model.Network, bool, error) {
-	return firstModel(s.db.Where("network_id = ?", networkID), func(row gormNetworkRecord) model.Network {
+func (s *GormStore) GetNetwork(ctx context.Context, networkID string) (model.Network, bool, error) {
+	return firstModel(s.db.WithContext(ctx).Where("network_id = ?", networkID), func(row gormNetworkRecord) model.Network {
 		return row.model()
 	})
 }
 
-func (s *GormStore) GetNetworkVersion(_ context.Context, networkID string) (model.NetworkConfigVersion, bool, error) {
-	return firstModel(s.db.Where("network_id = ?", networkID), func(row gormNetworkConfigVersionRecord) model.NetworkConfigVersion {
+func (s *GormStore) GetNetworkVersion(ctx context.Context, networkID string) (model.NetworkConfigVersion, bool, error) {
+	return firstModel(s.db.WithContext(ctx).Where("network_id = ?", networkID), func(row gormNetworkConfigVersionRecord) model.NetworkConfigVersion {
 		return row.model()
 	})
 }
 
 func (s *GormStore) ListNetworksByDevice(ctx context.Context, deviceID string) ([]model.Network, error) {
 	memberships, err := listModels(
-		s.db.Where("device_id = ? AND enabled = ? AND member_status = ?", deviceID, true, "active").Order("network_id asc"),
+		s.db.WithContext(ctx).Where("device_id = ? AND enabled = ? AND member_status = ?", deviceID, true, "active").Order("network_id asc"),
 		func(row gormNetworkDeviceRecord) model.NetworkDevice { return row.model() },
 	)
 	if err != nil {
@@ -56,18 +56,18 @@ func (s *GormStore) ListNetworksByDevice(ctx context.Context, deviceID string) (
 	return networks, nil
 }
 
-func (s *GormStore) SaveNetwork(_ context.Context, network model.Network) error {
+func (s *GormStore) SaveNetwork(ctx context.Context, network model.Network) error {
 	row := networkRecordFromModel(network)
-	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"owner_id", "name", "cidr", "intra_group_policy", "default", "status", "created_at", "updated_at"})
+	return upsertByColumns(s.db.WithContext(ctx), &row, []string{"network_id"}, []string{"owner_id", "name", "cidr", "intra_group_policy", "default", "status", "created_at", "updated_at"})
 }
 
-func (s *GormStore) SaveNetworkVersion(_ context.Context, item model.NetworkConfigVersion) error {
+func (s *GormStore) SaveNetworkVersion(ctx context.Context, item model.NetworkConfigVersion) error {
 	row := networkConfigVersionRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"version", "reason", "created_at", "updated_at"})
+	return upsertByColumns(s.db.WithContext(ctx), &row, []string{"network_id"}, []string{"version", "reason", "created_at", "updated_at"})
 }
 
-func (s *GormStore) DeleteNetwork(_ context.Context, networkID string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
+func (s *GormStore) DeleteNetwork(ctx context.Context, networkID string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		securityGroupIDs := tx.Model(&gormSecurityGroupRecord{}).
 			Select("security_group_id").
 			Where("network_id = ?", networkID)
@@ -97,25 +97,25 @@ func (s *GormStore) DeleteNetwork(_ context.Context, networkID string) error {
 	})
 }
 
-func (s *GormStore) ListNetworkDevices(_ context.Context, networkID string) ([]model.NetworkDevice, error) {
-	return listModels(s.db.Where("network_id = ?", networkID).Order("device_id asc"), func(row gormNetworkDeviceRecord) model.NetworkDevice {
+func (s *GormStore) ListNetworkDevices(ctx context.Context, networkID string) ([]model.NetworkDevice, error) {
+	return listModels(s.db.WithContext(ctx).Where("network_id = ?", networkID).Order("device_id asc"), func(row gormNetworkDeviceRecord) model.NetworkDevice {
 		return row.model()
 	})
 }
 
-func (s *GormStore) GetNetworkDevice(_ context.Context, networkID, deviceID string) (model.NetworkDevice, bool, error) {
-	return firstModel(s.db.Where("network_id = ? AND device_id = ?", networkID, deviceID), func(row gormNetworkDeviceRecord) model.NetworkDevice {
+func (s *GormStore) GetNetworkDevice(ctx context.Context, networkID, deviceID string) (model.NetworkDevice, bool, error) {
+	return firstModel(s.db.WithContext(ctx).Where("network_id = ? AND device_id = ?", networkID, deviceID), func(row gormNetworkDeviceRecord) model.NetworkDevice {
 		return row.model()
 	})
 }
 
-func (s *GormStore) SaveNetworkDevice(_ context.Context, item model.NetworkDevice) error {
+func (s *GormStore) SaveNetworkDevice(ctx context.Context, item model.NetworkDevice) error {
 	row := networkDeviceRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"network_id", "device_id"}, []string{"enabled", "member_status", "presence_status", "mqtt_connected", "virtual_ip", "last_seen_at", "last_heartbeat_at", "last_runtime_state_at", "last_endpoint_at", "last_path_health_at", "endpoints", "nat_type", "active_path", "path_observed_at", "relay_transport", "relay_endpoint", "derp_node_id", "peer_node_id", "path_score", "observed_rtt_ms", "packet_loss_ppm", "relay_mtu", "max_frame_payload", "ticket_expires_at", "ticket_renew_due", "path_downgrades", "path_upgrades", "last_path_change", "created_at", "updated_at"})
+	return upsertByColumns(s.db.WithContext(ctx), &row, []string{"network_id", "device_id"}, []string{"enabled", "member_status", "membership_source", "presence_status", "mqtt_connected", "virtual_ip", "last_seen_at", "last_heartbeat_at", "last_runtime_state_at", "last_endpoint_at", "last_path_health_at", "endpoints", "nat_type", "active_path", "path_observed_at", "relay_transport", "relay_endpoint", "derp_node_id", "peer_node_id", "path_score", "observed_rtt_ms", "packet_loss_ppm", "relay_mtu", "max_frame_payload", "ticket_expires_at", "ticket_renew_due", "path_downgrades", "path_upgrades", "last_path_change", "created_at", "updated_at"})
 }
 
-func (s *GormStore) DeleteNetworkDevice(_ context.Context, networkID, deviceID string) error {
-	return s.db.Delete(&gormNetworkDeviceRecord{}, "network_id = ? AND device_id = ?", networkID, deviceID).Error
+func (s *GormStore) DeleteNetworkDevice(ctx context.Context, networkID, deviceID string) error {
+	return s.db.WithContext(ctx).Delete(&gormNetworkDeviceRecord{}, "network_id = ? AND device_id = ?", networkID, deviceID).Error
 }
 
 func (s *GormStore) ListNetworkDeviceGroupReferences(_ context.Context, networkID string) ([]model.NetworkDeviceGroupReference, error) {

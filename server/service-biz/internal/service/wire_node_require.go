@@ -7,7 +7,7 @@ import (
 )
 
 func (s WireNodeService) requireRelayNodeRegion(ctx context.Context, regionID, nodeID string) (model.RelayNode, error) {
-	item, ok, err := s.Catalog.GetRelayNode(ctx, normalizeWireNodeID(nodeID))
+	item, ok, err := s.Nodes.GetRelayNode(ctx, normalizeWireNodeID(nodeID))
 	if err != nil {
 		return model.RelayNode{}, err
 	}
@@ -24,7 +24,7 @@ func (s WireNodeService) requireRelayNodeRegion(ctx context.Context, regionID, n
 }
 
 func (s WireNodeService) requireDerpNodeRegion(ctx context.Context, regionID, nodeID string) (model.RelayNode, error) {
-	item, ok, err := s.Catalog.GetRelayNode(ctx, normalizeWireNodeID(nodeID))
+	item, ok, err := s.Nodes.GetRelayNode(ctx, normalizeWireNodeID(nodeID))
 	if err != nil {
 		return model.RelayNode{}, err
 	}

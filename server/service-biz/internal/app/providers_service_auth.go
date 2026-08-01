@@ -12,9 +12,7 @@ func newAuthServices(deps UseCaseDependencies) AuthServices {
 			repos.Devices,
 			deps.networkRepositories().Networks,
 			ids.NewUserID,
-			deps.networkIDs().NewNetworkID,
 			ids.NewSessionID,
-			nil,
 			nil,
 		),
 		TokenManagement: servicepkg.TokenManagementService{

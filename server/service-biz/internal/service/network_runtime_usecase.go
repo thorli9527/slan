@@ -12,7 +12,7 @@ import (
 	"github.com/slan/service-biz/internal/repository"
 )
 
-func relayCandidates(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsRepository, nowFn func() time.Time, networkID string) ([]RelayCandidateView, error) {
+func relayCandidates(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsNodeRepository, nowFn func() time.Time, networkID string) ([]RelayCandidateView, error) {
 	items, err := listRelayNodeEntities(ctx, networks, ops, nowFn, networkID)
 	if err != nil {
 		return nil, err

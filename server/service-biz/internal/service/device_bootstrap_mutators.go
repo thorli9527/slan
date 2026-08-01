@@ -52,13 +52,14 @@ func revokeDeviceBootstrapKey(key model.DeviceBootstrapKey, now int64) model.Dev
 
 func newBootstrapNetworkDevice(networkID, deviceID string, now int64) model.NetworkDevice {
 	return model.NetworkDevice{
-		NetworkID:      networkID,
-		DeviceID:       deviceID,
-		Enabled:        true,
-		MemberStatus:   model.NetworkMemberStatusActive,
-		PresenceStatus: model.DevicePresenceStatusOffline,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		NetworkID:        networkID,
+		DeviceID:         deviceID,
+		Enabled:          true,
+		MemberStatus:     model.NetworkMemberStatusActive,
+		MembershipSource: model.NetworkMembershipSourceDirect,
+		PresenceStatus:   model.DevicePresenceStatusOffline,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 }
 

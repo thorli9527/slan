@@ -32,6 +32,7 @@ type gormNetworkEventDeliveryRecord struct {
 	NextRetryAt    int64  `gorm:"not null;index"`
 	ExpiresAt      int64  `gorm:"not null;index"`
 	AcknowledgedAt int64  `gorm:"not null"`
+	LastError      string `gorm:"type:text;not null;default:''"`
 	CreatedAt      int64  `gorm:"not null"`
 	UpdatedAt      int64  `gorm:"not null"`
 }
@@ -42,6 +43,7 @@ type gormNetworkDeviceRecord struct {
 	DeviceID           string              `gorm:"size:64;uniqueIndex:uidx_gorm_network_device_records_network_device"`
 	Enabled            bool                `gorm:"not null"`
 	MemberStatus       string              `gorm:"size:64;index"`
+	MembershipSource   string              `gorm:"size:32;not null;default:'';index"`
 	PresenceStatus     string              `gorm:"size:64;index"`
 	MQTTConnected      bool                `gorm:"not null"`
 	VirtualIP          string              `gorm:"size:128"`

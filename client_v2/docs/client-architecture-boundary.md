@@ -111,21 +111,12 @@ When changing packaged defaults or adding a new client-facing validation script:
 - source `scripts/lib/client_default_endpoints.sh` from new shell entrypoints
 - keep `bash scripts/check_client_stack_guard.sh` green in the same change
 
-## Web Console Mapping Rule
+## Login Surface
 
-Desktop and mobile shells should use the same Web Console URL resolution rule:
+Current desktop and mobile clients log in with username and password against the
+configured control-plane URL. Flutter owns the form and sends the command to
+Rust; it must not derive or open a separate Web Console URL.
 
-- explicit `SLAN_WEB_CONSOLE_URL` wins
-- otherwise derive from `SLAN_CONTROL_BASE_URL`
-- `api.dev.staticlss.com` maps to `web.dev.staticlss.com`
-- `api.slan.localhost` maps to `web.slan.localhost`
-- loopback or `:28080` control URLs map to the same host on port `24200`
-- everything else falls back to `http://47.245.40.231:24200`
-
-The control URL scheme should be preserved when deriving a mapped Web Console
-host.
-
-The detailed shared rule is tracked in:
-
-- `client_v2/docs/web-console-url-resolution.md`
-- `client_v2/docs/client-default-endpoints.md`
+Legacy `openWebConsole` commands remain temporarily for released-client
+compatibility. They are not part of the current UI contract and should not be
+used by new entrypoints.

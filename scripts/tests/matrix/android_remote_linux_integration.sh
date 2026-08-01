@@ -154,20 +154,20 @@ cleanup() {
   if [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/security-groups/rules/${RULE_IDS[$index]}"
     done
     for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
     done
     if [[ -n "$ZONE_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
     fi
     if [[ -n "$DEVICE_GROUP_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
+      best_effort_delete "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
     fi
   fi
   if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
-    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
+    best_effort_delete "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
   fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_ANDROID_REMOTE_LINUX_WORK_DIR:-0}" != "1" ]]; then
@@ -382,7 +382,7 @@ refresh_user_token() {
 create_bootstrap_key() {
   local bootstrap_json
   bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
+    -X POST "${WEB_BASE_URL}/api/app/device-bootstrap-keys" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${LINUX_DEVICE_ALIAS}\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
@@ -395,12 +395,12 @@ resolve_network_context() {
   local networks_json groups_json
   networks_json="$(curl --silent --show-error --fail \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+    "${WEB_BASE_URL}/api/app/networks?userId=${USER_ID}")"
   NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
   [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
   groups_json="$(curl --silent --show-error --fail \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
+    "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/security-groups")"
   SECURITY_GROUP_ID="$(printf '%s' "$groups_json" | jq -r '.items[0].securityGroupId // .[0].securityGroupId // empty')"
   [[ -n "$SECURITY_GROUP_ID" ]] || fail "network ${NETWORK_ID} has no security group"
 }
@@ -436,7 +436,7 @@ create_json() {
 create_dns_zone() {
   local zone_json
   ZONE_NAME="android-linux-$(date +%s).slan.test"
-  zone_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
+  zone_json="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/zones" \
     "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
   [[ -n "$ZONE_ID" ]] || fail "dns zone create returned empty zoneId"
@@ -446,7 +446,7 @@ create_dns_record() {
   local name="$1"
   local target_device_id="$2"
   local record_json record_id
-  record_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  record_json="$(create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
   [[ -n "$record_id" ]] || fail "dns record create returned empty recordId for ${name}"
@@ -460,7 +460,7 @@ add_rule() {
   local peer_value="$4"
   local priority="$5"
   local rule_json rule_id
-  rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  rule_json="$(create_json "${WEB_BASE_URL}/api/app/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
@@ -469,7 +469,7 @@ add_rule() {
 
 provision_network_device_group() {
   local group_json
-  group_json="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+  group_json="$(create_json "${WEB_BASE_URL}/api/app/users/${USER_ID}/device-groups" \
     "{\"name\":\"android-linux-$(date +%s%N)\",\"description\":\"Android Linux integration devices\"}")"
   DEVICE_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.groupId // empty')"
   [[ -n "$DEVICE_GROUP_ID" ]] || fail "device group create returned empty groupId"
@@ -477,7 +477,7 @@ provision_network_device_group() {
   local device_id
   for device_id in "$ANDROID_DEVICE_ID" "$LINUX_DEVICE_ID"; do
     curl --silent --show-error --fail \
-      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -X PUT "${WEB_BASE_URL}/api/app/users/${USER_ID}/devices/${device_id}/groups" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
@@ -486,7 +486,7 @@ provision_network_device_group() {
 }
 
 attach_device_group_to_network() {
-  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  create_json "${WEB_BASE_URL}/api/app/networks/${NETWORK_ID}/device-groups" \
     "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
   log "attached device group network=${NETWORK_ID} group=${DEVICE_GROUP_ID}"
 }
@@ -718,6 +718,9 @@ else
   REMOTE_PACKAGE_PATH="$REMOTE_DIR/$(basename "$PACKAGE_PATH")"
   remote_expect_scp "$PACKAGE_PATH" "$REMOTE_PACKAGE_PATH"
 fi
+remote_exec "mkdir -p '${REMOTE_DIR}/lib'"
+remote_expect_scp "$ROOT_DIR/client_v2/install/linux/install.sh" "$REMOTE_DIR/install.sh"
+remote_expect_scp "$ROOT_DIR/client_v2/install/linux/lib/slan-linux-install.sh" "$REMOTE_DIR/lib/slan-linux-install.sh"
 
 log "install remote Linux client package"
 remote_exec "
@@ -730,7 +733,6 @@ rm -f /var/lib/SLAN/client-v2-device-id.txt
 rm -f /var/lib/SLAN/client-v2-device-public-key.txt
 rm -f /var/lib/SLAN/client-v2-control-tasks.xml
 rm -f /etc/slan/client-v2-console.env
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o '${REMOTE_DIR}/install.sh'
 bash '${REMOTE_DIR}/install.sh' \
   --server='${BIZ_URL}' \
   --installation-key='${BOOTSTRAP_KEY}' \

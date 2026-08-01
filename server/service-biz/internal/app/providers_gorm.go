@@ -15,7 +15,6 @@ type gormProviders struct {
 func newGormProviders(persistence Persistence) gormProviders {
 	store := newGormStore(persistence.Gorm)
 	repositories := bindRepositories(store)
-	bootstrap.EnsureDownloadAssets(context.Background(), repositories.Download.Catalog)
 	return gormProviders{
 		Repositories: repositories,
 		IDs:          bindIDGenerators(store),
@@ -35,24 +34,22 @@ func newGormStore(cfg repository.GormConfig) *repository.GormStore {
 
 func bindRepositories(store *repository.GormStore) Repositories {
 	return Repositories{
-		Auth:     bindAuthRepositories(store),
-		Device:   bindDeviceRepositories(store),
-		Network:  bindNetworkRepositories(store),
-		Ops:      bindOpsRepositories(store),
-		Wire:     bindWireRepositories(store),
-		MQTT:     bindMQTTRepositories(store),
-		Download: bindDownloadRepositories(store),
+		Auth:    bindAuthRepositories(store),
+		Device:  bindDeviceRepositories(store),
+		Network: bindNetworkRepositories(store),
+		Ops:     bindOpsRepositories(store),
+		Wire:    bindWireRepositories(store),
+		MQTT:    bindMQTTRepositories(store),
 	}
 }
 
 func bindIDGenerators(store *repository.GormStore) IDGenerators {
 	return IDGenerators{
-		Auth:     bindAuthIDGenerators(store),
-		Device:   bindDeviceIDGenerators(store),
-		Network:  bindNetworkIDGenerators(store),
-		Ops:      bindOpsIDGenerators(store),
-		Wire:     bindWireIDGenerators(store),
-		Download: bindDownloadIDGenerators(store),
+		Auth:    bindAuthIDGenerators(store),
+		Device:  bindDeviceIDGenerators(store),
+		Network: bindNetworkIDGenerators(store),
+		Ops:     bindOpsIDGenerators(store),
+		Wire:    bindWireIDGenerators(store),
 	}
 }
 
@@ -94,7 +91,7 @@ func bindOpsRepositories(store *repository.GormStore) OpsRepositories {
 		Operators:        store,
 		OperatorSessions: store,
 		Audit:            store,
-		Catalog:          store,
+		Nodes:            store,
 	}
 }
 
@@ -102,7 +99,7 @@ func bindWireRepositories(store *repository.GormStore) WireRepositories {
 	return WireRepositories{
 		Devices:  store,
 		Networks: store,
-		Catalog:  store,
+		Nodes:    store,
 	}
 }
 
@@ -110,12 +107,6 @@ func bindMQTTRepositories(store *repository.GormStore) MQTTRepositories {
 	return MQTTRepositories{
 		Networks:        store,
 		EventDeliveries: store,
-	}
-}
-
-func bindDownloadRepositories(store *repository.GormStore) DownloadRepositories {
-	return DownloadRepositories{
-		Catalog: store,
 	}
 }
 
@@ -145,8 +136,6 @@ func bindOpsIDGenerators(store *repository.GormStore) OpsIDGenerators {
 	return OpsIDGenerators{
 		NewSessionID:  store.NewSessionID,
 		NewOperatorID: store.NewOperatorID,
-		NewProductID:  store.NewProductID,
-		NewOrderID:    store.NewOrderID,
 	}
 }
 
@@ -154,11 +143,5 @@ func bindWireIDGenerators(store *repository.GormStore) WireIDGenerators {
 	return WireIDGenerators{
 		NewRelayNodeID: store.NewRelayNodeID,
 		NewPunchNodeID: store.NewPunchNodeID,
-	}
-}
-
-func bindDownloadIDGenerators(store *repository.GormStore) DownloadIDGenerators {
-	return DownloadIDGenerators{
-		NewDownloadID: store.NewClientDownloadID,
 	}
 }

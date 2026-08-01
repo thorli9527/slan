@@ -94,26 +94,12 @@ func resourceSegmentForKey(pathKey string) string {
 		return "security-rules"
 	case "operatorId":
 		return "operators"
-	case "customerId":
-		return "customers"
-	case "planCode":
-		return "plans"
-	case "productId":
-		return "products"
-	case "productCode":
-		return "products"
-	case "orderId":
-		return "orders"
-	case "renewalId":
-		return "renewals"
 	case "nodeId":
 		return "nodes"
 	case "relayNodeId":
 		return "relay-nodes"
 	case "punchNodeId":
 		return "punch-nodes"
-	case "downloadId":
-		return "client-downloads"
 	}
 	if strings.HasSuffix(pathKey, "Id") {
 		name := strings.TrimSuffix(pathKey, "Id")

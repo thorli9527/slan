@@ -57,26 +57,27 @@
     <p class="muted" *ngIf="loading">正在加载运营数据...</p>
 
     <section class="summary-grid">
-      <article><span>客户</span><strong>{{ totalCustomers }}</strong><small>{{ limitedCustomers }} 个客户已限流</small></article>
+      <article><span>用户</span><strong>{{ totalUsers }}</strong><small>{{ limitedUsers }} 个用户已受限</small></article>
       <article><span>设备</span><strong>{{ onlineDeviceCount }}/{{ devices.length }}</strong><small>在线设备 / 总设备</small></article>
       <article><span>中继节点</span><strong>{{ activeRelayNodes }}/{{ relayNodes.length }}</strong><small>健康节点 / 总节点</small></article>
       <article><span>打洞节点</span><strong>{{ healthyPunchNodes }}/{{ punchNodes.length }}</strong><small>{{ totalPunchSessions }} 个活跃打洞会话</small></article>
       <article><span>Relay 月流量</span><strong>{{ totalRelayUsedGb }}GB</strong><small>只统计 relay_udp 与 DERP</small></article>
     </section>
 
-    <ops-overview-page *ngIf="active === 'overview'" [vm]="vm"></ops-overview-page>
     <ops-operators-page *ngIf="active === 'operators'" [vm]="vm"></ops-operators-page>
     <ops-relay-nodes-page *ngIf="active === 'relayNodes'" [vm]="vm"></ops-relay-nodes-page>
     <ops-punch-nodes-page *ngIf="active === 'punchNodes'" [vm]="vm"></ops-punch-nodes-page>
-    <ops-customers-page *ngIf="active === 'customers'" [vm]="vm"></ops-customers-page>
+    <ops-users-page *ngIf="active === 'users'" [vm]="vm"></ops-users-page>
     <ops-devices-page *ngIf="active === 'devices'" [vm]="vm"></ops-devices-page>
-    <ops-client-downloads-page *ngIf="active === 'clientDownloads'" [vm]="vm"></ops-client-downloads-page>
-    <ops-products-page *ngIf="active === 'products'" [vm]="vm"></ops-products-page>
-    <ops-orders-page *ngIf="active === 'orders'" [vm]="vm"></ops-orders-page>
-    <ops-renewals-page *ngIf="active === 'renewals'" [vm]="vm"></ops-renewals-page>
+    <ops-device-groups-page *ngIf="active === 'deviceGroups'" [vm]="vm"></ops-device-groups-page>
+    <ops-networks-page *ngIf="active === 'networks'" [vm]="vm"></ops-networks-page>
   </main>
 </div>
 </ng-container>
+
+<div class="modal-backdrop" *ngIf="showDeviceGroupDialog"><section class="modal"><div class="modal-header"><div><h2>{{ selectedDeviceGroup ? '编辑设备分组' : '新增设备分组' }}</h2><p>设备分组按用户归属，在全局页面统一管理。</p></div><button class="icon-close" type="button" (click)="closeDeviceGroupDialog()">x</button></div><div class="form-grid"><label><span>所属用户</span><select [(ngModel)]="deviceGroupForm.userId" [disabled]="!!selectedDeviceGroup"><option *ngFor="let user of users" [value]="user.userId">{{ user.email }}</option></select></label><label><span>分组名称</span><input [(ngModel)]="deviceGroupForm.name"></label><label><span>说明</span><input [(ngModel)]="deviceGroupForm.description"></label></div><div class="modal-footer"><button class="ghost" type="button" (click)="closeDeviceGroupDialog()">取消</button><button class="primary" type="button" (click)="saveDeviceGroup()">保存</button></div></section></div>
+
+<div class="modal-backdrop" *ngIf="showNetworkDialog"><section class="modal"><div class="modal-header"><div><h2>{{ networkForm.networkId ? '编辑网络' : '新增网络' }}</h2><p>网络为全局管理资源，同时保留所属用户作为权限边界。</p></div><button class="icon-close" type="button" (click)="closeNetworkDialog()">x</button></div><div class="form-grid two-col"><label><span>所属用户</span><select [(ngModel)]="networkForm.ownerId" [disabled]="!!networkForm.networkId"><option *ngFor="let user of users" [value]="user.userId">{{ user.email }}</option></select></label><label><span>网络名称</span><input [(ngModel)]="networkForm.name"></label><label><span>CIDR</span><input [(ngModel)]="networkForm.cidr" placeholder="10.0.0.0/8"></label><label><span>组内策略</span><select [(ngModel)]="networkForm.intraGroupPolicy"><option value="allow">allow</option><option value="deny">deny</option></select></label><label *ngIf="networkForm.networkId"><span>状态</span><select [(ngModel)]="networkForm.status"><option value="active">active</option><option value="disabled">disabled</option></select></label></div><div class="modal-footer"><button class="ghost" type="button" (click)="closeNetworkDialog()">取消</button><button class="primary" type="button" (click)="saveNetwork()">保存</button></div></section></div>
 
 <div class="modal-backdrop" *ngIf="showCurrentPasswordDialog">
   <section class="modal">
@@ -274,236 +275,61 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="showPlanDialog">
+<div class="modal-backdrop" *ngIf="showUserDialog">
   <section class="modal">
     <div class="modal-header">
       <div>
-        <h2>{{ selectedPlan ? '修改套餐' : '新增套餐' }}</h2>
-        <p>套餐定义设备额度、Relay 月流量和带宽上限。</p>
+        <h2>{{ selectedUser ? '查看和修改用户' : '新增用户' }}</h2>
+        <p>{{ selectedUser?.userId || '创建应用用户账户' }}</p>
       </div>
-      <button class="icon-close" type="button" (click)="closePlanDialog()">x</button>
+      <button class="icon-close" type="button" (click)="closeUserDialog()">x</button>
     </div>
     <div class="form-grid two-col">
-      <label><span>编码</span><input [(ngModel)]="planForm.code"></label>
-      <label><span>名称</span><input [(ngModel)]="planForm.name"></label>
-      <label><span>自有设备</span><input [(ngModel)]="planForm.ownDeviceLimit" type="number"></label>
-      <label><span>邀请设备</span><input [(ngModel)]="planForm.invitedDeviceLimit" type="number"></label>
-      <label><span>总设备</span><input [(ngModel)]="planForm.totalDeviceLimit" type="number"></label>
-      <label><span>Relay 月流量 GB</span><input [(ngModel)]="planForm.relayMonthlyGb" type="number"></label>
-      <label><span>Relay 带宽 Mbps</span><input [(ngModel)]="planForm.relayBandwidthMbps" type="number"></label>
-      <label><span>超限限速 Mbps</span><input [(ngModel)]="planForm.relayThrottleMbps" type="number"></label>
-      <label><span>月价</span><input [(ngModel)]="planForm.monthlyPrice" type="number"></label>
-      <label><span>年价</span><input [(ngModel)]="planForm.yearlyPrice" type="number"></label>
+      <label><span>邮箱</span><input [(ngModel)]="userForm.email" type="email"></label>
+      <label><span>姓名</span><input [(ngModel)]="userForm.name"></label>
+      <label *ngIf="!selectedUser"><span>密码</span><input [(ngModel)]="createUserPassword" type="password"></label>
+      <label *ngIf="!selectedUser"><span>确认密码</span><input [(ngModel)]="createUserConfirmPassword" type="password"></label>
+      <label><span>国家</span><input [(ngModel)]="userForm.country"></label>
+      <label><span>省份</span><input [(ngModel)]="userForm.province"></label>
+      <label><span>城市</span><input [(ngModel)]="userForm.city"></label>
+      <label><span>IP 区域</span><input [(ngModel)]="userForm.ipRegion"></label>
       <label>
-        <span>P2P 流量不限</span>
-        <select [(ngModel)]="planForm.p2pUnlimited">
-          <option [ngValue]="true">是</option>
-          <option [ngValue]="false">否</option>
-        </select>
-      </label>
-      <label>
-        <span>自定义域名</span>
-        <select [(ngModel)]="planForm.customDomain">
-          <option [ngValue]="true">支持</option>
-          <option [ngValue]="false">不支持</option>
-        </select>
-      </label>
-      <label>
-        <span>安全组</span>
-        <select [(ngModel)]="planForm.acl">
-          <option [ngValue]="true">支持</option>
-          <option [ngValue]="false">不支持</option>
-        </select>
-      </label>
-      <label>
-        <span>专属 Relay</span>
-        <select [(ngModel)]="planForm.dedicatedRelay">
-          <option [ngValue]="true">支持</option>
-          <option [ngValue]="false">不支持</option>
-        </select>
-      </label>
-      <label>
-        <span>审计日志</span>
-        <select [(ngModel)]="planForm.auditLog">
-          <option [ngValue]="true">支持</option>
-          <option [ngValue]="false">不支持</option>
-        </select>
-      </label>
-      <label>
-        <span>API 接入</span>
-        <select [(ngModel)]="planForm.apiAccess">
-          <option [ngValue]="true">支持</option>
-          <option [ngValue]="false">不支持</option>
-        </select>
-      </label>
-      <label>
-        <span>状态</span>
-        <select [(ngModel)]="planForm.status">
+        <span>账户状态</span>
+        <select [(ngModel)]="userForm.status">
           <option value="active">active</option>
-          <option value="offline">offline</option>
-        </select>
-      </label>
-    </div>
-    <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closePlanDialog()">取消</button>
-      <button class="primary" type="button" (click)="savePlanDialog()">保存</button>
-    </div>
-  </section>
-</div>
-
-<div class="modal-backdrop" *ngIf="showProductDialog">
-  <section class="modal">
-    <div class="modal-header">
-      <div>
-        <h2>{{ selectedProduct ? '修改商品' : '新增商品' }}</h2>
-        <p>商品用于售卖套餐、流量包或企业合同。</p>
-      </div>
-      <button class="icon-close" type="button" (click)="closeProductDialog()">x</button>
-    </div>
-    <div class="form-grid two-col">
-      <label><span>名称</span><input [(ngModel)]="productForm.name"></label>
-      <label>
-        <span>类型</span>
-        <select [(ngModel)]="productForm.type">
-          <option value="plan">plan</option>
-          <option value="traffic_pack">traffic_pack</option>
-          <option value="enterprise">enterprise</option>
-        </select>
-      </label>
-      <label>
-        <span>套餐</span>
-        <select [(ngModel)]="productForm.planCode">
-          <option *ngFor="let plan of plans" [value]="plan.code">{{ plan.name }}</option>
-        </select>
-      </label>
-      <label>
-        <span>周期</span>
-        <select [(ngModel)]="productForm.period">
-          <option value="monthly">monthly</option>
-          <option value="yearly">yearly</option>
-          <option value="one_time">one_time</option>
-          <option value="contract">contract</option>
-        </select>
-      </label>
-      <label><span>有效期天数</span><input [(ngModel)]="productForm.validDays" type="number"></label>
-      <label><span>Relay 流量 GB</span><input [(ngModel)]="productForm.relayTrafficGb" type="number"></label>
-      <label><span>Relay 带宽 Mbps</span><input [(ngModel)]="productForm.relayBandwidthMbps" type="number"></label>
-      <label><span>标价</span><input [(ngModel)]="productForm.listPrice" type="number"></label>
-      <label><span>售价</span><input [(ngModel)]="productForm.salePrice" type="number"></label>
-      <label>
-        <span>自动续费</span>
-        <select [(ngModel)]="productForm.autoRenew">
-          <option [ngValue]="true">是</option>
-          <option [ngValue]="false">否</option>
-        </select>
-      </label>
-      <label>
-        <span>状态</span>
-        <select [(ngModel)]="productForm.status">
-          <option value="active">active</option>
-          <option value="offline">offline</option>
-        </select>
-      </label>
-      <label class="span-two"><span>说明</span><input [(ngModel)]="productForm.description"></label>
-    </div>
-    <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closeProductDialog()">取消</button>
-      <button class="primary" type="button" (click)="saveProductDialog()">保存</button>
-    </div>
-  </section>
-</div>
-
-<div class="modal-backdrop" *ngIf="showOrderDialog">
-  <section class="modal">
-    <div class="modal-header">
-      <div>
-        <h2>{{ selectedOrder ? '修改订单' : '创建订单' }}</h2>
-        <p>运营手动创建订单，后续由支付/开通状态流转。</p>
-      </div>
-      <button class="icon-close" type="button" (click)="closeOrderDialog()">x</button>
-    </div>
-    <div class="form-grid two-col">
-      <label>
-        <span>客户</span>
-        <select [(ngModel)]="orderForm.customerId">
-          <option *ngFor="let customer of customers" [value]="customer.customerId">{{ customer.email }}</option>
-        </select>
-      </label>
-      <label>
-        <span>商品</span>
-        <select [(ngModel)]="orderForm.productId">
-          <option *ngFor="let product of products" [value]="product.productId">{{ product.name }}</option>
-        </select>
-      </label>
-      <label><span>金额</span><input [(ngModel)]="orderForm.amount" type="number"></label>
-      <label>
-        <span>渠道</span>
-        <select [(ngModel)]="orderForm.channel">
-          <option value="manual">manual</option>
-          <option value="wechat">wechat</option>
-          <option value="alipay">alipay</option>
-          <option value="bank">bank</option>
-        </select>
-      </label>
-      <label>
-        <span>支付状态</span>
-        <select [(ngModel)]="orderForm.payStatus">
-          <option value="pending">pending</option>
-          <option value="paid">paid</option>
-          <option value="refunded">refunded</option>
-          <option value="closed">closed</option>
-        </select>
-      </label>
-      <label>
-        <span>开通状态</span>
-        <select [(ngModel)]="orderForm.provisionStatus">
-          <option value="pending">pending</option>
-          <option value="provisioned">provisioned</option>
-          <option value="failed">failed</option>
-        </select>
-      </label>
-    </div>
-    <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closeOrderDialog()">取消</button>
-      <button class="primary" type="button" (click)="saveOrderDialog()">保存</button>
-    </div>
-  </section>
-</div>
-
-<div class="modal-backdrop" *ngIf="showCustomerDialog">
-  <section class="modal">
-    <div class="modal-header">
-      <div>
-        <h2>查看和修改客户</h2>
-        <p>{{ selectedCustomer?.customerId }}</p>
-      </div>
-      <button class="icon-close" type="button" (click)="closeCustomerDialog()">x</button>
-    </div>
-    <div class="form-grid two-col">
-      <label><span>邮箱</span><input [(ngModel)]="customerForm.email" type="email"></label>
-      <label><span>名称</span><input [(ngModel)]="customerForm.name"></label>
-      <label><span>国家</span><input [(ngModel)]="customerForm.country"></label>
-      <label><span>省份</span><input [(ngModel)]="customerForm.province"></label>
-      <label><span>城市</span><input [(ngModel)]="customerForm.city"></label>
-      <label><span>IP 区域</span><input [(ngModel)]="customerForm.ipRegion"></label>
-      <label>
-        <span>状态</span>
-        <select [(ngModel)]="customerForm.status">
-          <option value="active">active</option>
-          <option value="limited">limited</option>
-          <option value="expired">expired</option>
           <option value="disabled">disabled</option>
         </select>
       </label>
     </div>
-    <div class="detail-grid">
-      <div><span>当前级别</span><strong>{{ selectedCustomer ? planName(selectedCustomer.planCode) : '-' }}</strong></div>
-      <div><span>设备</span><strong>自有 {{ selectedCustomer?.ownDevices }} / 邀请 {{ selectedCustomer?.invitedDevices }}</strong></div>
-      <div><span>Relay</span><strong>{{ selectedCustomer?.relayUsedGb }}GB</strong></div>
+    <div class="detail-grid" *ngIf="selectedUser">
+      <div><span>自有设备</span><strong>{{ selectedUser.ownDevices }}</strong></div>
+      <div><span>引入设备</span><strong>{{ selectedUser.invitedDevices }}</strong></div>
+      <div><span>更新时间</span><strong>{{ selectedUser.updatedAt }}</strong></div>
     </div>
     <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closeCustomerDialog()">取消</button>
-      <button class="primary" type="button" (click)="saveCustomerDialog()">保存</button>
+      <button class="ghost" type="button" (click)="closeUserDialog()">取消</button>
+      <button class="primary" type="button" (click)="saveUserDialog()">保存</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="showUserPasswordDialog">
+  <section class="modal compact-modal">
+    <div class="modal-header">
+      <div>
+        <h2>修改用户密码</h2>
+        <p>{{ selectedUser?.email }}</p>
+      </div>
+      <button class="icon-close" type="button" (click)="closeUserPasswordDialog()">x</button>
+    </div>
+    <div class="form-grid">
+      <label><span>新密码</span><input [(ngModel)]="userPassword" type="password"></label>
+      <label><span>确认新密码</span><input [(ngModel)]="userConfirmPassword" type="password"></label>
+    </div>
+    <p class="form-error" *ngIf="userPasswordMessage">{{ userPasswordMessage }}</p>
+    <div class="modal-footer">
+      <button class="ghost" type="button" (click)="closeUserPasswordDialog()">取消</button>
+      <button class="primary" type="button" (click)="saveUserPassword()">确认修改</button>
     </div>
   </section>
 </div>
@@ -545,89 +371,6 @@
     <div class="modal-footer">
       <button class="ghost" type="button" (click)="closeDeviceDialog()">取消</button>
       <button class="primary" type="button" (click)="saveDeviceDialog()">保存</button>
-    </div>
-  </section>
-</div>
-
-<div class="modal-backdrop" *ngIf="showRenewalDialog">
-  <section class="modal">
-    <div class="modal-header">
-      <div>
-        <h2>查看和修改续费记录</h2>
-        <p>{{ selectedRenewal?.renewalId }}</p>
-      </div>
-      <button class="icon-close" type="button" (click)="closeRenewalDialog()">x</button>
-    </div>
-    <div class="form-grid two-col">
-      <label>
-        <span>客户</span>
-        <select [(ngModel)]="renewalForm.customerEmail">
-          <option *ngFor="let customer of customers" [value]="customer.email">{{ customer.email }}</option>
-        </select>
-      </label>
-      <label>
-        <span>套餐</span>
-        <select [(ngModel)]="renewalForm.planCode">
-          <option *ngFor="let plan of plans" [value]="plan.code">{{ plan.name }}</option>
-        </select>
-      </label>
-      <label>
-        <span>周期</span>
-        <select [(ngModel)]="renewalForm.period">
-          <option value="monthly">monthly</option>
-          <option value="yearly">yearly</option>
-          <option value="custom">custom</option>
-        </select>
-      </label>
-      <label><span>金额</span><input [(ngModel)]="renewalForm.amount" type="number"></label>
-      <label><span>支付时间</span><input [(ngModel)]="renewalForm.paidAt" type="date"></label>
-      <label><span>有效期至</span><input [(ngModel)]="renewalForm.validUntil" type="date"></label>
-      <label>
-        <span>来源</span>
-        <select [(ngModel)]="renewalForm.source">
-          <option value="manual">manual</option>
-          <option value="wechat">wechat</option>
-          <option value="alipay">alipay</option>
-          <option value="bank">bank</option>
-        </select>
-      </label>
-      <label><span>操作人</span><input [(ngModel)]="renewalForm.operator"></label>
-    </div>
-    <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closeRenewalDialog()">取消</button>
-      <button class="primary" type="button" (click)="saveRenewalDialog()">保存</button>
-    </div>
-  </section>
-</div>
-
-<div class="modal-backdrop" *ngIf="showAssignPlanDialog">
-  <section class="modal">
-    <div class="modal-header">
-      <div>
-        <h2>指定客户级别</h2>
-        <p>{{ selectedCustomer?.email }}</p>
-      </div>
-      <button class="icon-close" type="button" (click)="closeAssignPlan()">x</button>
-    </div>
-    <div class="form-grid">
-      <label>
-        <span>客户级别</span>
-        <select [(ngModel)]="assignPlanCode">
-          <option *ngFor="let plan of plans" [value]="plan.code">{{ plan.name }}</option>
-        </select>
-      </label>
-      <label>
-        <span>有效期</span>
-        <input [(ngModel)]="assignExpiresAt" type="date">
-      </label>
-      <label>
-        <span>续费金额</span>
-        <input [(ngModel)]="renewalAmount" type="number">
-      </label>
-    </div>
-    <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closeAssignPlan()">取消</button>
-      <button class="primary" type="button" (click)="saveAssignPlan()">确认</button>
     </div>
   </section>
 </div>

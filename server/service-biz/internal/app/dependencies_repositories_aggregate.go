@@ -1,11 +1,10 @@
 package app
 
 type Repositories struct {
-	Auth     AuthRepositories
-	Device   DeviceRepositories
-	Network  NetworkRepositories
-	Ops      OpsRepositories
-	Wire     WireRepositories
-	MQTT     MQTTRepositories
-	Download DownloadRepositories
+	Auth    AuthRepositories
+	Device  DeviceRepositories
+	Network NetworkRepositories
+	Ops     OpsRepositories
+	Wire    WireRepositories
+	MQTT    MQTTRepositories
 }

@@ -1,18 +1,13 @@
 package app
 
 import (
-	"context"
 	"time"
 
 	servicepkg "github.com/slan/service-biz/internal/service"
 )
 
-func appAuthSessionPayload(ctx context.Context, networks servicepkg.NetworkCoreUseCase, view servicepkg.AuthSessionView) map[string]any {
-	return appAuthSessionPayloadWithDefaultNetwork(view, appDefaultNetworkSummary(ctx, networks, view.User.UserID))
-}
-
-func appAuthSessionPayloadWithDefaultNetwork(view servicepkg.AuthSessionView, defaultNetwork *servicepkg.NetworkSummaryView) map[string]any {
-	payload := map[string]any{
+func appAuthSessionPayload(view servicepkg.AuthSessionView) map[string]any {
+	return map[string]any{
 		"auth":         appAuthEnvelopePayload(view),
 		"accessToken":  view.Session.AccessToken,
 		"refreshToken": view.Session.RefreshToken,
@@ -20,16 +15,6 @@ func appAuthSessionPayloadWithDefaultNetwork(view servicepkg.AuthSessionView, de
 		"email":        view.User.Email,
 		"expiresIn":    appSessionExpiresIn(view.Session.ExpiresAt),
 	}
-	if defaultNetwork != nil {
-		network := defaultNetwork.Network
-		payload["defaultNetwork"] = map[string]any{
-			"networkId": network.NetworkID,
-			"name":      network.Name,
-			"status":    network.Status,
-		}
-		payload["activeNetworkId"] = network.NetworkID
-	}
-	return payload
 }
 
 func appAuthEnvelopePayload(view servicepkg.AuthSessionView) map[string]any {
@@ -54,17 +39,6 @@ func appConsoleLoginKeyPayload(view servicepkg.ConsoleLoginKeyView) map[string]a
 		"createdAt": view.CreatedAt,
 		"updatedAt": view.UpdatedAt,
 	}
-}
-
-func appDefaultNetworkSummary(ctx context.Context, networks servicepkg.NetworkCoreUseCase, userID string) *servicepkg.NetworkSummaryView {
-	if networks == nil {
-		return nil
-	}
-	items, err := networks.ListNetworks(ctx, userID)
-	if err != nil || len(items) == 0 {
-		return nil
-	}
-	return &items[0]
 }
 
 func appAuthUserPayload(view servicepkg.UserView) map[string]any {

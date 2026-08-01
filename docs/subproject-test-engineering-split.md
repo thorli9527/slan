@@ -43,11 +43,11 @@
 ## Web 前端
 
 - 业务工程：
-  [`server/web-ui/src`](/Users/thorli/workspace/slan/slan/server/web-ui/src)
   [`server/opt-ui/src`](/Users/thorli/workspace/slan/slan/server/opt-ui/src)
 - 测试工程入口：
-  [`server/web-ui/tests`](/Users/thorli/workspace/slan/slan/server/web-ui/tests)
   [`server/opt-ui/tests`](/Users/thorli/workspace/slan/slan/server/opt-ui/tests)
+
+原 `server/web-ui` 已删除，用户、设备、设备分组、网络、安全组和 DNS 的管理验收统一由运营端测试覆盖。
 
 ## 外部测试脚本总入口
 

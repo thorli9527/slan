@@ -123,7 +123,10 @@ func (p *MqttNetworkEventPublisher) publishWithRetry(
 			if ctx.Err() != nil || attempt >= 2 {
 				break
 			}
-			time.Sleep(200 * time.Millisecond)
+			if err := mqttRetryDelay(ctx, 200*time.Millisecond); err != nil {
+				lastErr = err
+				break
+			}
 			continue
 		}
 		return nil
@@ -151,20 +154,27 @@ func (p *MqttNetworkEventPublisher) publishOnce(
 		SetCleanSession(true)
 	client := mqtt.NewClient(opts)
 	connectToken := client.Connect()
-	if ok := connectToken.WaitTimeout(4 * time.Second); !ok {
+	connected, err := mqttWaitToken(ctx, connectToken, 4*time.Second)
+	if err != nil {
+		client.Disconnect(0)
+		return err
+	}
+	if !connected {
+		client.Disconnect(0)
 		return fmt.Errorf("connect mqtt broker timeout")
 	}
 	if err := connectToken.Error(); err != nil {
+		client.Disconnect(0)
 		return fmt.Errorf("connect mqtt broker: %w", err)
 	}
 	defer client.Disconnect(250)
 
 	publishToken := client.Publish(topic, 1, false, payload)
-	if deadline, ok := ctx.Deadline(); ok {
-		if !publishToken.WaitTimeout(time.Until(deadline)) {
-			return context.DeadlineExceeded
-		}
-	} else if !publishToken.WaitTimeout(4 * time.Second) {
+	published, err := mqttWaitToken(ctx, publishToken, 4*time.Second)
+	if err != nil {
+		return err
+	}
+	if !published {
 		return fmt.Errorf("publish network event timeout")
 	}
 	if err := publishToken.Error(); err != nil {

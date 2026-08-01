@@ -17,6 +17,7 @@ PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 EMAIL="${SLAN_LINUX_DOCKER_EMAIL:-linux-docker-$(date +%s%N)@example.test}"
 DEVICE_ALIAS="${SLAN_LINUX_DOCKER_DEVICE_ALIAS:-Docker Linux Bootstrap}"
 TTL_SECONDS="${SLAN_LINUX_DOCKER_TTL_SECONDS:-1800}"
+PACKAGE_PATH="${SLAN_LINUX_CLIENT_PACKAGE:-}"
 
 BOOTSTRAP_ID=""
 BOOTSTRAP_KEY=""
@@ -42,7 +43,7 @@ cleanup() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   if [[ -n "$BOOTSTRAP_ID" && -n "$USER_TOKEN" && -n "$USER_ID" ]]; then
     curl --silent --show-error --fail \
-      -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
+      -X POST "${WEB_BASE_URL}/api/app/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
@@ -58,6 +59,7 @@ need() {
 need curl
 need jq
 need docker
+[[ -f "$PACKAGE_PATH" ]] || fail "SLAN_LINUX_CLIENT_PACKAGE must point to a built Linux package"
 
 log "register/login Linux Docker test user"
 curl --silent --show-error --fail \
@@ -77,13 +79,13 @@ USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.
 log "resolve default network"
 networks_json="$(curl --silent --show-error --fail \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+  "${WEB_BASE_URL}/api/app/networks?userId=${USER_ID}")"
 NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
 [[ -n "$NETWORK_ID" ]] || fail "failed to resolve test network"
 
 log "create bootstrap key"
 bootstrap_json="$(curl --silent --show-error --fail \
-  -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
+  -X POST "${WEB_BASE_URL}/api/app/device-bootstrap-keys" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${DEVICE_ALIAS}\",\"ttlSeconds\":${TTL_SECONDS}}")"
@@ -96,6 +98,8 @@ log "bootstrap id: $BOOTSTRAP_ID"
 log "start Linux Docker container: $IMAGE"
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$CONTAINER_NAME" "$IMAGE" sleep infinity >/dev/null
+docker cp "$ROOT_DIR/client_v2/install/linux/." "$CONTAINER_NAME:/tmp/slan-linux-install"
+docker cp "$PACKAGE_PATH" "$CONTAINER_NAME:/tmp/$(basename "$PACKAGE_PATH")"
 
 log "install curl/tar inside container when needed"
 docker exec "$CONTAINER_NAME" bash -lc '
@@ -112,11 +116,14 @@ else
 fi
 '
 
-log "download and execute install command inside container"
+log "execute repository installer inside container"
 docker exec "$CONTAINER_NAME" bash -lc "
 set -euo pipefail
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh --server='${BIZ_URL}' --installation-key='${BOOTSTRAP_KEY}' --tray=disabled
+bash /tmp/slan-linux-install/install.sh \
+  --server='${BIZ_URL}' \
+  --installation-key='${BOOTSTRAP_KEY}' \
+  --tray=disabled \
+  --package-url='file:///tmp/$(basename "$PACKAGE_PATH")'
 "
 
 log "verify bootstrap config written"

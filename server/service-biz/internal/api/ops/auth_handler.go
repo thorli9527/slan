@@ -39,7 +39,7 @@ func (h AuthHandler) OpsChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := req.toInput()
-	serviceapi.SetIfEmpty(&input.OperatorID, requestOperatorID(r))
+	input.OperatorID = serviceapi.AuthenticatedOperatorID(r.Context())
 	item, err := h.OpsOperatorPasswords.ChangePassword(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)

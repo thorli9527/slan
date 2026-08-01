@@ -1191,7 +1191,8 @@ fn handle_embedded_connectivity_changed() -> Result<Value> {
         }));
     }
     clear_embedded_mqtt_connection();
-    let session = ensure_device_session().context("refresh device session after connectivity change")?;
+    let session =
+        ensure_device_session().context("refresh device session after connectivity change")?;
     let mqtt = connect_embedded_control_mqtt_with_session(&session)
         .context("reconnect embedded mqtt after connectivity change")?;
     *last_recovery_at_ms = current_timestamp_ms();
@@ -1870,6 +1871,7 @@ fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static s
     let action = match message_type {
         "device_user_login_succeeded" => "deviceUserLoginSucceeded",
         "network_event" => "reconcileNetworkState",
+        "device_network_membership_changed" => "reconcileNetworkState",
         "device_ip_reassigned" => "reconcileNetworkState",
         "client_message" => "clientMessage",
         _ => return None,
@@ -2969,6 +2971,7 @@ fn local_session_json() -> Result<String> {
     let session = load_session().ok();
     serde_json::to_string(&serde_json::json!({
         "signedIn": session.is_some(),
+        "userAuthenticated": session.as_ref().is_some_and(|value| value.session_kind == "user"),
         "userId": session.as_ref().map(|value| value.user_id.clone()),
         "userLabel": session.as_ref().map(|value| value.user_label.clone()),
         "deviceId": session.as_ref().and_then(|value| value.device_id.clone()),
@@ -3635,6 +3638,24 @@ mod tests {
     }
 
     #[test]
+    fn embedded_downstream_ack_identity_maps_membership_change() {
+        let value = serde_json::json!({
+            "type": "device_network_membership_changed",
+            "messageId": "membership-msg-1",
+            "payload": {
+                "deviceId": "dev-1",
+                "changedNetworkId": "net-1",
+                "networkIds": []
+            }
+        });
+
+        assert_eq!(
+            super::embedded_downstream_ack_identity(&value),
+            Some(("membership-msg-1".to_string(), "reconcileNetworkState"))
+        );
+    }
+
+    #[test]
     fn embedded_active_network_reconcile_emits_business_event_when_network_is_enabled() {
         let _lock = crate::test_env_lock();
         let state_dir = std::env::temp_dir().join(format!(
@@ -3656,6 +3677,7 @@ mod tests {
                 runtime.dispatch(ClientCommand::Logout)?;
                 runtime
                     .dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
+                        user_authenticated: Some(true),
                         access_token: "token-1".to_string(),
                         refresh_token: None,
                         user_id: "user-1".to_string(),

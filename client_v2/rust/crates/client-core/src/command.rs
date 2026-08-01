@@ -6,6 +6,9 @@ use crate::platform::NetworkRuntimeState;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthPayload {
+    /// 是否为用户认证会话；设备专属 token 会话为 false。
+    #[serde(default)]
+    pub user_authenticated: Option<bool>,
     /// 用户访问令牌，用于后续调用控制面接口。
     pub access_token: String,
     /// 可选刷新令牌。

@@ -61,7 +61,11 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 				log.Printf("mqtt upstream consume failed topic=%s err=%v payload=%s", message.Topic(), err, string(message.Payload()))
 			}
 		})
-		if ok := token.WaitTimeout(5 * time.Second); !ok {
+		subscribed, waitErr := mqttWaitToken(ctx, token, 5*time.Second)
+		if waitErr != nil {
+			return
+		}
+		if !subscribed {
 			log.Printf("mqtt upstream consumer subscribe timeout topics=%v", topics)
 			return
 		}
@@ -73,7 +77,12 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 	})
 	client := mqtt.NewClient(opts)
 	connectToken := client.Connect()
-	if ok := connectToken.WaitTimeout(6 * time.Second); !ok {
+	connected, err := mqttWaitToken(ctx, connectToken, 6*time.Second)
+	if err != nil {
+		client.Disconnect(0)
+		return err
+	}
+	if !connected {
 		// ConnectRetry keeps running after WaitTimeout. Stop this client before
 		// the caller creates another consumer with the same stable client ID.
 		client.Disconnect(0)
@@ -83,10 +92,8 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 		client.Disconnect(0)
 		return fmt.Errorf("connect mqtt broker: %w", err)
 	}
-	go func() {
-		<-ctx.Done()
-		client.Disconnect(250)
-	}()
+	<-ctx.Done()
+	client.Disconnect(250)
 	return nil
 }
 
@@ -112,6 +119,7 @@ func (s MQTTWebhookService) handleNetworkEventDeliveryAck(ctx context.Context, t
 	var ack struct {
 		DeliveryID string `json:"deliveryId"`
 		Status     string `json:"status"`
+		Error      string `json:"error"`
 	}
 	if err := json.Unmarshal(payload, &ack); err != nil {
 		return fmt.Errorf("decode control ack: %w", err)
@@ -124,14 +132,32 @@ func (s MQTTWebhookService) handleNetworkEventDeliveryAck(ctx context.Context, t
 	if err != nil || !ok {
 		return err
 	}
-	if !strings.EqualFold(strings.TrimSpace(ack.Status), "succeeded") {
-		return nil
-	}
 	now := currentTime(s.Now).Unix()
-	item.Status = "acknowledged"
-	item.AcknowledgedAt = now
-	item.UpdatedAt = now
-	return s.EventDeliveries.SaveNetworkEventDelivery(ctx, item)
+	switch strings.ToLower(strings.TrimSpace(ack.Status)) {
+	case "succeeded":
+		item.Status = "acknowledged"
+		item.AcknowledgedAt = now
+		item.LastError = ""
+		item.UpdatedAt = now
+		return s.EventDeliveries.SaveNetworkEventDelivery(ctx, item)
+	case "failed":
+		item.LastError = boundedNetworkDeliveryError(ack.Error)
+		item.NextRetryAt = now + 10
+		item.UpdatedAt = now
+		_, err := s.EventDeliveries.UpdatePendingNetworkEventDelivery(ctx, item)
+		return err
+	default:
+		return fmt.Errorf("invalid control ack status=%s deliveryId=%s", ack.Status, ack.DeliveryID)
+	}
+}
+
+func boundedNetworkDeliveryError(value string) string {
+	const maximumRunes = 2048
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > maximumRunes {
+		runes = runes[:maximumRunes]
+	}
+	return string(runes)
 }
 
 func deviceIDFromControlAckTopic(topic string) string {

@@ -68,25 +68,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/PublicSystemConfig'
 
-  /auth/register:
-    post:
-      tags: [Auth]
-      operationId: register
-      summary: Register user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterRequest'
-      responses:
-        '201':
-          description: User registered
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthResponse'
-
   /auth/login:
     post:
       tags: [Auth]
@@ -388,21 +369,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkHome'
-
-  /plan:
-    get:
-      tags: [Networks]
-      operationId: getPlanStatus
-      summary: Get current user's fixed access plan
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Fixed plan status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PlanStatus'
 
   /networks/{networkId}:
     get:
@@ -997,86 +963,6 @@ paths:
                     items:
                       $ref: '#/components/schemas/OpsUser'
 
-  /ops-api/plan-config:
-    get:
-      tags: [Ops]
-      operationId: opsGetPlanConfig
-      summary: Get global operations plan configuration
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Plan configuration
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PlanConfig'
-    put:
-      tags: [Ops]
-      operationId: opsUpdatePlanConfig
-      summary: Update global operations plan configuration
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePlanConfigRequest'
-      responses:
-        '200':
-          description: Plan configuration updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PlanConfig'
-
-  /ops-api/users/{userId}/plan:
-    put:
-      tags: [Ops]
-      operationId: opsUpdateUserPlan
-      summary: Set a user-specific plan override
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePlanConfigRequest'
-      responses:
-        '200':
-          description: User plan override
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserPlanOverride'
-    delete:
-      tags: [Ops]
-      operationId: opsDeleteUserPlan
-      summary: Delete a user-specific plan override
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: User plan override deleted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusOKResponse'
-
   /ops-api/devices:
     get:
       tags: [Ops]
@@ -1390,17 +1276,6 @@ components:
         type: string
 
   schemas:
-    RegisterRequest:
-      type: object
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          minLength: 8
-
     LoginRequest:
       type: object
       required: [email, password]
@@ -1566,27 +1441,6 @@ components:
         allowRegistration:
           type: boolean
 
-    PlanStatus:
-      type: object
-      required: [planName, freeDeviceLimit, maxActiveDevices, dnsAvailable]
-      properties:
-        planName:
-          type: string
-          enum: [free]
-        freeDeviceLimit:
-          type: integer
-          example: 2
-        maxActiveDevices:
-          type: integer
-          example: 2
-        relayBandwidthLimitKbps:
-          type: integer
-          example: 512
-        p2pUnlimited:
-          type: boolean
-        dnsAvailable:
-          type: boolean
-
     OpsLoginRequest:
       type: object
       required: [loginName, password]
@@ -1669,37 +1523,6 @@ components:
           type: array
           items:
             type: string
-        planOverride:
-          $ref: '#/components/schemas/PlanConfig'
-
-    PlanConfig:
-      type: object
-      required: [maxActiveDevices, relayIngressKbps, relayEgressKbps, udpIngressKbps, udpEgressKbps]
-      properties:
-        maxActiveDevices:
-          type: integer
-        relayIngressKbps:
-          type: integer
-        relayEgressKbps:
-          type: integer
-        udpIngressKbps:
-          type: integer
-        udpEgressKbps:
-          type: integer
-
-    UpdatePlanConfigRequest:
-      allOf:
-        - $ref: '#/components/schemas/PlanConfig'
-
-    UserPlanOverride:
-      allOf:
-        - $ref: '#/components/schemas/PlanConfig'
-        - type: object
-          required: [userId]
-          properties:
-            userId:
-              type: string
-
     OpsDevice:
       allOf:
         - $ref: '#/components/schemas/Device'

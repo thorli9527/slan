@@ -12,6 +12,7 @@ type NetworkEventDelivery struct {
 	NextRetryAt    int64
 	ExpiresAt      int64
 	AcknowledgedAt int64
+	LastError      string
 	CreatedAt      int64
 	UpdatedAt      int64
 }

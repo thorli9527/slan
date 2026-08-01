@@ -52,7 +52,7 @@ Phase 1 should prove the shortest usable loop for SLAN:
 - Full DNS management.
 - Traceroute and advanced diagnostics.
 - Fine-grained ACL policies.
-- Billing.
+- Commercial plans and billing (retired from the product).
 - Operations dashboards.
 - Manual subnet creation in the console.
 - Dedicated device management page.

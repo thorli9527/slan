@@ -206,7 +206,7 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (staleAuthorizedPeer, erro
 	}()
 
 	var auth staleAuthResponse
-	if err := postJSON(bizURL+"/auth/register", "", map[string]any{"email": email, "password": password}, &auth); err != nil {
+	if err := postJSON(bizURL+"/api/app/auth/register", "", map[string]any{"email": email, "password": password}, &auth); err != nil {
 		return staleAuthorizedPeer{}, err
 	}
 	var device staleDeviceResponse
@@ -288,7 +288,7 @@ func cleanupStaleSmokeDeviceBestEffort(bizURL, email, password, deviceID string)
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/web/auth/login", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/app/auth/login", bytes.NewReader(payload))
 	if err != nil {
 		return
 	}
@@ -311,7 +311,7 @@ func cleanupStaleSmokeDeviceBestEffort(bizURL, email, password, deviceID string)
 	}
 	req, err = http.NewRequest(
 		http.MethodDelete,
-		bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
 		nil,
 	)
 	if err != nil {

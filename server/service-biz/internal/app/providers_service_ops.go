@@ -25,32 +25,20 @@ func newOpsServices(deps UseCaseDependencies) OpsServices {
 		},
 		AuditOverview: servicepkg.OpsAuditService{
 			Audit: repos.Audit,
+			Now:   deps.now(),
 		},
 		NodeRegistry: servicepkg.OpsNodeService{
-			Catalog: repos.Catalog,
+			Nodes: repos.Nodes,
 		},
-		CustomerDirectory: servicepkg.OpsCustomerService{
-			Users:   repos.Users,
-			Devices: repos.Devices,
-			Catalog: repos.Catalog,
+		UserDirectory: servicepkg.OpsUserService{
+			Users:     repos.Users,
+			Devices:   repos.Devices,
+			NewUserID: deps.authIDs().NewUserID,
 		},
 		DeviceDirectory: servicepkg.OpsManagedDeviceService{
 			Users:    repos.Users,
 			Devices:  repos.Devices,
 			Networks: repos.Networks,
-		},
-		DownloadCatalog: servicepkg.OpsCatalogDownloadService{
-			Catalog: repos.Catalog,
-		},
-		PlanCatalog: servicepkg.OpsCatalogPlanService{
-			Catalog: repos.Catalog,
-		},
-		ProductCatalog: servicepkg.OpsCatalogProductService{
-			Catalog: repos.Catalog,
-		},
-		OrderCatalog: servicepkg.OpsCatalogOrderService{
-			Users:   repos.Users,
-			Catalog: repos.Catalog,
 		},
 	}
 }

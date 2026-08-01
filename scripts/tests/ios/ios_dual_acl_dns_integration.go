@@ -36,13 +36,6 @@ type authEnvelope struct {
 			Token string `json:"token"`
 		} `json:"session"`
 	} `json:"auth"`
-	DefaultNetwork struct {
-		NetworkID string `json:"networkId"`
-	} `json:"defaultNetwork"`
-}
-
-type itemsEnvelope[T any] struct {
-	Items []T `json:"items"`
 }
 
 type networkRow struct {
@@ -100,6 +93,7 @@ func main() {
 
 	var bizURL string
 	var webBaseURL string
+	var opsBaseURL string
 	var serviceBin string
 	var password string
 	var expectMQTTHost string
@@ -108,6 +102,7 @@ func main() {
 	var timeout time.Duration
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", defaultClientControlBaseURL), "service-biz base URL")
 	flag.StringVar(&webBaseURL, "web-base-url", envDefault("SLAN_WEB_BASE_URL", strings.TrimRight(envDefault("SLAN_BIZ_WEB_BASE_URL", defaultClientWebBaseURL), "/")), "web console base URL")
+	flag.StringVar(&opsBaseURL, "ops-base-url", envDefault("SLAN_OPS_BASE_URL", webBaseURL), "operations API base URL")
 	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client_v2/rust/target/debug/client-core-service"), "client-core-service binary")
 	flag.StringVar(&password, "password", "Password123!", "test user password")
 	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by service-biz")
@@ -121,6 +116,7 @@ func main() {
 
 	bizURL = strings.TrimRight(bizURL, "/")
 	webBaseURL = strings.TrimRight(webBaseURL, "/")
+	opsBaseURL = strings.TrimRight(opsBaseURL, "/")
 	serviceBin = filepath.Clean(serviceBin)
 	if _, err := os.Stat(serviceBin); err != nil {
 		fail("client-core-service binary is not available at %s: %v\nrun: cd client_v2/rust && cargo build -p client-core-service", serviceBin, err)
@@ -133,13 +129,8 @@ func main() {
 	auth := register(ctx, bizURL, email, password)
 	webAccessToken = auth.Auth.Session.Token
 	userID := auth.Auth.User.UserID
-	networkID := auth.DefaultNetwork.NetworkID
-	if networkID == "" {
-		networkID = firstNetworkID(ctx, webBaseURL, auth.Auth.User.UserID)
-	}
-	if networkID == "" {
-		fail("registered user has no default network")
-	}
+	opsToken := loginOperator(ctx, opsBaseURL)
+	networkID, securityGroupID := createManagedNetwork(ctx, opsBaseURL, opsToken, userID)
 	resources := &provisionedResources{}
 
 	root := filepath.Join(os.TempDir(), "slan-ios-dual-acl-dns-"+uniqueSuffix())
@@ -149,7 +140,7 @@ func main() {
 		fmt.Printf("iosDualAclDnsIntegration: workDir=%s\n", root)
 	}
 	clients := make([]*dualClient, 0, clientCount)
-	defer cleanupIntegration(bizURL, webBaseURL, email, password, &networkID, userID, resources, &clients)
+	defer cleanupIntegration(opsBaseURL, opsToken, &networkID, userID, resources, &clients)
 	for index := 0; index < clientCount; index++ {
 		name := fmt.Sprintf("ios-%c", 'a'+rune(index))
 		clients = append(clients, startService(ctx, serviceBin, bizURL, filepath.Join(root, name), "ios-sim-"+string('a'+rune(index))+"-"+uniqueSuffix(), name))
@@ -162,12 +153,13 @@ func main() {
 
 	for _, client := range clients {
 		login(ctx, client, email, password)
+		addManagedNetworkDevice(ctx, opsBaseURL, opsToken, userID, networkID, client.deviceID)
 		assertMQTTBrokerHost(ctx, client, expectMQTTHost)
 		waitControlReady(ctx, client)
 	}
 	webAccessToken = loginUser(ctx, bizURL, email, password).Auth.Session.Token
 
-	provisionDNSAndACL(ctx, webBaseURL, userID, networkID, clients, resources)
+	provisionDNSAndACL(ctx, opsBaseURL, opsToken, userID, networkID, securityGroupID, clients, resources)
 	minPeers := clientCount - 1
 	minResolverRecords := clientCount
 	minSecurityRules := 2
@@ -315,16 +307,12 @@ func waitControlReady(ctx context.Context, client *dualClient) {
 	fail("%s control transport is not ready: %#v", client.name, last)
 }
 
-func provisionDNSAndACL(ctx context.Context, webBaseURL, userID, networkID string, clients []*dualClient, resources *provisionedResources) {
-	var groups itemsEnvelope[securityGroupRow]
-	getJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/security-groups", &groups)
-	if len(groups.Items) == 0 {
-		fail("network %s has no security groups", networkID)
-	}
+func provisionDNSAndACL(ctx context.Context, opsBaseURL, opsToken, userID, networkID, securityGroupID string, clients []*dualClient, resources *provisionedResources) {
 	zoneName := "itest-" + uniqueSuffix() + ".lan"
 	var zone dnsZoneRow
-	postJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/dns/zones", map[string]any{
-		"zoneName": zoneName,
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/dns/zones", opsToken, map[string]any{
+		"ownerId": userID,
+		"name":    zoneName,
 	}, &zone)
 	if zone.ZoneID == "" {
 		fail("created dns zone returned empty zone id")
@@ -332,20 +320,22 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, userID, networkID strin
 	resources.zoneIDs = append(resources.zoneIDs, zone.ZoneID)
 	for _, client := range clients {
 		var record dnsRecordRow
-		postJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/dns/records", map[string]any{
-			"zoneId":         zone.ZoneID,
-			"name":           client.name,
-			"recordType":     "A",
-			"targetDeviceId": client.deviceID,
-			"port":           "443",
-			"ttl":            60,
+		opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/dns/records", opsToken, map[string]any{
+			"ownerId": userID,
+			"zoneId":  zone.ZoneID,
+			"name":    client.name,
+			"type":    "A",
+			"value":   client.deviceID,
+			"port":    "443",
+			"ttl":     60,
 		}, &record)
 		if record.RecordID != "" {
 			resources.recordIDs = append(resources.recordIDs, record.RecordID)
 		}
 	}
 	var deviceGroup deviceGroupRow
-	postJSON(ctx, webBaseURL+"/api/web/users/"+url.PathEscape(userID)+"/device-groups", map[string]any{
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/device-groups", opsToken, map[string]any{
+		"ownerId":     userID,
 		"name":        "ios-integration-" + uniqueSuffix(),
 		"description": "iOS integration devices",
 	}, &deviceGroup)
@@ -354,15 +344,17 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, userID, networkID strin
 	}
 	resources.groupIDs = append(resources.groupIDs, deviceGroup.GroupID)
 	for _, client := range clients {
-		putJSON(ctx, webBaseURL+"/api/web/users/"+url.PathEscape(userID)+"/devices/"+url.PathEscape(client.deviceID)+"/groups", map[string]any{
+		opsJSON(ctx, http.MethodPut, opsBaseURL+"/api/ops/devices/"+url.PathEscape(client.deviceID)+"/groups", opsToken, map[string]any{
+			"ownerId":  userID,
 			"groupIds": []string{deviceGroup.GroupID},
 		}, nil)
 	}
-	postJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/device-groups", map[string]any{
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/device-groups", opsToken, map[string]any{
+		"ownerId": userID,
 		"groupId": deviceGroup.GroupID,
 	}, nil)
-	addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "ingress", "device_group", deviceGroup.GroupID, 443, resources)
-	addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "egress", "device_group", deviceGroup.GroupID, 443, resources)
+	addRule(ctx, opsBaseURL, opsToken, userID, securityGroupID, "ingress", "device_group", deviceGroup.GroupID, 443, resources)
+	addRule(ctx, opsBaseURL, opsToken, userID, securityGroupID, "egress", "device_group", deviceGroup.GroupID, 443, resources)
 	deviceIDs := make([]string, 0, len(clients))
 	for _, client := range clients {
 		deviceIDs = append(deviceIDs, client.name+"="+client.deviceID)
@@ -370,15 +362,15 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, userID, networkID strin
 	fmt.Printf("iosDualAclDnsIntegration: provisioned dnsZone=%s clients=%s\n", zoneName, strings.Join(deviceIDs, ","))
 }
 
-func addRule(ctx context.Context, webBaseURL, securityGroupID, direction, peerType, peerValue string, port int, resources *provisionedResources) {
+func addRule(ctx context.Context, opsBaseURL, opsToken, userID, securityGroupID, direction, peerType, peerValue string, port int, resources *provisionedResources) {
 	var out securityRuleRow
-	postJSON(ctx, webBaseURL+"/api/web/security-groups/"+url.PathEscape(securityGroupID)+"/rules", map[string]any{
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/security-groups/"+url.PathEscape(securityGroupID)+"/rules", opsToken, map[string]any{
+		"ownerId":   userID,
 		"direction": direction,
 		"priority":  100,
 		"action":    "allow",
 		"protocol":  "tcp",
-		"portFrom":  port,
-		"portTo":    port,
+		"portRange": fmt.Sprintf("%d", port),
 		"peerType":  peerType,
 		"peerValue": peerValue,
 		"enabled":   true,
@@ -555,33 +547,80 @@ func loginUser(ctx context.Context, bizURL, email, password string) authEnvelope
 	return out
 }
 
-func cleanupIntegration(bizURL, webBaseURL, email, password string, networkID *string, userID string, resources *provisionedResources, clients *[]*dualClient) {
+func loginOperator(ctx context.Context, opsBaseURL string) string {
+	var out struct {
+		Token string `json:"token"`
+	}
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/auth/login", "", map[string]any{
+		"email":    envDefault("SLAN_OPS_EMAIL", "admin1"),
+		"password": envDefault("SLAN_OPS_PASSWORD", "admin1"),
+	}, &out)
+	if out.Token == "" {
+		fail("operator login returned empty token")
+	}
+	return out.Token
+}
+
+func createManagedNetwork(ctx context.Context, opsBaseURL, opsToken, userID string) (string, string) {
+	var network struct {
+		Network networkRow `json:"network"`
+	}
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/networks", opsToken, map[string]any{
+		"ownerId":          userID,
+		"name":             "ios-dual-" + uniqueSuffix(),
+		"cidr":             "10.0.0.0/8",
+		"intraGroupPolicy": "allow",
+	}, &network)
+	if network.Network.NetworkID == "" {
+		fail("operator network creation returned empty network id")
+	}
+	var group securityGroupRow
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/networks/"+url.PathEscape(network.Network.NetworkID)+"/security-groups", opsToken, map[string]any{
+		"ownerId":     userID,
+		"name":        "ios-dual-default",
+		"description": "iOS dual integration ACL",
+	}, &group)
+	if group.SecurityGroupID == "" {
+		fail("operator security group creation returned empty id")
+	}
+	return network.Network.NetworkID, group.SecurityGroupID
+}
+
+func addManagedNetworkDevice(ctx context.Context, opsBaseURL, opsToken, userID, networkID, deviceID string) {
+	opsJSON(ctx, http.MethodPost, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/devices/"+url.PathEscape(deviceID), opsToken, map[string]any{
+		"ownerId": userID,
+	}, nil)
+}
+
+func cleanupIntegration(opsBaseURL, opsToken string, networkID *string, userID string, resources *provisionedResources, clients *[]*dualClient) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	webAccessToken = loginUser(ctx, bizURL, email, password).Auth.Session.Token
 	if resources != nil {
 		for index := len(resources.ruleIDs) - 1; index >= 0; index-- {
-			deleteJSON(ctx, webBaseURL+"/api/web/security-groups/rules/"+url.PathEscape(resources.ruleIDs[index]))
+			opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/security-rules/"+url.PathEscape(resources.ruleIDs[index]), opsToken, userID)
 		}
 		if networkID != nil && strings.TrimSpace(*networkID) != "" {
 			for index := len(resources.recordIDs) - 1; index >= 0; index-- {
-				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/dns/records/"+url.PathEscape(resources.recordIDs[index]))
+				opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/dns/records/"+url.PathEscape(resources.recordIDs[index]), opsToken, userID)
 			}
 			for index := len(resources.zoneIDs) - 1; index >= 0; index-- {
-				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/dns/zones/"+url.PathEscape(resources.zoneIDs[index]))
+				opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/dns/zones/"+url.PathEscape(resources.zoneIDs[index]), opsToken, userID)
 			}
 			for index := len(resources.groupIDs) - 1; index >= 0; index-- {
-				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/device-groups/"+url.PathEscape(resources.groupIDs[index]))
+				opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(*networkID)+"/device-groups/"+url.PathEscape(resources.groupIDs[index]), opsToken, userID)
 			}
 		}
 		for index := len(resources.groupIDs) - 1; index >= 0; index-- {
-			deleteJSON(ctx, webBaseURL+"/api/web/users/"+url.PathEscape(userID)+"/device-groups/"+url.PathEscape(resources.groupIDs[index]))
+			opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/device-groups/"+url.PathEscape(resources.groupIDs[index]), opsToken, userID)
 		}
 	}
-	cleanupDevicesForUser(ctx, webBaseURL, userID, clients)
+	cleanupDevicesForUser(ctx, opsBaseURL, opsToken, userID, clients)
+	if networkID != nil && strings.TrimSpace(*networkID) != "" {
+		opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(*networkID), opsToken, userID)
+	}
 }
 
-func cleanupDevicesForUser(ctx context.Context, webBaseURL, userID string, clients *[]*dualClient) {
+func cleanupDevicesForUser(ctx context.Context, opsBaseURL, opsToken, userID string, clients *[]*dualClient) {
 	if strings.TrimSpace(userID) == "" {
 		return
 	}
@@ -596,26 +635,71 @@ func cleanupDevicesForUser(ctx context.Context, webBaseURL, userID string, clien
 	var listed struct {
 		Items []struct {
 			DeviceID string `json:"deviceId"`
+			OwnerID  string `json:"ownerId"`
 		} `json:"items"`
 	}
-	getBestEffortJSON(ctx, webBaseURL+"/api/web/devices?userId="+url.QueryEscape(userID), &listed)
+	opsGetBestEffort(ctx, opsBaseURL+"/api/ops/devices", opsToken, &listed)
 	for _, item := range listed.Items {
-		if strings.TrimSpace(item.DeviceID) != "" {
+		if item.OwnerID == userID && strings.TrimSpace(item.DeviceID) != "" {
 			deviceIDSet[item.DeviceID] = struct{}{}
 		}
 	}
 	for deviceID := range deviceIDSet {
-		deleteJSON(ctx, webBaseURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID))
+		opsDeleteBestEffort(ctx, opsBaseURL+"/api/ops/devices/"+url.PathEscape(deviceID), opsToken, "")
 	}
 }
 
-func firstNetworkID(ctx context.Context, webBaseURL, userID string) string {
-	var out itemsEnvelope[networkRow]
-	getJSON(ctx, webBaseURL+"/api/web/networks?userId="+url.QueryEscape(userID), &out)
-	if len(out.Items) == 0 {
-		return ""
+func opsJSON(ctx context.Context, method, rawURL, token string, body, out any) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		fail("encode ops request %s: %v", rawURL, err)
 	}
-	return out.Items[0].NetworkID
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bytes.NewReader(payload))
+	if err != nil {
+		fail("build ops request %s: %v", rawURL, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	doJSON(req, out)
+}
+
+func opsGetBestEffort(ctx context.Context, rawURL, token string, out any) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_ = json.NewDecoder(resp.Body).Decode(out)
+	}
+}
+
+func opsDeleteBestEffort(ctx context.Context, rawURL, token, userID string) {
+	body := map[string]any{}
+	if userID != "" {
+		body["ownerId"] = userID
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, rawURL, bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
 }
 
 func getJSON(ctx context.Context, rawURL string, out any) {
@@ -685,7 +769,7 @@ func deleteJSON(ctx context.Context, rawURL string) {
 }
 
 func setWebAuthorization(req *http.Request) {
-	if token := strings.TrimSpace(webAccessToken); token != "" && strings.Contains(req.URL.Path, "/api/web/") {
+	if token := strings.TrimSpace(webAccessToken); token != "" && strings.Contains(req.URL.Path, "/api/app/") {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 }

@@ -6,7 +6,6 @@ func newAuthUseCasesFromServices(services AuthServices) AuthUseCases {
 		UserSessions:        services.UserAuth,
 		UserTokens:          services.TokenManagement,
 		UserAccounts:        services.UserAuth,
-		UserEntitlements:    services.UserAuth,
 		Aliases:             services.Aliases,
 		ConsoleKeys:         services.ConsoleAuth,
 		ConsoleLogin:        services.ConsoleAuth,

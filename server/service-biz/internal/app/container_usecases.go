@@ -5,7 +5,6 @@ import servicepkg "github.com/slan/service-biz/internal/service"
 type UseCases struct {
 	Auth      AuthUseCases
 	Devices   DeviceUseCases
-	Downloads DownloadUseCases
 	Network   NetworkUseCases
 	Ops       OpsUseCases
 	Wire      WireUseCases
@@ -17,7 +16,6 @@ type AuthUseCases struct {
 	UserSessions        servicepkg.AuthUserSessionUseCase
 	UserTokens          servicepkg.UserTokenManagementUseCase
 	UserAccounts        servicepkg.AuthUserAccountUseCase
-	UserEntitlements    servicepkg.AuthUserEntitlementUseCase
 	Aliases             servicepkg.AuthAliasUseCase
 	ConsoleKeys         servicepkg.AuthConsoleKeyUseCase
 	ConsoleLogin        servicepkg.AuthConsoleLoginUseCase
@@ -49,12 +47,8 @@ type OpsUseCases struct {
 	DashboardOverview servicepkg.OpsDashboardUseCase
 	AuditOverview     servicepkg.OpsAuditUseCase
 	NodeRegistry      servicepkg.OpsNodeUseCase
-	CustomerDirectory servicepkg.OpsCustomerUseCase
+	UserDirectory     servicepkg.OpsUserUseCase
 	DeviceDirectory   servicepkg.OpsManagedDeviceUseCase
-	DownloadCatalog   servicepkg.OpsCatalogDownloadUseCase
-	PlanCatalog       servicepkg.OpsCatalogPlanUseCase
-	ProductCatalog    servicepkg.OpsCatalogProductUseCase
-	OrderCatalog      servicepkg.OpsCatalogOrderUseCase
 }
 
 type WireUseCases struct {
@@ -65,8 +59,4 @@ type WireUseCases struct {
 
 type MQTTUseCases struct {
 	BrokerWebhook servicepkg.MQTTUseCase
-}
-
-type DownloadUseCases struct {
-	ClientDelivery servicepkg.DownloadUseCase
 }
