@@ -51,6 +51,7 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 	view.DNS = servicepkg.BuildNetworkDNSConfigView(view)
 	view.SecurityRules = expandedSecurityRules(view)
 	deviceIDsByIP := buildDeviceIDsByIP(view)
+	deviceIPsByID := buildDeviceIPsByID(view)
 	zoneNamesByID := buildZoneNamesByID(view.DNSZones)
 	orderedRelayCandidates := orderRelayCandidates(view.RuntimePath, resolved.RelayCandidates)
 	aclPolicies := aclPoliciesPayload(view)
@@ -76,7 +77,7 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"rules":               securityRulePayloadsForView(view),
 		"aclPolicies":         aclPolicies,
 		"resolverZones":       dnsZonePayloads(view.DNSZones),
-		"resolverRecords":     dnsRecordPayloads(view.DNSRecords, zoneNamesByID, deviceIDsByIP),
+		"resolverRecords":     dnsRecordPayloads(view.DNSRecords, zoneNamesByID, deviceIDsByIP, deviceIPsByID),
 		"peers":               networkPeerPayloads(view.Peers),
 		"relayCandidates":     relayCandidatePayloads(view.RuntimePath, orderedRelayCandidates),
 	}
@@ -389,8 +390,6 @@ func networkPeerPayloads(items []servicepkg.NetworkConfigPeerView) []map[string]
 		payloads = append(payloads, map[string]any{
 			"deviceId":     item.DeviceID,
 			"nodeId":       "node-" + strings.TrimSpace(item.DeviceID),
-			"ownerId":      item.OwnerID,
-			"ownerEmail":   item.OwnerEmail,
 			"alias":        item.Alias,
 			"globalIp":     item.GlobalIP,
 			"globalName":   item.GlobalName,
@@ -500,17 +499,6 @@ func resolveSecurityRulePeer(rule servicepkg.SecurityRuleView, view servicepkg.N
 			}
 		}
 		return "node-" + peerValue, []string{}
-	case "user":
-		ips := make([]string, 0, len(view.Peers)+1)
-		if strings.EqualFold(strings.TrimSpace(view.Network.OwnerID), peerValue) {
-			ips = append(ips, compactStrings(view.GlobalIP)...)
-		}
-		for _, peer := range view.Peers {
-			if strings.EqualFold(strings.TrimSpace(peer.OwnerID), peerValue) {
-				ips = append(ips, compactStrings(peer.GlobalIP)...)
-			}
-		}
-		return "", uniqueStrings(ips)
 	default:
 		return "", []string{}
 	}
@@ -551,14 +539,18 @@ func dnsZonePayloads(items []servicepkg.DNSZoneView) []map[string]any {
 	return payloads
 }
 
-func dnsRecordPayloads(items []servicepkg.DNSRecordView, zoneNamesByID map[string]string, deviceIDsByIP map[string]string) []map[string]any {
+func dnsRecordPayloads(items []servicepkg.DNSRecordView, zoneNamesByID map[string]string, deviceIDsByIP, deviceIPsByID map[string]string) []map[string]any {
 	payloads := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		targetDeviceID := item.TargetDeviceID
+		targetIP := item.TargetIP
 		if targetDeviceID == "" && item.TargetIP != "" {
 			if deviceID, ok := deviceIDsByIP[strings.TrimSpace(item.TargetIP)]; ok {
 				targetDeviceID = deviceID
 			}
+		}
+		if targetIP == "" && targetDeviceID != "" {
+			targetIP = deviceIPsByID[strings.TrimSpace(targetDeviceID)]
 		}
 		fqdn := strings.TrimSpace(item.Name)
 		if zoneName := strings.TrimSpace(zoneNamesByID[item.ZoneID]); fqdn != "" && zoneName != "" && !strings.EqualFold(fqdn, zoneName) && !strings.HasSuffix(strings.ToLower(fqdn), "."+strings.ToLower(zoneName)) {
@@ -572,7 +564,7 @@ func dnsRecordPayloads(items []servicepkg.DNSRecordView, zoneNamesByID map[strin
 			"fqdn":           fqdn,
 			"recordType":     item.Type,
 			"targetDeviceId": targetDeviceID,
-			"targetIp":       item.TargetIP,
+			"targetIp":       targetIP,
 			"cname":          item.CNAME,
 			"port":           item.Port,
 			"ttl":            item.TTL,
@@ -611,6 +603,20 @@ func buildDeviceIDsByIP(view servicepkg.NetworkConfigView) map[string]string {
 			continue
 		}
 		out[strings.TrimSpace(item.GlobalIP)] = item.DeviceID
+	}
+	return out
+}
+
+func buildDeviceIPsByID(view servicepkg.NetworkConfigView) map[string]string {
+	out := map[string]string{}
+	if view.GlobalIP != "" && view.DeviceID != "" {
+		out[strings.TrimSpace(view.DeviceID)] = strings.TrimSpace(view.GlobalIP)
+	}
+	for _, item := range view.Peers {
+		if item.GlobalIP == "" || item.DeviceID == "" {
+			continue
+		}
+		out[strings.TrimSpace(item.DeviceID)] = strings.TrimSpace(item.GlobalIP)
 	}
 	return out
 }

@@ -2,7 +2,6 @@ package model
 
 type Customer struct {
 	CustomerID string `json:"customerId"`
-	UserID     string `json:"userId"`
 	Email      string `json:"email"`
 	Name       string `json:"name"`
 	Country    string `json:"country"`
@@ -10,6 +9,6 @@ type Customer struct {
 	City       string `json:"city"`
 	IPRegion   string `json:"ipRegion"`
 	Status     string `json:"status"`
-	PlanCode   string `json:"planCode,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
 }

@@ -2,7 +2,7 @@
 
 `server-wire-punch` is the short-lived NAT traversal coordinator for SLAN direct UDP paths.
 
-It is intentionally separate from `service-biz`: biz owns users, devices, ACLs, billing, and durable network state; punch owns temporary endpoint/session state used to coordinate direct UDP probing.
+It is intentionally separate from `service-biz`: biz owns device identity, network resources, ACLs, authorization keys, and durable state; punch owns temporary endpoint/session state used to coordinate direct UDP probing.
 
 ## Ports
 

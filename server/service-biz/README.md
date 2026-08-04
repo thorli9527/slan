@@ -15,6 +15,7 @@ Current state:
 
 - app / web / ops instances are split
 - auth / device / network / ops core flows are wired through use-cases
+- `SLAN_DEVICE_CREDENTIAL_PEPPER` protects stored device authorization-key digests and must be set to a stable secret in production.
 - repository layer currently provides an in-memory implementation
 - unsupported endpoints still return `501 Not Implemented`
 

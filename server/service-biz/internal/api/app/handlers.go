@@ -6,54 +6,37 @@ import (
 )
 
 type RouteDependencies struct {
-	AuthRegistration    servicepkg.AuthUserRegistrationUseCase
-	AuthSessions        servicepkg.AuthUserSessionUseCase
-	ConsoleKeys         servicepkg.AuthConsoleKeyUseCase
-	ConsoleLogin        servicepkg.AuthConsoleLoginUseCase
-	DeviceLoginPrepare  servicepkg.AuthDeviceLoginPrepareUseCase
-	DeviceLoginComplete servicepkg.AuthDeviceLoginCompleteUseCase
-	DeviceCore          servicepkg.DeviceCoreUseCase
-	DeviceBootstrap     servicepkg.DeviceBootstrapUseCase
-	DeviceSession       servicepkg.DeviceSessionUseCase
-	ClientMessages      servicepkg.ClientMessageUseCase
-	NetworkCore         servicepkg.NetworkCoreUseCase
-	NetworkInvite       servicepkg.NetworkInviteUseCase
-	NetworkRuntime      servicepkg.NetworkRuntimeUseCase
+	DeviceCore       servicepkg.DeviceCoreUseCase
+	DeviceCredential servicepkg.DeviceCredentialUseCase
+	DeviceSession    servicepkg.DeviceSessionUseCase
+	ClientMessages   servicepkg.ClientMessageUseCase
+	NetworkCore      servicepkg.NetworkCoreUseCase
+	NetworkRuntime   servicepkg.NetworkRuntimeUseCase
 }
 
 func Routes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.WithRequiredPrefix(serviceapi.CombineRoutes(
-		authRoutes(deps),
+	appRoutes := serviceapi.WithRequiredPrefix(serviceapi.CombineRoutes(
 		deviceRoutes(deps),
 		networkRoutes(deps),
 	), "/api/app")
-}
-
-func authRoutes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.CombineRoutes(
-		AuthHandler{
-			AuthRegistration: deps.AuthRegistration,
-			AuthSessions:     deps.AuthSessions,
-			NetworkCore:      deps.NetworkCore,
-		}.Routes(),
-		AuthConsoleHandler{ConsoleKeys: deps.ConsoleKeys}.Routes(),
-		AuthConsoleLoginHandler{ConsoleLoginUseCase: deps.ConsoleLogin}.Routes(),
-		AuthDeviceLoginHandler{
-			DeviceLoginPrepare:  deps.DeviceLoginPrepare,
-			DeviceLoginComplete: deps.DeviceLoginComplete,
-		}.Routes(),
-	)
+	return serviceapi.CombineRoutes(DeviceCredentialHandler{
+		Credentials: deps.DeviceCredential,
+		Limiter:     newDeviceCredentialExchangeLimiter(),
+	}.Routes(), appRoutes)
 }
 
 func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
+	runtimeLimiter := newDeviceRequestLimiter(deviceRuntimeReportLimit, deviceRuntimeReportIPLimit)
 	return serviceapi.CombineRoutes(
-		DeviceHandler{Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore}.Routes(),
+		DeviceHandler{
+			Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore,
+			RuntimeLimiter: runtimeLimiter,
+		}.Routes(),
 		DeviceSessionHandler{
-			DeviceBootstrap:   deps.DeviceBootstrap,
 			DeviceSessions:    deps.DeviceSession,
-			AuthSessions:      deps.AuthSessions,
 			NetworkRuntime:    deps.NetworkRuntime,
 			NetworkConfigView: deps.NetworkCore,
+			Limiter:           newDeviceRequestLimiter(deviceSessionRenewLimit, deviceSessionRenewIPLimit),
 		}.Routes(),
 		DeviceConfigHandler{Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore}.Routes(),
 		DeviceLogHandler{DeviceSessions: deps.DeviceSession}.Routes(),
@@ -63,7 +46,6 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 
 func networkRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
-		NetworkInviteHandler{Invites: deps.NetworkInvite, AuthSessions: deps.AuthSessions}.Routes(),
 		NetworkSnapshotHandler{Snapshots: deps.NetworkCore, DeviceSessions: deps.DeviceSession}.Routes(),
 		NetworkRuntimeHandler{
 			NetworkRuntime:    deps.NetworkRuntime,

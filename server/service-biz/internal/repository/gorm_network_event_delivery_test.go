@@ -35,4 +35,8 @@ func TestNetworkEventDeliveryPersistsInDedicatedTable(t *testing.T) {
 	if err != nil || !ok || loaded.NetworkID != "network-1" {
 		t.Fatalf("unexpected loaded delivery: %+v ok=%t err=%v", loaded, ok, err)
 	}
+	deleted, err := store.DeleteExpiredNetworkEventDeliveries(context.Background(), 300)
+	if err != nil || deleted != 1 {
+		t.Fatalf("expected one expired delivery deletion, got deleted=%d err=%v", deleted, err)
+	}
 }

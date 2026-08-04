@@ -4,7 +4,6 @@ import "strings"
 
 func normalizeCreateSecurityGroupInput(input CreateSecurityGroupInput) CreateSecurityGroupInput {
 	input.NetworkID = strings.TrimSpace(input.NetworkID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	return input
@@ -12,7 +11,6 @@ func normalizeCreateSecurityGroupInput(input CreateSecurityGroupInput) CreateSec
 
 func normalizeUpdateSecurityGroupInput(input UpdateSecurityGroupInput) UpdateSecurityGroupInput {
 	input.SecurityGroupID = strings.TrimSpace(input.SecurityGroupID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	return input
@@ -24,7 +22,6 @@ func normalizeSecurityGroupID(securityGroupID string) string {
 
 func normalizeCreateSecurityRuleInput(input CreateSecurityRuleInput) CreateSecurityRuleInput {
 	input.SecurityGroupID = strings.TrimSpace(input.SecurityGroupID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Direction = strings.TrimSpace(input.Direction)
 	input.Protocol = strings.TrimSpace(input.Protocol)
 	input.PortRange = strings.TrimSpace(input.PortRange)
@@ -37,7 +34,6 @@ func normalizeCreateSecurityRuleInput(input CreateSecurityRuleInput) CreateSecur
 
 func normalizeUpdateSecurityRuleInput(input UpdateSecurityRuleInput) UpdateSecurityRuleInput {
 	input.RuleID = strings.TrimSpace(input.RuleID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Direction = strings.TrimSpace(input.Direction)
 	input.Protocol = strings.TrimSpace(input.Protocol)
 	input.PortRange = strings.TrimSpace(input.PortRange)
@@ -54,12 +50,10 @@ func normalizeSecurityRuleID(ruleID string) string {
 
 func normalizeDeleteSecurityGroupInput(input DeleteSecurityGroupInput) DeleteSecurityGroupInput {
 	input.SecurityGroupID = strings.TrimSpace(input.SecurityGroupID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	return input
 }
 
 func normalizeDeleteSecurityRuleInput(input DeleteSecurityRuleInput) DeleteSecurityRuleInput {
 	input.RuleID = strings.TrimSpace(input.RuleID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	return input
 }

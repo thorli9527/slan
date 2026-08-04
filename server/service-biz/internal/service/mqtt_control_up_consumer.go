@@ -14,6 +14,8 @@ import (
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
 )
 
+const maxMQTTUpstreamPayloadBytes = 256 << 10
+
 func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 	if !s.Config.Enabled || strings.TrimSpace(s.Config.BrokerURL) == "" {
 		log.Printf("mqtt control/up consumer disabled enabled=%t broker=%q", s.Config.Enabled, s.Config.BrokerURL)
@@ -58,7 +60,7 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 			msgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := s.HandleUpstreamMessage(msgCtx, message.Topic(), message.Payload()); err != nil {
-				log.Printf("mqtt upstream consume failed topic=%s err=%v payload=%s", message.Topic(), err, string(message.Payload()))
+				log.Printf("mqtt upstream consume failed topic=%s err=%v payloadBytes=%d", message.Topic(), err, len(message.Payload()))
 			}
 		})
 		if ok := token.WaitTimeout(5 * time.Second); !ok {
@@ -91,6 +93,9 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 }
 
 func (s MQTTWebhookService) HandleUpstreamMessage(ctx context.Context, topic string, payload []byte) error {
+	if len(payload) > maxMQTTUpstreamPayloadBytes {
+		return fmt.Errorf("mqtt upstream payload exceeds %d bytes", maxMQTTUpstreamPayloadBytes)
+	}
 	switch {
 	case strings.HasSuffix(topic, "/control/up"):
 		return s.HandleControlUpMessage(ctx, topic, payload)

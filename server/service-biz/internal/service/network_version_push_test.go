@@ -10,13 +10,10 @@ import (
 
 func TestPushNetworkVersionHeartbeatsOnlyPublishesNetworksWithTwoActiveDevices(t *testing.T) {
 	now := time.Unix(1_700_010_000, 0)
-	users := &networkAccessTestUsers{users: map[string]model.User{
-		"owner-1": {UserID: "owner-1"},
-	}}
 	networks := &networkAccessTestNetworks{
 		networks: map[string]model.Network{
-			"net-one": {NetworkID: "net-one", OwnerID: "owner-1"},
-			"net-two": {NetworkID: "net-two", OwnerID: "owner-1"},
+			"net-one": {NetworkID: "net-one"},
+			"net-two": {NetworkID: "net-two"},
 		},
 		versions: map[string]model.NetworkConfigVersion{
 			"net-one": {NetworkID: "net-one", Version: 4},
@@ -36,7 +33,7 @@ func TestPushNetworkVersionHeartbeatsOnlyPublishesNetworksWithTwoActiveDevices(t
 	}
 	publisher := &deviceRuntimeTestEventPublisher{}
 	service := NetworkCoreService{
-		Users: users, Networks: networks, EventPublisher: publisher,
+		Networks: networks, EventPublisher: publisher,
 		VersionPushTracker: NewNetworkVersionPushTracker(), Now: func() time.Time { return now },
 	}
 

@@ -3,7 +3,6 @@
 当前文档以新系统切割为准：
 
 - `service-biz`：业务控制面
-- `web-ui`：客户 Web Console
 - `opt-ui`：运营管理控制台
 - `server-wire`：联网控制面
 - `server-wire-relay`：UDP relay 数据面
@@ -14,7 +13,6 @@
 - [后端外部 HTTP 业务接口定义](./backend-external-http-api.md)
 - [service-biz OpenAPI 草案](../protocol/openapi/service-biz-external.yaml)
 - [service-biz README](../server/service-biz/README.md)
-- [web-ui](../server/web-ui)
 - [opt-ui](../server/opt-ui)
 - [server-wire docs](../server/server-wire/docs/README.md)
 - [server-wire-relay docs](../server/server-wire-relay/docs/README.md)
@@ -28,4 +26,3 @@
 ## 说明
 
 - 原有 `server-relay` 子系统已删除，新系统统一使用 `server-wire-relay` 与 `server-wire-derp`
-- 原有 `service-biz`、`service-ui-old`、`server-main-old` 已删除，新入口统一使用 `service-biz`、`web-ui`、`opt-ui`

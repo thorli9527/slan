@@ -8,7 +8,7 @@ func newWireServices(deps UseCaseDependencies, ops servicepkg.OpsNodeService) Wi
 		Ops:      ops,
 		Devices:  repos.Devices,
 		Networks: repos.Networks,
-		Catalog:  repos.Catalog,
+		Nodes:    repos.Nodes,
 	}
 	return WireServices{
 		NodeRegistry: servicepkg.WireNodeService{WireServiceBase: base},

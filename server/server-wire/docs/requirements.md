@@ -42,12 +42,12 @@
 - DERP ticket 签发
 - ticket 使用 `SLAN_WIRE_TICKET_SECRET` 做 HMAC-SHA256 签名
 - 向客户端输出 peer runtime config
-- 从 `server-biz` 拉取授权与静态拓扑
-- 从 `server-biz` 拉取 DERP/relay 节点调度视图
+- 从 `service-biz` 拉取授权与静态拓扑
+- 从 `service-biz` 拉取 DERP/relay 节点调度视图
 
 ## 不负责的内容
 
-- 用户登录
+- 客户端设备身份签发
 - 设备/节点/网络创建
 - 虚拟 IP 分配
 - 业务 RBAC
@@ -80,7 +80,7 @@
 
 ## 与其他系统的边界
 
-从 `server-biz` 读取：
+从 `service-biz` 读取：
 
 - peer 授权状态
 - peer 对应的 `deviceId/nodeId/networkId`
@@ -93,8 +93,8 @@
 
 调度边界：
 
-- biz 模式下，DERP ticket 必须命中 `server-biz /internal/wire/derp-map` 返回的节点。
-- biz 模式下，relay ticket 与 path plan 必须命中 `server-biz /internal/wire/admin/relay-nodes` 返回的可调度节点。
+- biz 模式下，DERP ticket 必须命中 `service-biz /internal/wire/derp-map` 返回的节点。
+- biz 模式下，relay ticket 与 path plan 必须命中 `service-biz /internal/wire/admin/relay-nodes` 返回的可调度节点。
 - biz 模式下，没有健康可用节点时不允许回退到 `server-wire` 本地静态节点。
 
 向 `server-wire-relay` 间接输出：

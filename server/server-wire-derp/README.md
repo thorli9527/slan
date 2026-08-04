@@ -40,7 +40,7 @@ Container environment:
 - `SLAN_WIRE_TICKET_SECRETS=change-me-wire-ticket-secret`
 
 When `SLAN_BIZ_URL` and `SLAN_INTERNAL_WIRE_TOKEN` are configured, the node
-registers itself with `server-biz` and sends periodic heartbeats. Registration
+registers itself with `service-biz` and sends periodic heartbeats. Registration
 and heartbeat failures are logged with bounded exponential backoff.
 
 ## Admin HTTP

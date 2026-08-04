@@ -10,7 +10,6 @@ import (
 func deviceView(item model.Device) DeviceView {
 	return DeviceView{
 		DeviceID:      item.DeviceID,
-		OwnerID:       item.OwnerID,
 		Name:          item.Name,
 		Platform:      item.Platform,
 		Alias:         item.Alias,
@@ -28,7 +27,7 @@ func deviceView(item model.Device) DeviceView {
 	}
 }
 
-func buildDeviceProfile(ctx context.Context, users repository.UserRepository, networks repository.NetworkRepository, device model.Device) (DeviceProfileView, error) {
+func buildDeviceProfile(ctx context.Context, networks repository.NetworkRepository, device model.Device) (DeviceProfileView, error) {
 	globalIP := deviceGlobalIP(device)
 	view := DeviceProfileView{
 		Device:           deviceView(device),
@@ -37,13 +36,6 @@ func buildDeviceProfile(ctx context.Context, users repository.UserRepository, ne
 		VirtualIP:        globalIP,
 		GlobalIP:         globalIP,
 		GlobalName:       networkGlobalName(device.DeviceID, device.Alias, device.Name),
-	}
-	if device.OwnerID != "" {
-		if owner, ok, err := users.GetUser(ctx, device.OwnerID); err != nil {
-			return DeviceProfileView{}, err
-		} else if ok {
-			view.OwnerEmail = owner.Email
-		}
 	}
 	items, err := activeDeviceNetworks(ctx, networks, device.DeviceID)
 	if err != nil {

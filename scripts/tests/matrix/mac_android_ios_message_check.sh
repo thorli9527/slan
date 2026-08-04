@@ -8,13 +8,13 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client_v2/rust/target/release/client-core-service}"
+SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client/rust/target/release/client-core-service}"
 SMOKE_TIMEOUT="${SLAN_TRIDEVICE_MESSAGE_SMOKE_TIMEOUT:-55s}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 
 if [[ ! -x "$SERVICE_BIN" ]]; then
   echo "client-core-service binary is missing: $SERVICE_BIN" >&2
-  echo "run: cd $ROOT_DIR/client_v2/rust && cargo build -p client-core-service" >&2
+  echo "run: cd $ROOT_DIR/client/rust && cargo build -p client-core-service" >&2
   exit 1
 fi
 

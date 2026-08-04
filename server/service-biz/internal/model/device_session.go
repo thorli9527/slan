@@ -3,6 +3,7 @@ package model
 type DeviceSession struct {
 	SessionID                  string `json:"sessionId"`
 	DeviceID                   string `json:"deviceId"`
+	CredentialID               string `json:"credentialId,omitempty"`
 	AccessToken                string `json:"accessToken"`
 	RefreshToken               string `json:"refreshToken"`
 	Status                     string `json:"status"`

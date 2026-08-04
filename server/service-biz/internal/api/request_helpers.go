@@ -1,9 +1,10 @@
 package api
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -12,13 +13,39 @@ import (
 	servicepkg "github.com/slan/service-biz/internal/service"
 )
 
-type userSessionResolver interface {
-	GetUserSession(ctx context.Context, accessToken string) (servicepkg.AuthSessionView, error)
-}
+const MaxJSONRequestBodyBytes int64 = 1 << 20
 
 func DecodeJSON(r *http.Request, target any) error {
+	return DecodeJSONWithLimit(r, target, MaxJSONRequestBodyBytes)
+}
+
+func DecodeJSONWithLimit(r *http.Request, target any, maxBytes int64) error {
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(target)
+	if maxBytes <= 0 {
+		return fmt.Errorf("invalid json body limit")
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 {
+		return io.EOF
+	}
+	if int64(len(body)) > maxBytes {
+		return fmt.Errorf("json body exceeds %d bytes", maxBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("json body contains multiple values")
+		}
+		return err
+	}
+	return nil
 }
 
 func DecodeJSONOrError(w http.ResponseWriter, r *http.Request, target any) bool {
@@ -70,8 +97,6 @@ func pathFallbackValue(r *http.Request, pathKey string) string {
 
 func resourceSegmentForKey(pathKey string) string {
 	switch pathKey {
-	case "userId":
-		return "users"
 	case "deviceId":
 		return "devices"
 	case "networkId":
@@ -79,7 +104,7 @@ func resourceSegmentForKey(pathKey string) string {
 	case "inviteId":
 		return "invites"
 	case "keyId":
-		return "device-bootstrap-keys"
+		return "device-credentials"
 	case "zoneId":
 		return "zones"
 	case "recordId":
@@ -96,24 +121,12 @@ func resourceSegmentForKey(pathKey string) string {
 		return "operators"
 	case "customerId":
 		return "customers"
-	case "planCode":
-		return "plans"
-	case "productId":
-		return "products"
-	case "productCode":
-		return "products"
-	case "orderId":
-		return "orders"
-	case "renewalId":
-		return "renewals"
 	case "nodeId":
 		return "nodes"
 	case "relayNodeId":
 		return "relay-nodes"
 	case "punchNodeId":
 		return "punch-nodes"
-	case "downloadId":
-		return "client-downloads"
 	}
 	if strings.HasSuffix(pathKey, "Id") {
 		name := strings.TrimSuffix(pathKey, "Id")
@@ -161,23 +174,8 @@ func FirstNonEmpty(values ...string) string {
 
 func AccessTokenFromRequest(r *http.Request) string {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		return strings.TrimSpace(auth[7:])
+	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return ""
 	}
-	if token := strings.TrimSpace(r.URL.Query().Get("accessToken")); token != "" {
-		return token
-	}
-	return strings.TrimSpace(r.Header.Get("X-Access-Token"))
-}
-
-func ResolveUserIDFromRequest(r *http.Request, useCase userSessionResolver, target *string) {
-	SetIfEmpty(target, PathOrQuery(r, "userId", "userId"))
-	if strings.TrimSpace(*target) != "" {
-		return
-	}
-	session, err := useCase.GetUserSession(r.Context(), AccessTokenFromRequest(r))
-	if err != nil {
-		return
-	}
-	SetIfEmpty(target, session.User.UserID)
+	return strings.TrimSpace(auth[7:])
 }

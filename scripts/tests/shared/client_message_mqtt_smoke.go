@@ -17,25 +17,6 @@ import (
 	"time"
 )
 
-type authResponse struct {
-	AccessToken    string      `json:"accessToken,omitempty"`
-	Auth           authPayload `json:"auth,omitempty"`
-	DefaultNetwork network     `json:"defaultNetwork,omitempty"`
-}
-
-type authPayload struct {
-	User    authUser    `json:"user"`
-	Session authSession `json:"session"`
-}
-
-type authUser struct {
-	UserID string `json:"userId"`
-}
-
-type authSession struct {
-	Token string `json:"token"`
-}
-
 type network struct {
 	NetworkID string `json:"networkId"`
 }
@@ -44,6 +25,22 @@ type device struct {
 	DeviceID string          `json:"deviceId"`
 	Device   *devicePayload  `json:"device,omitempty"`
 	MQTT     *mqttCredential `json:"mqtt"`
+}
+
+type exchangeResponse struct {
+	Device        device `json:"device"`
+	DeviceSession struct {
+		DeviceToken string `json:"deviceToken"`
+	} `json:"deviceSession"`
+	MQTT *mqttCredential `json:"mqtt"`
+}
+
+type opsAuthResponse struct {
+	Auth struct {
+		Session struct {
+			Token string `json:"token"`
+		} `json:"session"`
+	} `json:"auth"`
 }
 
 type mqttEnvelope struct {
@@ -86,51 +83,40 @@ func main() {
 	defer exitOnFailure()
 
 	var bizURL string
-	var email string
-	var password string
+	var opsBaseURL string
+	var opsEmail string
+	var opsPassword string
+	var authorizationKeys string
 	var expectMQTTHost string
 	var timeout time.Duration
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
-	flag.StringVar(&email, "email", "", "test user email; defaults to unique smoke user")
-	flag.StringVar(&password, "password", "Password123!", "test user password")
+	flag.StringVar(&opsBaseURL, "ops-base-url", envDefault("SLAN_OPS_BASE_URL", "http://127.0.0.1:28082"), "Ops API base URL")
+	flag.StringVar(&opsEmail, "ops-email", envDefault("SLAN_OPS_EMAIL", "admin1"), "Ops operator email")
+	flag.StringVar(&opsPassword, "ops-password", envDefault("SLAN_OPS_PASSWORD", "admin1"), "Ops operator password")
+	flag.StringVar(&authorizationKeys, "authorization-keys", envDefault("SLAN_DEVICE_AUTHORIZATION_KEYS", ""), "comma-separated authorization keys for source and target devices")
 	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by service-biz")
 	flag.DurationVar(&timeout, "timeout", 8*time.Second, "MQTT receive timeout")
 	flag.Parse()
 
-	if email == "" {
-		email = fmt.Sprintf("client-message-smoke-%d@example.test", time.Now().UnixNano())
-	}
+	keys := splitRequiredValues(authorizationKeys, 2)
 	bizURL = strings.TrimRight(bizURL, "/")
+	opsBaseURL = strings.TrimRight(opsBaseURL, "/")
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	var userID string
-	var authToken string
-	createdDevices := make([]string, 0, 2)
+	var networkID string
+	var opsToken string
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
-		cleanupDevices(cleanupCtx, bizURL, authToken, userID, createdDevices)
+		if networkID != "" && opsToken != "" {
+			deleteJSONBestEffort(cleanupCtx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID), opsToken)
+		}
 	}()
 
-	auth := register(ctx, bizURL, email, password)
-	authToken = auth.AccessToken
-	if authToken == "" {
-		authToken = auth.Auth.Session.Token
-	}
-	userID = auth.Auth.User.UserID
-	if authToken == "" || userID == "" || auth.DefaultNetwork.NetworkID == "" {
-		fail("register returned incomplete auth response: %+v", auth)
-	}
-	mac := registerDevice(ctx, bizURL, authToken, userID, "smoke-mac-"+uniqueSuffix(), "macos")
-	createdDevices = append(createdDevices, mac.DeviceID)
-	ios := registerDevice(ctx, bizURL, authToken, userID, "smoke-ios-"+uniqueSuffix(), "ios")
-	createdDevices = append(createdDevices, ios.DeviceID)
-	renewDevice(ctx, bizURL, authToken, mac.DeviceID, userID)
-	renewDevice(ctx, bizURL, authToken, ios.DeviceID, userID)
-	mac.MQTT = fetchDeviceMQTT(ctx, bizURL, authToken, mac.DeviceID)
-	ios.MQTT = fetchDeviceMQTT(ctx, bizURL, authToken, ios.DeviceID)
+	mac := exchangeAuthorizationKey(ctx, bizURL, keys[0], "smoke-mac-"+uniqueSuffix())
+	ios := exchangeAuthorizationKey(ctx, bizURL, keys[1], "smoke-ios-"+uniqueSuffix())
 	assertMQTTHost(mac.MQTT, expectMQTTHost)
 	assertMQTTHost(ios.MQTT, expectMQTTHost)
 	if ios.MQTT == nil {
@@ -139,7 +125,8 @@ func main() {
 	if mac.MQTT == nil {
 		fail("source device returned no MQTT credential")
 	}
-	networkID := auth.DefaultNetwork.NetworkID
+	opsToken = loginOps(ctx, opsBaseURL, opsEmail, opsPassword)
+	networkID = createOpsNetwork(ctx, opsBaseURL, opsToken, []string{mac.DeviceID, ios.DeviceID})
 	body := "hello-from-smoke-" + uniqueSuffix()
 	messageID := "client-msg-smoke-" + uniqueSuffix()
 	messageCh := make(chan map[string]any, 1)
@@ -166,7 +153,7 @@ func main() {
 			if payload["body"] != body {
 				fail("body mismatch in mqtt payload: %#v", payload)
 			}
-			fmt.Printf("clientMessageMqttSmoke: ok email=%s networkId=%s from=%s target=%s messageId=%s\n", email, networkID, mac.DeviceID, ios.DeviceID, response.MessageID)
+			fmt.Printf("clientMessageMqttSmoke: ok networkId=%s from=%s target=%s messageId=%s\n", networkID, mac.DeviceID, ios.DeviceID, response.MessageID)
 			return
 		case err := <-errCh:
 			if err != nil {
@@ -179,128 +166,60 @@ func main() {
 	}
 }
 
-func register(ctx context.Context, bizURL, email, password string) authResponse {
-	var out authResponse
-	postJSON(ctx, bizURL+"/api/app/auth/register", "", map[string]any{
-		"email":    email,
-		"password": password,
-	}, &out)
-	if strings.TrimSpace(out.AccessToken) == "" {
-		out.AccessToken = out.Auth.Session.Token
+func exchangeAuthorizationKey(ctx context.Context, bizURL, key, deviceID string) device {
+	var out exchangeResponse
+	postJSON(ctx, bizURL+"/api/device-auth/token", "", map[string]any{"key": key, "deviceId": deviceID}, &out)
+	if out.Device.DeviceID == "" || out.DeviceSession.DeviceToken == "" || out.MQTT == nil {
+		fail("authorization key exchange returned incomplete device response")
 	}
-	if strings.TrimSpace(out.AccessToken) == "" {
-		fail("register returned empty session token")
-	}
-	return out
+	out.Device.MQTT = out.MQTT
+	return out.Device
 }
 
-func registerDevice(ctx context.Context, bizURL, token, userID, deviceID, platform string) device {
-	var out device
-	postJSON(ctx, bizURL+"/api/app/devices/register", token, map[string]any{
-		"userId":    userID,
-		"deviceId":  deviceID,
-		"name":      deviceID,
-		"platform":  platform,
-		"osName":    platform,
-		"osVersion": "smoke",
-		"publicKey": "smoke-public-key-" + deviceID,
-	}, &out)
-	if out.DeviceID == "" && out.Device != nil {
-		out.DeviceID = out.Device.DeviceID
+func loginOps(ctx context.Context, opsBaseURL, email, password string) string {
+	var out opsAuthResponse
+	postJSON(ctx, opsBaseURL+"/api/ops/auth/login", "", map[string]any{"email": email, "password": password}, &out)
+	if out.Auth.Session.Token == "" {
+		fail("Ops login returned empty token")
 	}
-	if out.DeviceID == "" {
-		fail("register device %s returned empty deviceId", deviceID)
-	}
-	return out
+	return out.Auth.Session.Token
 }
 
-func renewDevice(ctx context.Context, bizURL, token, deviceID, userID string) {
-	postJSON(ctx, bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"/renew", token, map[string]any{
-		"userId":         userID,
-		"networkEnabled": true,
-		"rxBytesTotal":   1,
-		"txBytesTotal":   1,
-	}, nil)
-}
-
-func fetchDeviceMQTT(ctx context.Context, bizURL, token, deviceID string) *mqttCredential {
-	var out mqttEnvelope
-	getJSON(ctx, bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"/mqtt-credential", token, &out)
-	return out.MQTT
-}
-
-func cleanupDevices(ctx context.Context, bizURL, token, userID string, deviceIDs []string) {
-	if strings.TrimSpace(userID) == "" {
-		return
+func createOpsNetwork(ctx context.Context, opsBaseURL, token string, deviceIDs []string) string {
+	var out network
+	postJSON(ctx, opsBaseURL+"/api/ops/networks", token, map[string]any{"name": "mqtt-smoke-" + uniqueSuffix(), "status": "active"}, &out)
+	if out.NetworkID == "" {
+		fail("created Ops network returned empty id")
 	}
-	deviceIDSet := make(map[string]struct{}, len(deviceIDs))
 	for _, deviceID := range deviceIDs {
-		if strings.TrimSpace(deviceID) == "" {
-			continue
-		}
-		deviceIDSet[deviceID] = struct{}{}
+		postJSON(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(out.NetworkID)+"/devices", token, map[string]any{"deviceId": deviceID}, nil)
 	}
-	for _, deviceID := range listDeviceIDsBestEffort(ctx, bizURL, token, userID) {
-		if strings.TrimSpace(deviceID) != "" {
-			deviceIDSet[deviceID] = struct{}{}
-		}
-	}
-	for deviceID := range deviceIDSet {
-		deleteDeviceBestEffort(ctx, bizURL, token, userID, deviceID)
-	}
+	return out.NetworkID
 }
 
-func listDeviceIDsBestEffort(ctx context.Context, bizURL, token, userID string) []string {
-	var listed struct {
-		Items []struct {
-			DeviceID string `json:"deviceId"`
-		} `json:"items"`
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/web/devices?userId="+url.QueryEscape(userID), nil)
-	if err != nil {
-		return nil
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
-		return nil
-	}
-	deviceIDs := make([]string, 0, len(listed.Items))
-	for _, item := range listed.Items {
-		if strings.TrimSpace(item.DeviceID) != "" {
-			deviceIDs = append(deviceIDs, item.DeviceID)
+func splitRequiredValues(raw string, expected int) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			values = append(values, value)
 		}
 	}
-	return deviceIDs
+	if len(values) != expected {
+		fail("authorization keys must contain exactly %d comma-separated values", expected)
+	}
+	return values
 }
 
-func deleteDeviceBestEffort(ctx context.Context, bizURL, token, userID, deviceID string) {
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodDelete,
-		bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
-		nil,
-	)
+func deleteJSONBestEffort(ctx context.Context, rawURL, token string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, rawURL, nil)
 	if err != nil {
 		return
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if resp, err := httpClient.Do(req); err == nil {
+		_ = resp.Body.Close()
 	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
 }
 
 func assertMQTTHost(credential *mqttCredential, expectedHost string) {

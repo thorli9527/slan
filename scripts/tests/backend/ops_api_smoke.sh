@@ -19,15 +19,6 @@ elif [[ "$START_LOCAL_BIZ" == "1" ]]; then
 else
   APP_BASE_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 fi
-if [[ -n "${SLAN_WEB_BASE_URL:-}" ]]; then
-  WEB_BASE_URL="$SLAN_WEB_BASE_URL"
-elif [[ -n "${SLAN_BIZ_WEB_BASE_URL:-}" ]]; then
-  WEB_BASE_URL="$SLAN_BIZ_WEB_BASE_URL"
-elif [[ "$START_LOCAL_BIZ" == "1" ]]; then
-  WEB_BASE_URL="${APP_BASE_URL}"
-else
-  WEB_BASE_URL="$SLAN_DEFAULT_WEB_BASE_URL"
-fi
 if [[ -n "${SLAN_OPS_BASE_URL:-}" ]]; then
   OPS_BASE_URL="$SLAN_OPS_BASE_URL"
 elif [[ "$START_LOCAL_BIZ" == "1" ]]; then
@@ -38,7 +29,6 @@ fi
 WIRE_TOKEN="${SLAN_INTERNAL_WIRE_TOKEN:-wire-token}"
 RUN_ID="$(date +%s%N)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/slan-ops-smoke.XXXXXX")"
-DOWNLOAD_DIR="${TMP_DIR}/downloads"
 LOG_FILE="${TMP_DIR}/service-biz.log"
 
 cleanup() {
@@ -70,7 +60,6 @@ if [[ "${START_LOCAL_BIZ}" != "0" ]]; then
   cd "${ROOT_DIR}/server/service-biz"
   SLAN_BIZ_ADDR="127.0.0.1:${PORT}" \
   SLAN_INTERNAL_WIRE_TOKEN="${WIRE_TOKEN}" \
-  SLAN_CLIENT_DOWNLOAD_DIR="${DOWNLOAD_DIR}" \
   go run ./cmd/service-biz >"${LOG_FILE}" 2>&1 &
   BIZ_PID=$!
 
@@ -119,25 +108,6 @@ auth_curl -X POST "${OPS_BASE_URL}/api/ops/operators/${OPERATOR_ID}/password" \
   -H 'Content-Type: application/json' \
   -d '{"password":"smoke-password-123"}' >/dev/null || fail "operator password update failed"
 
-PLAN_CODE="smoke-plan-${RUN_ID}"
-auth_curl -X POST "${OPS_BASE_URL}/api/ops/plans" \
-  -H 'Content-Type: application/json' \
-  -d "{\"planCode\":\"${PLAN_CODE}\",\"name\":\"Smoke Plan\",\"ownDeviceLimit\":5,\"invitedDeviceLimit\":5,\"totalDeviceLimit\":10,\"relayMonthlyGb\":100,\"relayBandwidthMbps\":50,\"relayThrottleMbps\":5,\"p2pUnlimited\":true,\"customDomain\":true,\"acl\":true,\"dedicatedRelay\":false,\"auditLog\":true,\"apiAccess\":false,\"monthlyPrice\":9,\"yearlyPrice\":99,\"status\":\"active\"}" >/dev/null || fail "plan create failed"
-auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/plans/${PLAN_CODE}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Smoke Plan Updated\",\"ownDeviceLimit\":6,\"invitedDeviceLimit\":6,\"totalDeviceLimit\":12,\"relayMonthlyGb\":120,\"relayBandwidthMbps\":60,\"relayThrottleMbps\":6,\"p2pUnlimited\":true,\"customDomain\":true,\"acl\":true,\"dedicatedRelay\":false,\"auditLog\":true,\"apiAccess\":true,\"monthlyPrice\":10,\"yearlyPrice\":100,\"status\":\"active\"}" >/dev/null || fail "plan update failed"
-auth_curl "${OPS_BASE_URL}/api/ops/plans" >/dev/null || fail "plans list failed"
-
-PRODUCT="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/products" \
-  -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Smoke Product\",\"type\":\"plan\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"monthly\",\"validDays\":31,\"relayTrafficGb\":100,\"relayBandwidthMbps\":50,\"listPrice\":10,\"salePrice\":8,\"currency\":\"CNY\",\"autoRenew\":false,\"status\":\"active\",\"description\":\"smoke\"}")" || fail "product create failed"
-PRODUCT_ID="$(printf '%s' "${PRODUCT}" | json_value productId)"
-[[ -n "${PRODUCT_ID}" ]] || fail "missing product id"
-auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/products/${PRODUCT_ID}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Smoke Product Updated\",\"type\":\"plan\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"monthly\",\"validDays\":31,\"relayTrafficGb\":120,\"relayBandwidthMbps\":60,\"listPrice\":12,\"salePrice\":9,\"currency\":\"CNY\",\"autoRenew\":true,\"status\":\"active\",\"description\":\"smoke updated\"}" >/dev/null || fail "product update failed"
-auth_curl "${OPS_BASE_URL}/api/ops/products" >/dev/null || fail "products list failed"
-
 RELAY_NODE="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/relay-nodes" \
   -H 'Content-Type: application/json' \
   -d "{\"name\":\"Smoke Relay\",\"region\":\"smoke-${RUN_ID}\",\"transport\":\"relay_udp\",\"publicAddr\":\"udp://127.0.0.1:39210\",\"maxBandwidthMbps\":1000,\"monthlyTrafficGb\":1024,\"maxSessions\":100,\"status\":\"active\"}")" || fail "relay node create failed"
@@ -149,69 +119,40 @@ auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/relay-nodes/${RELAY_NODE_ID}" \
 auth_curl "${OPS_BASE_URL}/api/ops/relay-nodes" >/dev/null || fail "relay nodes list failed"
 auth_curl -X DELETE "${OPS_BASE_URL}/api/ops/relay-nodes/${RELAY_NODE_ID}" >/dev/null || fail "relay node delete failed"
 
-USER_EMAIL="ops-smoke-user-${RUN_ID}@staticlss.com"
-USER_AUTH="$(curl --silent --fail -X POST "${APP_BASE_URL}/api/app/auth/register" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${USER_EMAIL}\",\"password\":\"password\",\"name\":\"Ops Smoke User\"}")" || fail "customer seed register failed"
-USER_ID="$(printf '%s' "${USER_AUTH}" | json_value userId)"
-[[ -n "${USER_ID}" ]] || fail "missing seeded user id"
-
-auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/customers/${USER_ID}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${USER_EMAIL}\",\"name\":\"Ops Smoke User Updated\",\"country\":\"CN\",\"province\":\"Guangdong\",\"city\":\"Shenzhen\",\"ipRegion\":\"South China\",\"status\":\"active\"}" >/dev/null || fail "customer update failed"
-ASSIGN_RESPONSE="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/customers/${USER_ID}/assign-plan" \
-  -H 'Content-Type: application/json' \
-  -d "{\"planCode\":\"${PLAN_CODE}\",\"expiresAt\":1821264000,\"amount\":100,\"period\":\"yearly\"}")" || fail "customer assign plan failed"
-RENEWAL_ID="$(printf '%s' "${ASSIGN_RESPONSE}" | json_value renewalId)"
-[[ -n "${RENEWAL_ID}" ]] || fail "missing renewal id"
 auth_curl "${OPS_BASE_URL}/api/ops/customers" >/dev/null || fail "customers list failed"
 
-DEVICE_ID="ops-smoke-device-${RUN_ID}"
-DELETE_DEVICE_ID="ops-smoke-delete-device-${RUN_ID}"
-curl --silent --fail -X POST "${APP_BASE_URL}/api/app/devices/register" \
+DEVICE="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/devices" \
   -H 'Content-Type: application/json' \
-  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_ID}\",\"name\":\"Ops Smoke Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"15.3\",\"alias\":\"Ops Smoke Mac\",\"publicKey\":\"ops-smoke-public-key\"}" >/dev/null || fail "device seed register failed"
-curl --silent --fail -X POST "${APP_BASE_URL}/api/app/devices/register" \
+  -d '{"name":"Ops Smoke Mac","platform":"macos","osName":"macOS","osVersion":"15.3","alias":"Ops Smoke Mac","publicKey":"ops-smoke-public-key"}')" || fail "device create failed"
+DEVICE_ID="$(printf '%s' "${DEVICE}" | json_value deviceId)"
+[[ -n "${DEVICE_ID}" ]] || fail "missing created device id"
+DELETE_DEVICE="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/devices" \
   -H 'Content-Type: application/json' \
-  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DELETE_DEVICE_ID}\",\"name\":\"Ops Smoke Delete\",\"platform\":\"linux\",\"osName\":\"Linux\",\"osVersion\":\"6.8\",\"alias\":\"Ops Smoke Delete\",\"publicKey\":\"ops-smoke-delete-public-key\"}" >/dev/null || fail "delete device seed register failed"
+  -d '{"name":"Ops Smoke Delete","platform":"linux","osName":"Linux","osVersion":"6.8","alias":"Ops Smoke Delete","publicKey":"ops-smoke-delete-public-key"}')" || fail "delete device create failed"
+DELETE_DEVICE_ID="$(printf '%s' "${DELETE_DEVICE}" | json_value deviceId)"
+[[ -n "${DELETE_DEVICE_ID}" ]] || fail "missing delete device id"
 auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/devices/${DEVICE_ID}" \
   -H 'Content-Type: application/json' \
   -d '{"alias":"Ops Smoke Mac Updated","status":"active","enabled":true}' >/dev/null || fail "device update failed"
 auth_curl -X DELETE "${OPS_BASE_URL}/api/ops/devices/${DELETE_DEVICE_ID}" >/dev/null || fail "device delete failed"
 auth_curl "${OPS_BASE_URL}/api/ops/devices" >/dev/null || fail "devices list failed"
 
-ORDER="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/orders" \
+CREDENTIAL="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/device-credentials" \
   -H 'Content-Type: application/json' \
-  -d "{\"customerId\":\"${USER_ID}\",\"customerEmail\":\"${USER_EMAIL}\",\"productId\":\"${PRODUCT_ID}\",\"amount\":9,\"currency\":\"CNY\",\"payStatus\":\"pending\",\"provisionStatus\":\"pending\",\"channel\":\"manual\"}")" || fail "order create failed"
-ORDER_ID="$(printf '%s' "${ORDER}" | json_value orderId)"
-[[ -n "${ORDER_ID}" ]] || fail "missing order id"
-auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/orders/${ORDER_ID}" \
+  -d "{\"deviceId\":\"${DEVICE_ID}\",\"name\":\"Ops Smoke Key\",\"scopes\":\"standard_device\",\"expiresAt\":0}")" || fail "device credential create failed"
+CREDENTIAL_ID="$(printf '%s' "${CREDENTIAL}" | json_value credentialId)"
+AUTHORIZATION_KEY="$(printf '%s' "${CREDENTIAL}" | json_value key)"
+[[ -n "${CREDENTIAL_ID}" && -n "${AUTHORIZATION_KEY}" ]] || fail "missing device credential id or key"
+DEVICE_SESSION="$(curl --silent --fail -X POST "${APP_BASE_URL}/api/device-auth/token" \
   -H 'Content-Type: application/json' \
-  -d "{\"customerEmail\":\"${USER_EMAIL}\",\"productId\":\"${PRODUCT_ID}\",\"amount\":9,\"currency\":\"CNY\",\"payStatus\":\"paid\",\"provisionStatus\":\"provisioned\",\"channel\":\"manual\",\"paidAt\":1783267200,\"validUntil\":1821264000}" >/dev/null || fail "order update failed"
-auth_curl "${OPS_BASE_URL}/api/ops/orders" >/dev/null || fail "orders list failed"
+  -d "{\"key\":\"${AUTHORIZATION_KEY}\",\"deviceId\":\"${DEVICE_ID}\"}")" || fail "device credential exchange failed"
+printf '%s' "${DEVICE_SESSION}" | grep -q '"deviceToken":"' || fail "device credential exchange missing token"
+auth_curl "${OPS_BASE_URL}/api/ops/device-credentials" >/dev/null || fail "device credentials list failed"
+auth_curl -X POST "${OPS_BASE_URL}/api/ops/device-credentials/${CREDENTIAL_ID}/revoke" >/dev/null || fail "device credential revoke failed"
+auth_curl -X DELETE "${OPS_BASE_URL}/api/ops/devices/${DEVICE_ID}" >/dev/null || fail "credential device delete failed"
 
-auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/renewals/${RENEWAL_ID}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"customerEmail\":\"${USER_EMAIL}\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"yearly\",\"amount\":100,\"currency\":\"CNY\",\"paidAt\":1783267200,\"validUntil\":1821264000,\"source\":\"manual\",\"operator\":\"admin1\"}" >/dev/null || fail "renewal update failed"
-auth_curl "${OPS_BASE_URL}/api/ops/renewals" >/dev/null || fail "renewals list failed"
-
-printf 'smoke-client-package\n' >"${TMP_DIR}/SLAN-Client-Smoke.pkg"
-DOWNLOAD="$(curl --silent --fail -X POST "${OPS_BASE_URL}/api/ops/client-downloads" \
-  -H "Authorization: Bearer ${OPS_TOKEN}" \
-  -F platform=macos \
-  -F version=9.9.9-smoke \
-  -F arch=universal \
-  -F channel=stable \
-  -F status=active \
-  -F releaseNotes=smoke \
-  -F "file=@${TMP_DIR}/SLAN-Client-Smoke.pkg")" || fail "client download upload failed"
-DOWNLOAD_ID="$(printf '%s' "${DOWNLOAD}" | json_value downloadId)"
-[[ -n "${DOWNLOAD_ID}" ]] || fail "missing download id"
-auth_curl "${OPS_BASE_URL}/api/ops/client-downloads" >/dev/null || fail "client downloads ops list failed"
-curl --silent --fail "${WEB_BASE_URL}/api/web/client-downloads" >/dev/null || fail "client downloads public list failed"
-auth_curl -X DELETE "${OPS_BASE_URL}/api/ops/client-downloads/${DOWNLOAD_ID}" >/dev/null || fail "client download delete failed"
 
 AUDIT_EVENTS="$(auth_curl "${OPS_BASE_URL}/api/ops/audit-events?limit=20")" || fail "audit events list failed"
 printf '%s' "${AUDIT_EVENTS}" | grep -q '"items"' || fail "audit events response missing items"
 
-echo "ops api smoke passed app=${APP_BASE_URL} web=${WEB_BASE_URL} ops=${OPS_BASE_URL}"
+echo "ops api smoke passed app=${APP_BASE_URL} ops=${OPS_BASE_URL}"

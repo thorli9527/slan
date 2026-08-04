@@ -2,9 +2,8 @@ package service
 
 import "strings"
 
-func normalizeUpdateCustomerInput(input UpdateCustomerInput) UpdateCustomerInput {
-	input.CustomerID = strings.TrimSpace(input.CustomerID)
-	input.Email = strings.TrimSpace(input.Email)
+func normalizeCreateCustomerInput(input CreateCustomerInput) CreateCustomerInput {
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Country = strings.TrimSpace(input.Country)
 	input.Province = strings.TrimSpace(input.Province)
@@ -14,9 +13,14 @@ func normalizeUpdateCustomerInput(input UpdateCustomerInput) UpdateCustomerInput
 	return input
 }
 
-func normalizeAssignCustomerPlanInput(input AssignCustomerPlanInput) AssignCustomerPlanInput {
+func normalizeUpdateCustomerInput(input UpdateCustomerInput) UpdateCustomerInput {
 	input.CustomerID = strings.TrimSpace(input.CustomerID)
-	input.PlanCode = strings.TrimSpace(input.PlanCode)
-	input.Period = strings.TrimSpace(input.Period)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.Name = strings.TrimSpace(input.Name)
+	input.Country = strings.TrimSpace(input.Country)
+	input.Province = strings.TrimSpace(input.Province)
+	input.City = strings.TrimSpace(input.City)
+	input.IPRegion = strings.TrimSpace(input.IPRegion)
+	input.Status = strings.TrimSpace(input.Status)
 	return input
 }

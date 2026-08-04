@@ -1,39 +1,9 @@
 <section class="page">
-  <article class="panel">
-    <div class="panel-title">
-      <div>
-        <h2>收入统计</h2>
-        <p>基于已支付订单统计，待支付金额单独展示。</p>
-      </div>
-    </div>
-    <div class="revenue-grid">
-      <div><span>今日收入</span><strong>{{ vm.todayRevenue }} 元</strong></div>
-      <div><span>本月收入</span><strong>{{ vm.monthlyRevenue }} 元</strong></div>
-      <div><span>年度收入</span><strong>{{ vm.yearlyRevenue }} 元</strong></div>
-      <div><span>待支付金额</span><strong>{{ vm.pendingRevenue }} 元</strong></div>
-    </div>
-  </article>
 
   <article class="panel">
     <div class="panel-title">
       <div>
-        <h2>订单统计</h2>
-        <p>按支付状态和开通状态统计订单处理情况。</p>
-      </div>
-    </div>
-    <div class="order-stat-grid">
-      <div><span>总订单</span><strong>{{ vm.orders.length }}</strong></div>
-      <div><span>已支付</span><strong>{{ vm.paidOrderCount }}</strong></div>
-      <div><span>待支付</span><strong>{{ vm.pendingOrderCount }}</strong></div>
-      <div><span>已开通</span><strong>{{ vm.provisionedOrderCount }}</strong></div>
-      <div><span>退款/关闭</span><strong>{{ vm.closedOrderCount }}</strong></div>
-    </div>
-  </article>
-
-  <article class="panel">
-    <div class="panel-title">
-      <div>
-        <h2>用户地址统计</h2>
+        <h2>客户地址统计</h2>
         <p>按客户归属地和 IP 区域统计分布，用于运营和中继节点规划。</p>
       </div>
     </div>
@@ -61,38 +31,13 @@
     <div class="panel-title">
       <div>
         <h2>待处理事项</h2>
-        <p>聚合显示节点容量、客户限流和续费到期。</p>
+        <p>聚合显示节点容量和客户状态。</p>
       </div>
     </div>
     <div class="todo-grid">
       <div><strong>{{ vm.limitedCustomers }}</strong><span>客户 Relay 超限</span></div>
       <div><strong>{{ vm.relayNodes.length - vm.activeRelayNodes }}</strong><span>节点非 active</span></div>
-      <div><strong>1</strong><span>7 天内到期客户</span></div>
     </div>
   </article>
 
-  <article class="panel">
-    <div class="panel-title">
-      <div>
-        <h2>最近收入</h2>
-        <p>展示最近已支付订单的客户、商品、金额和支付渠道。</p>
-      </div>
-      <button class="ghost small" type="button" (click)="vm.setActive('orders')">查看订单</button>
-    </div>
-    <table>
-      <thead><tr><th>客户</th><th>商品</th><th>金额</th><th>支付时间</th><th>渠道</th></tr></thead>
-      <tbody>
-        <tr *ngFor="let order of vm.paidOrders">
-          <td><code>{{ order.customerEmail }}</code></td>
-          <td>{{ order.productName }}</td>
-          <td><strong>{{ order.amount }} 元</strong></td>
-          <td>{{ order.paidAt }}</td>
-          <td>{{ order.channel }}</td>
-        </tr>
-        <tr *ngIf="vm.paidOrders.length === 0">
-          <td colspan="5" class="empty-cell">暂无已支付订单。</td>
-        </tr>
-      </tbody>
-    </table>
-  </article>
 </section>

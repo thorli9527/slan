@@ -82,25 +82,6 @@ func (s *networkRuntimeTestNetworks) DeleteNetworkDevice(context.Context, string
 	return nil
 }
 
-func (s *networkRuntimeTestNetworks) ListDeviceInvitesByUser(context.Context, string) ([]model.DeviceInvite, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestNetworks) ListDeviceInvitesByNetwork(context.Context, string) ([]model.DeviceInvite, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestNetworks) GetDeviceInvite(context.Context, string) (model.DeviceInvite, bool, error) {
-	return model.DeviceInvite{}, false, nil
-}
-
-func (s *networkRuntimeTestNetworks) GetDeviceInviteByCode(context.Context, string) (model.DeviceInvite, bool, error) {
-	return model.DeviceInvite{}, false, nil
-}
-
-func (s *networkRuntimeTestNetworks) SaveDeviceInvite(context.Context, model.DeviceInvite) error {
-	return nil
-}
 func (s *networkRuntimeTestNetworks) ListDNSZones(context.Context, string) ([]model.DNSZone, error) {
 	return nil, nil
 }
@@ -169,19 +150,8 @@ func (s *networkRuntimeTestNetworks) SaveSecurityRule(context.Context, model.Sec
 func (s *networkRuntimeTestNetworks) DeleteSecurityRule(context.Context, string) error { return nil }
 
 type networkRuntimeTestDevices struct {
-	devices                 map[string]model.Device
-	groupAssignmentsByUser  map[string][]model.DeviceGroupAssignment
-	lastGroupAssignmentUser string
-}
-
-func (s *networkRuntimeTestDevices) ListDevicesByOwner(_ context.Context, ownerID string) ([]model.Device, error) {
-	out := []model.Device{}
-	for _, item := range s.devices {
-		if item.OwnerID == ownerID {
-			out = append(out, item)
-		}
-	}
-	return out, nil
+	devices                map[string]model.Device
+	groupAssignmentsByUser map[string][]model.DeviceGroupAssignment
 }
 
 func (s *networkRuntimeTestDevices) GetDevice(_ context.Context, deviceID string) (model.Device, bool, error) {
@@ -193,14 +163,6 @@ func (s *networkRuntimeTestDevices) SaveDevice(context.Context, model.Device) er
 func (s *networkRuntimeTestDevices) DeleteDevice(context.Context, string) error     { return nil }
 func (s *networkRuntimeTestDevices) NewDeviceVirtualIPID() string {
 	return "vip00000000000000000000000000000001"
-}
-
-func (s *networkRuntimeTestDevices) GetDeviceLoginDevice(context.Context, string) (model.DeviceLoginDevice, bool, error) {
-	return model.DeviceLoginDevice{}, false, nil
-}
-
-func (s *networkRuntimeTestDevices) SaveDeviceLoginDevice(context.Context, model.DeviceLoginDevice) error {
-	return nil
 }
 
 func (s *networkRuntimeTestDevices) GetDeviceSessionByAccessToken(context.Context, string) (model.DeviceSession, bool, error) {
@@ -219,27 +181,18 @@ func (s *networkRuntimeTestDevices) SaveDeviceSession(context.Context, model.Dev
 	return nil
 }
 
+func (s *networkRuntimeTestDevices) RotateDeviceSession(context.Context, string, model.DeviceSession) (bool, error) {
+	return false, nil
+}
+func (s *networkRuntimeTestDevices) DeleteDeviceSessionForRefreshReuse(context.Context, string, string, int64) (bool, error) {
+	return false, nil
+}
+
 func (s *networkRuntimeTestDevices) DeleteDeviceSessionByAccessToken(context.Context, string) error {
 	return nil
 }
 
-func (s *networkRuntimeTestDevices) ListDeviceBootstrapKeys(context.Context, string) ([]model.DeviceBootstrapKey, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestDevices) GetDeviceBootstrapKey(context.Context, string) (model.DeviceBootstrapKey, bool, error) {
-	return model.DeviceBootstrapKey{}, false, nil
-}
-
-func (s *networkRuntimeTestDevices) GetDeviceBootstrapKeyByToken(context.Context, string) (model.DeviceBootstrapKey, bool, error) {
-	return model.DeviceBootstrapKey{}, false, nil
-}
-
-func (s *networkRuntimeTestDevices) SaveDeviceBootstrapKey(context.Context, model.DeviceBootstrapKey) error {
-	return nil
-}
-
-func (s *networkRuntimeTestDevices) ListDeviceGroups(context.Context, string) ([]model.DeviceGroup, error) {
+func (s *networkRuntimeTestDevices) ListDeviceGroups(context.Context) ([]model.DeviceGroup, error) {
 	return nil, nil
 }
 
@@ -254,27 +207,30 @@ func (s *networkRuntimeTestDevices) DeleteDeviceGroup(context.Context, string) e
 func (s *networkRuntimeTestDevices) SetDeviceGroups(context.Context, model.DeviceGroupAssignment) error {
 	return nil
 }
-func (s *networkRuntimeTestDevices) ListDeviceGroupAssignments(_ context.Context, userID string) ([]model.DeviceGroupAssignment, error) {
-	s.lastGroupAssignmentUser = userID
+func (s *networkRuntimeTestDevices) ListDeviceGroupAssignments(context.Context) ([]model.DeviceGroupAssignment, error) {
 	if s.groupAssignmentsByUser != nil {
-		return append([]model.DeviceGroupAssignment(nil), s.groupAssignmentsByUser[userID]...), nil
+		var items []model.DeviceGroupAssignment
+		for _, assignments := range s.groupAssignmentsByUser {
+			items = append(items, assignments...)
+		}
+		return items, nil
 	}
 	return []model.DeviceGroupAssignment{
-		{UserID: "user-1", DeviceID: "src", GroupIDs: []string{"group-src"}},
-		{UserID: "user-1", DeviceID: "dst", GroupIDs: []string{"group-dst"}},
+		{DeviceID: "src", GroupIDs: []string{"group-src"}},
+		{DeviceID: "dst", GroupIDs: []string{"group-dst"}},
 	}, nil
 }
 
-func TestBuildNetworkConfigUsesNetworkOwnerGroupsForSharedDevice(t *testing.T) {
+func TestBuildNetworkConfigUsesGlobalGroupsForSharedDevice(t *testing.T) {
 	devices := &networkRuntimeTestDevices{
 		devices: map[string]model.Device{
-			"shared": {DeviceID: "shared", OwnerID: "device-owner", VirtualIP: "10.0.0.1"},
+			"shared": {DeviceID: "shared", VirtualIP: "10.0.0.1"},
 			"peer":   {DeviceID: "peer", VirtualIP: "10.0.0.12"},
 		},
 		groupAssignmentsByUser: map[string][]model.DeviceGroupAssignment{
 			"network-owner": {
-				{UserID: "network-owner", DeviceID: "shared", GroupIDs: []string{"group-dev"}},
-				{UserID: "network-owner", DeviceID: "peer", GroupIDs: []string{"group-dev"}},
+				{DeviceID: "shared", GroupIDs: []string{"group-dev"}},
+				{DeviceID: "peer", GroupIDs: []string{"group-dev"}},
 			},
 		},
 	}
@@ -291,17 +247,13 @@ func TestBuildNetworkConfigUsesNetworkOwnerGroupsForSharedDevice(t *testing.T) {
 
 	view, err := buildNetworkConfigView(
 		context.Background(),
-		nil,
 		devices,
 		networks,
-		model.Network{NetworkID: "net-shared", OwnerID: "network-owner", CIDR: "10.0.0.0/24"},
+		model.Network{NetworkID: "net-shared", CIDR: "10.0.0.0/24"},
 		devices.devices["shared"],
 	)
 	if err != nil {
 		t.Fatalf("build shared network config: %v", err)
-	}
-	if devices.lastGroupAssignmentUser != "network-owner" {
-		t.Fatalf("loaded assignments for %q, want network owner", devices.lastGroupAssignmentUser)
 	}
 	if got := view.DeviceGroupsByDevice["shared"]; len(got) != 1 || got[0] != "group-dev" {
 		t.Fatalf("shared device groups = %#v", got)
@@ -342,63 +294,10 @@ func (s *networkRuntimeTestOps) GetPunchNode(context.Context, string) (model.Pun
 
 func (s *networkRuntimeTestOps) SavePunchNode(context.Context, model.PunchNode) error { return nil }
 func (s *networkRuntimeTestOps) DeletePunchNode(context.Context, string) error        { return nil }
-func (s *networkRuntimeTestOps) GetCustomerPlan(context.Context, string) (string, bool, error) {
-	return "", false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveCustomerPlan(context.Context, string, string) error { return nil }
-func (s *networkRuntimeTestOps) ListClientDownloads(context.Context) ([]model.ClientDownload, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetClientDownload(context.Context, string) (model.ClientDownload, bool, error) {
-	return model.ClientDownload{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveClientDownload(context.Context, model.ClientDownload) error {
-	return nil
-}
-
-func (s *networkRuntimeTestOps) DeleteClientDownload(context.Context, string) error { return nil }
-func (s *networkRuntimeTestOps) ListPlans(context.Context) ([]model.Plan, error)    { return nil, nil }
-
-func (s *networkRuntimeTestOps) GetPlan(context.Context, string) (model.Plan, bool, error) {
-	return model.Plan{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SavePlan(context.Context, model.Plan) error { return nil }
-func (s *networkRuntimeTestOps) ListProducts(context.Context) ([]model.Product, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetProduct(context.Context, string) (model.Product, bool, error) {
-	return model.Product{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveProduct(context.Context, model.Product) error { return nil }
-func (s *networkRuntimeTestOps) ListOrders(context.Context) ([]model.Order, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetOrder(context.Context, string) (model.Order, bool, error) {
-	return model.Order{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveOrder(context.Context, model.Order) error { return nil }
-func (s *networkRuntimeTestOps) ListRenewals(context.Context) ([]model.Renewal, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestOps) GetRenewal(context.Context, string) (model.Renewal, bool, error) {
-	return model.Renewal{}, false, nil
-}
-
-func (s *networkRuntimeTestOps) SaveRenewal(context.Context, model.Renewal) error { return nil }
-func (s *networkRuntimeTestOps) DeleteRenewal(context.Context, string) error      { return nil }
 
 var _ repository.NetworkRepository = (*networkRuntimeTestNetworks)(nil)
 var _ repository.DeviceRepository = (*networkRuntimeTestDevices)(nil)
-var _ repository.OpsRepository = (*networkRuntimeTestOps)(nil)
+var _ repository.OpsNodeRepository = (*networkRuntimeTestOps)(nil)
 
 func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
 	service := newNetworkRuntimeTestService([]model.SecurityRule{{
@@ -534,8 +433,8 @@ func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeServ
 	return NetworkRuntimeService{
 		Devices: &networkRuntimeTestDevices{
 			devices: map[string]model.Device{
-				"src": {DeviceID: "src", OwnerID: "user-1", VirtualIP: "10.0.0.1", Alias: "mac-src", Name: "Mac"},
-				"dst": {DeviceID: "dst", OwnerID: "user-1", VirtualIP: "10.0.0.2", Alias: "ios-dst", Name: "iPhone"},
+				"src": {DeviceID: "src", VirtualIP: "10.0.0.1", Alias: "mac-src", Name: "Mac"},
+				"dst": {DeviceID: "dst", VirtualIP: "10.0.0.2", Alias: "ios-dst", Name: "iPhone"},
 			},
 		},
 		Networks: &networkRuntimeTestNetworks{

@@ -106,9 +106,9 @@ copy_to_windows() {
   run_ssh "$windows_user" "$windows_host" "$windows_ssh_key" \
     "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${WINDOWS_REMOTE_DIR}/install/windows' | Out-Null\""
   scp "${opts[@]}" \
-    "$ROOT_DIR/client_v2/install/windows/verify-installation.ps1" \
-    "$ROOT_DIR/client_v2/install/windows/slan-console.ps1" \
-    "$ROOT_DIR/client_v2/install/windows/SlanWindowsInstall.psm1" \
+    "$ROOT_DIR/client/install/windows/verify-installation.ps1" \
+    "$ROOT_DIR/client/install/windows/slan-console.ps1" \
+    "$ROOT_DIR/client/install/windows/SlanWindowsInstall.psm1" \
     "${windows_user}@${windows_host}:${WINDOWS_REMOTE_DIR}/install/windows/"
 }
 

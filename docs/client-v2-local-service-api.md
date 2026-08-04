@@ -44,7 +44,7 @@ RPC method: `localStatus`
 
 - `service`
 - `version`
-- `signedIn`
+- `activated`
 - `deviceId`
 - `selfNodeId`
 - `activeNetworkId`
@@ -104,14 +104,12 @@ RPC method: `localPathPlan`
 
 RPC method: `localSession`
 
-用途：读取脱敏后的本地登录与网络会话摘要，给 UI 判断登录态、设备绑定、过期状态，不返回任何 credential。
+用途：读取脱敏后的本地设备与网络会话摘要，给 UI 判断激活状态、设备标识和过期状态，不返回任何 credential。
 
 返回字段：
 
-- `signedIn`
+- `activated`
 - `expired`
-- `userId`
-- `userLabel`
 - `deviceId`
 - `selfNodeId`
 - `activeNetworkId`
@@ -195,7 +193,7 @@ RPC method: `localNetworkShutdown`
 
 - `GET /local/status` -> `localStatus`
 - `GET /local/session` -> `localSession`
-- `POST /local/logout` -> `localLogout`
+- `POST /local/device/deactivate` -> `localDeactivateDevice`
 
 ### Peer 与路径
 

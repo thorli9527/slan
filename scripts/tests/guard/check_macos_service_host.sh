@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)
-PLUGIN="$ROOT_DIR/client_v2/plugins/client_core_plugin/macos/Classes/ClientCorePlugin.swift"
-FLUTTER_CLIENT="$ROOT_DIR/client_v2/app_flutter/lib/bridge/client_core_local_service.dart"
-INSTALLER="$ROOT_DIR/client_v2/install/macos/scripts/postinstall"
+PLUGIN="$ROOT_DIR/client/plugins/client_core_plugin/macos/Classes/ClientCorePlugin.swift"
+FLUTTER_CLIENT="$ROOT_DIR/client/app_flutter/lib/bridge/client_core_local_service.dart"
+INSTALLER="$ROOT_DIR/client/install/macos/scripts/postinstall"
 
 expected_host="127.0.0.1:46392"
 

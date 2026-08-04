@@ -8,10 +8,11 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_activation_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
+APP_DIR="$ROOT_DIR/client/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 if [[ -n "${SLAN_ANDROID_BIZ_URL:-}" ]]; then
@@ -21,7 +22,9 @@ elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhos
 else
   ANDROID_BIZ_URL="$BIZ_URL"
 fi
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
+OPS_EMAIL="${SLAN_OPS_EMAIL:-admin1}"
+OPS_PASSWORD="${SLAN_OPS_PASSWORD:-admin1}"
 REMOTE_HOST="${SLAN_REMOTE_LINUX_HOST:-100.87.66.24}"
 REMOTE_USER="${SLAN_REMOTE_LINUX_USER:-root}"
 REMOTE_PASSWORD="${SLAN_REMOTE_LINUX_PASSWORD:-}"
@@ -31,7 +34,6 @@ REMOTE_HELPER_PATH="$REMOTE_DIR/remote_linux_local_api.sh"
 REMOTE_PACKAGE_PATH="$REMOTE_DIR/$(basename "${SLAN_REMOTE_LINUX_PACKAGE:-package.tar.gz}")"
 REMOTE_SERVICE_HOST="${SLAN_REMOTE_LINUX_SERVICE_HOST:-127.0.0.1:46392}"
 RUN_REMOTE_INSTALL_CHECK="${SLAN_RUN_REMOTE_LINUX_INSTALL_CHECK:-1}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 TIMEOUT_SECONDS="${SLAN_ANDROID_REMOTE_LINUX_TIMEOUT_SECONDS:-180}"
 LOCAL_API_TIMEOUT_SECONDS="${SLAN_ANDROID_REMOTE_LINUX_LOCAL_API_TIMEOUT_SECONDS:-120}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
@@ -66,26 +68,18 @@ ANDROID_TCP_BODY="${SLAN_ANDROID_TO_LINUX_TCP_BODY:-android-to-linux-tcp-$(date 
 LINUX_UDP_BODY="${SLAN_LINUX_TO_ANDROID_UDP_BODY:-linux-to-android-udp-$(date +%s%N)}"
 LINUX_TCP_BODY="${SLAN_LINUX_TO_ANDROID_TCP_BODY:-linux-to-android-tcp-$(date +%s%N)}"
 
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-  GENERATED_TEST_EMAIL=0
-else
-  EMAIL="android-remote-linux-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
-
 WORK_DIR="${SLAN_ANDROID_REMOTE_LINUX_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-android-remote-linux.XXXXXX")}"
 ANDROID_LOG="$WORK_DIR/android-flutter-test.log"
 ANDROID_ECHO_LOG="$WORK_DIR/android-echo-test.log"
 REMOTE_PREP_LOG="$WORK_DIR/remote-prepare.log"
 
-USER_ID=""
-USER_TOKEN=""
 NETWORK_ID=""
 SECURITY_GROUP_ID=""
 BOOTSTRAP_KEY_ID=""
 BOOTSTRAP_KEY=""
+ANDROID_CREDENTIAL_ID=""
+ANDROID_AUTHORIZATION_KEY=""
+OPS_TOKEN=""
 DEVICE_GROUP_ID=""
 ZONE_ID=""
 ZONE_NAME=""
@@ -134,7 +128,7 @@ best_effort_delete() {
   local url="$1"
   curl --silent --show-error --connect-timeout 5 --max-time 20 \
     -X DELETE "$url" \
-    -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
+    -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -151,25 +145,27 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$BOOTSTRAP_KEY_ID" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$ANDROID_CREDENTIAL_ID" >/dev/null 2>&1 || true
   if [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/security-rules/${RULE_IDS[$index]}"
     done
     for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/records/${RECORD_IDS[$index]}"
     done
     if [[ -n "$ZONE_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/zones/${ZONE_ID}"
     fi
     if [[ -n "$DEVICE_GROUP_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
     fi
+    slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
-    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
+  if [[ -n "$DEVICE_GROUP_ID" ]]; then
+    best_effort_delete "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}"
   fi
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_ANDROID_REMOTE_LINUX_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
@@ -317,7 +313,7 @@ resolve_linux_package_path() {
     printf '%s\n' "$SLAN_REMOTE_LINUX_PACKAGE"
     return
   fi
-  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local installer_dir="$ROOT_DIR/client/.tmp/installer/linux"
   local candidate="$installer_dir/SLAN-Client-V2-linux-${normalized_arch}.tar.gz"
   if [[ -f "$candidate" ]]; then
     printf '%s\n' "$candidate"
@@ -351,81 +347,51 @@ resolve_remote_built_package_path() {
     SLAN_REMOTE_LINUX_RUST_PROFILE="${SLAN_REMOTE_LINUX_RUST_PROFILE:-debug}" \
     SLAN_REMOTE_LINUX_SKIP_FETCH=1 \
     bash "$ROOT_DIR/scripts/build_linux_client_remote.sh" >/dev/null
-  printf '%s\n' "/tmp/slan-linux-remote-build/client_v2/.tmp/installer/linux/SLAN-Client-V2-linux-amd64.tar.gz"
+  printf '%s\n' "/tmp/slan-linux-remote-build/client/.tmp/installer/linux/SLAN-Client-V2-linux-amd64.tar.gz"
 }
 
-register_and_login_user() {
-  curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/register" \
+create_device_authorization_key() {
+  local bootstrap_json android_json
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL" "$OPS_EMAIL" "$OPS_PASSWORD")"
+  bootstrap_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$LINUX_DEVICE_ALIAS")"
+  BOOTSTRAP_KEY_ID="$(printf '%s' "$bootstrap_json" | jq -r '.credentialId // empty')"
+  BOOTSTRAP_KEY="$(printf '%s' "$bootstrap_json" | jq -r '.key // empty')"
+  [[ -n "$BOOTSTRAP_KEY_ID" && -n "$BOOTSTRAP_KEY" ]] || fail "failed to create remote Linux device authorization key"
+  android_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Android Remote Linux Android" "$ANDROID_TEST_DEVICE_ID")"
+  ANDROID_CREDENTIAL_ID="$(printf '%s' "$android_json" | jq -r '.credentialId // empty')"
+  ANDROID_AUTHORIZATION_KEY="$(printf '%s' "$android_json" | jq -r '.key // empty')"
+  [[ -n "$ANDROID_CREDENTIAL_ID" && -n "$ANDROID_AUTHORIZATION_KEY" ]] || fail "failed to create Android device authorization key"
+  curl --silent --show-error --fail -X POST "${BIZ_URL}/api/device-auth/token" \
     -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
-  local auth_json
-  auth_json="$(curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_ID="$(printf '%s' "$auth_json" | jq -r '.userId // .auth.userId // .auth.session.userId // .auth.user.userId // empty')"
-  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-  [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
-}
-
-refresh_user_token() {
-  local auth_json
-  auth_json="$(curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-  [[ -n "$USER_TOKEN" ]] || fail "failed to refresh test user token"
-}
-
-create_bootstrap_key() {
-  local bootstrap_json
-  bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${LINUX_DEVICE_ALIAS}\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
-  BOOTSTRAP_KEY_ID="$(printf '%s' "$bootstrap_json" | jq -r '.id // .installationKeyId // empty')"
-  BOOTSTRAP_KEY="$(printf '%s' "$bootstrap_json" | jq -r '.key // .installationKey // empty')"
-  [[ -n "$BOOTSTRAP_KEY_ID" && -n "$BOOTSTRAP_KEY" ]] || fail "failed to create remote Linux bootstrap key"
+    -d "{\"key\":\"${ANDROID_AUTHORIZATION_KEY}\",\"deviceId\":\"${ANDROID_TEST_DEVICE_ID}\"}" >/dev/null
 }
 
 resolve_network_context() {
-  local networks_json groups_json
-  networks_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
-  NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
-  [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
-  groups_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
-  SECURITY_GROUP_ID="$(printf '%s' "$groups_json" | jq -r '.items[0].securityGroupId // .[0].securityGroupId // empty')"
-  [[ -n "$SECURITY_GROUP_ID" ]] || fail "network ${NETWORK_ID} has no security group"
+  local network_json group_json
+  network_json="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "android-remote-linux-$(date +%s%N)")"
+  NETWORK_ID="$(printf '%s' "$network_json" | jq -r '.networkId // empty')"
+  [[ -n "$NETWORK_ID" ]] || fail "failed to create Ops network"
+  group_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/security-groups" \
+    "{\"name\":\"android-remote-linux-security-$(date +%s%N)\"}")"
+  SECURITY_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.securityGroupId // empty')"
+  [[ -n "$SECURITY_GROUP_ID" ]] || fail "failed to create Ops security group"
 }
 
 create_json() {
   local url="$1"
   local payload="$2"
-  local request_url="$url"
   local response_file
   local status
   response_file="$(mktemp "${TMPDIR:-/tmp}/slan-create-json.XXXXXX")"
-  if [[ "$request_url" == *\?* ]]; then
-    request_url="${request_url}&actorUserId=${USER_ID}"
-  else
-    request_url="${request_url}?actorUserId=${USER_ID}"
-  fi
   status="$(curl --silent --show-error --connect-timeout 5 --max-time 30 \
     -o "$response_file" \
     -w '%{http_code}' \
-    -X POST "$request_url" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -X POST "$url" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "$payload")"
   if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
-    echo "create_json failed status=$status url=$request_url payload=$payload body=$(cat "$response_file")" >&2
+    echo "create_json failed status=$status url=$url payload=$payload body=$(cat "$response_file")" >&2
     rm -f "$response_file"
     return 22
   fi
@@ -436,8 +402,8 @@ create_json() {
 create_dns_zone() {
   local zone_json
   ZONE_NAME="android-linux-$(date +%s).slan.test"
-  zone_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
-    "{\"zoneName\":\"${ZONE_NAME}\"}")"
+  zone_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/zones" \
+    "{\"name\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
   [[ -n "$ZONE_ID" ]] || fail "dns zone create returned empty zoneId"
 }
@@ -446,7 +412,7 @@ create_dns_record() {
   local name="$1"
   local target_device_id="$2"
   local record_json record_id
-  record_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  record_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
   [[ -n "$record_id" ]] || fail "dns record create returned empty recordId for ${name}"
@@ -460,7 +426,7 @@ add_rule() {
   local peer_value="$4"
   local priority="$5"
   local rule_json rule_id
-  rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  rule_json="$(create_json "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
@@ -469,7 +435,7 @@ add_rule() {
 
 provision_network_device_group() {
   local group_json
-  group_json="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+  group_json="$(create_json "${OPS_BASE_URL}/api/ops/device-groups" \
     "{\"name\":\"android-linux-$(date +%s%N)\",\"description\":\"Android Linux integration devices\"}")"
   DEVICE_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.groupId // empty')"
   [[ -n "$DEVICE_GROUP_ID" ]] || fail "device group create returned empty groupId"
@@ -477,16 +443,16 @@ provision_network_device_group() {
   local device_id
   for device_id in "$ANDROID_DEVICE_ID" "$LINUX_DEVICE_ID"; do
     curl --silent --show-error --fail \
-      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
-      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -X POST "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}/devices" \
+      -H "Authorization: Bearer ${OPS_TOKEN}" \
       -H 'Content-Type: application/json' \
-      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+      -d "{\"deviceId\":\"${device_id}\"}" >/dev/null
   done
   log "prepared device group assignments group=${DEVICE_GROUP_ID}"
 }
 
 attach_device_group_to_network() {
-  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups" \
     "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
   log "attached device group network=${NETWORK_ID} group=${DEVICE_GROUP_ID}"
 }
@@ -568,16 +534,16 @@ start_android_message_harness() {
   local expect_defines=()
   while IFS= read -r line; do
     common_defines+=("$line")
-  done < <(slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true)
+  done < <(slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true)
   while IFS= read -r line; do
     send_defines+=("$line")
-  done < <(slan_mobile_login_message_send_defines "$LINUX_DEVICE_ID" "$ANDROID_TO_LINUX_BODY")
+  done < <(slan_mobile_message_send_defines "$LINUX_DEVICE_ID" "$ANDROID_TO_LINUX_BODY")
   while IFS= read -r line; do
     expect_defines+=("$line")
-  done < <(slan_mobile_login_message_expect_defines "$LINUX_DEVICE_ID" "$LINUX_TO_ANDROID_BODY" 20 90)
+  done < <(slan_mobile_message_expect_defines "$LINUX_DEVICE_ID" "$LINUX_TO_ANDROID_BODY" 20 90)
   (
     cd "$APP_DIR"
-    flutter test integration_test/mobile_login_test.dart \
+    flutter test integration_test/device_activation_harness_test.dart \
       -d "$ANDROID_DEVICE" \
       --timeout 12m \
       "${common_defines[@]}" \
@@ -603,6 +569,8 @@ capture_android_device_id_or_die() {
     fi
     ANDROID_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$ANDROID_LOG" | tail -n 1)"
     if [[ -n "$ANDROID_DEVICE_ID" ]]; then
+      [[ "$ANDROID_DEVICE_ID" == "$ANDROID_TEST_DEVICE_ID" ]] \
+        || fail "Android device id mismatch: expected=$ANDROID_TEST_DEVICE_ID actual=$ANDROID_DEVICE_ID"
       echo "Android device id: $ANDROID_DEVICE_ID"
       return 0
     fi
@@ -620,10 +588,10 @@ run_android_socket_client_harness() {
   local common_defines=()
   while IFS= read -r line; do
     common_defines+=("$line")
-  done < <(slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true)
+  done < <(slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true)
   (
     cd "$APP_DIR"
-    flutter test integration_test/mobile_login_test.dart \
+    flutter test integration_test/device_activation_harness_test.dart \
       -d "$ANDROID_DEVICE" \
       --timeout 12m \
       "${common_defines[@]}" \
@@ -641,10 +609,10 @@ start_android_echo_harness() {
   local common_defines=()
   while IFS= read -r line; do
     common_defines+=("$line")
-  done < <(slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true)
+  done < <(slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true)
   (
     cd "$APP_DIR"
-    flutter test integration_test/mobile_login_test.dart \
+    flutter test integration_test/device_activation_harness_test.dart \
       -d "$ANDROID_DEVICE" \
       --timeout 12m \
       "${common_defines[@]}" \
@@ -702,15 +670,17 @@ wait_android_boot
 start_android_vpn_appops_guard
 start_android_vpn_consent_guard
 
-register_and_login_user
+create_device_authorization_key
 resolve_network_context
-create_bootstrap_key
 remote_prepare_dependencies
 
 PACKAGE_PATH=""
 REMOTE_PACKAGE_PATH=""
 NORMALIZED_REMOTE_ARCH="$(normalize_arch "$REMOTE_ARCH")"
 remote_expect_scp "$ROOT_DIR/scripts/tests/linux/remote_linux_local_api.sh" "$REMOTE_HELPER_PATH"
+remote_exec "mkdir -p '$REMOTE_DIR/lib'"
+remote_expect_scp "$ROOT_DIR/client/install/linux/install.sh" "$REMOTE_DIR/install.sh"
+remote_expect_scp "$ROOT_DIR/client/install/linux/lib/slan-linux-install.sh" "$REMOTE_DIR/lib/slan-linux-install.sh"
 if is_truthy "$USE_REMOTE_BUILT_PACKAGE_DIRECTLY"; then
   REMOTE_PACKAGE_PATH="$(resolve_remote_built_package_path "$NORMALIZED_REMOTE_ARCH")"
 else
@@ -730,10 +700,9 @@ rm -f /var/lib/SLAN/client-v2-device-id.txt
 rm -f /var/lib/SLAN/client-v2-device-public-key.txt
 rm -f /var/lib/SLAN/client-v2-control-tasks.xml
 rm -f /etc/slan/client-v2-console.env
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o '${REMOTE_DIR}/install.sh'
 bash '${REMOTE_DIR}/install.sh' \
   --server='${BIZ_URL}' \
-  --installation-key='${BOOTSTRAP_KEY}' \
+  --authorization-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${REMOTE_PACKAGE_PATH}'
 "
@@ -741,8 +710,8 @@ bash '${REMOTE_DIR}/install.sh' \
 log "wait remote Linux local API"
 remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
 log "sign in remote Linux local service"
-remote_signed_in_json="$(remote_helper wait_signed_in_or_login "$EMAIL" "$PASSWORD" "$TIMEOUT_SECONDS")"
-LINUX_DEVICE_ID="$(json_field "$remote_signed_in_json" '.deviceId // empty')"
+remote_activated_json="$(remote_helper wait_activated "$BOOTSTRAP_KEY" "$TIMEOUT_SECONDS")"
+LINUX_DEVICE_ID="$(json_field "$remote_activated_json" '.deviceId // empty')"
 [[ -n "$LINUX_DEVICE_ID" ]] || fail "failed to parse remote Linux device id"
 log "wait remote Linux control transport"
 remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
@@ -751,7 +720,6 @@ start_android_message_harness
 capture_android_device_id_or_die
 
 log "attach Android and Linux through a network device group"
-refresh_user_token
 provision_network_device_group
 
 log "provision dns resources"
@@ -763,7 +731,7 @@ provision_acl_resources
 log "restart remote Linux client and reload the complete network snapshot"
 remote_exec "systemctl restart slan-client-v2.service"
 remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
-remote_helper wait_signed_in_or_login "$EMAIL" "$PASSWORD" "$TIMEOUT_SECONDS" >/dev/null
+remote_helper wait_activated "$BOOTSTRAP_KEY" "$TIMEOUT_SECONDS" >/dev/null
 remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
 
 log "enable remote Linux network"
@@ -817,4 +785,4 @@ if ! wait "$ANDROID_ECHO_PID"; then
   fail "Android echo harness failed"
 fi
 
-echo "androidRemoteLinuxIntegration: ok email=$EMAIL android=$ANDROID_DEVICE_ID linux=$LINUX_DEVICE_ID linuxIp=$LINUX_IP zone=$ZONE_NAME remote=$REMOTE_HOST"
+echo "androidRemoteLinuxIntegration: ok android=$ANDROID_DEVICE_ID linux=$LINUX_DEVICE_ID linuxIp=$LINUX_IP zone=$ZONE_NAME remote=$REMOTE_HOST"

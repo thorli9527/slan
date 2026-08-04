@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,67 +20,17 @@ var httpClient = &http.Client{
 	Timeout: 5 * time.Second,
 }
 
-type authResponse struct {
-	AccessToken    string          `json:"accessToken,omitempty"`
-	Auth           authPayload     `json:"auth,omitempty"`
-	DefaultNetwork networkResponse `json:"defaultNetwork,omitempty"`
-}
-
-type authPayload struct {
-	User    authUser    `json:"user"`
-	Session authSession `json:"session"`
-}
-
-type authUser struct {
-	UserID string `json:"userId"`
-}
-
-type authSession struct {
+type opsAuthResponse struct {
 	Token string `json:"token"`
 }
 
-type deviceResponse struct {
-	DeviceID             string              `json:"deviceId,omitempty"`
-	CurrentVirtualIP     string              `json:"currentVirtualIp,omitempty"`
-	Device               devicePayload       `json:"device,omitempty"`
-	DefaultNetworkDevice networkDeviceRecord `json:"defaultNetworkDevice,omitempty"`
-}
-
-type devicePayload struct {
-	DeviceID string `json:"deviceId"`
-}
-
-type networkDeviceRecord struct {
-	NetworkDeviceID string `json:"networkDeviceId"`
-	NetworkID       string `json:"networkId"`
-	DeviceID        string `json:"deviceId"`
-	Enabled         bool   `json:"enabled"`
-	Status          string `json:"status"`
-}
-
-type networkHomeResponse struct {
-	ActiveNetwork *networkResponse `json:"activeNetwork,omitempty"`
-	OwnedNetwork  *networkResponse `json:"ownedNetwork,omitempty"`
+type deviceCredentialResponse struct {
+	CredentialID string `json:"credentialId"`
+	Key          string `json:"key"`
 }
 
 type networkResponse struct {
 	NetworkID string `json:"networkId"`
-}
-
-type activationResponse struct {
-	Attachment attachmentResponse `json:"attachment"`
-}
-
-type attachmentResponse struct {
-	AttachmentID string `json:"attachmentId"`
-	NetworkID    string `json:"networkId"`
-	DeviceID     string `json:"deviceId"`
-	Status       string `json:"status,omitempty"`
-}
-
-type nodeResponse struct {
-	NodeID     string   `json:"nodeId"`
-	NetworkIDs []string `json:"networkIds,omitempty"`
 }
 
 type wireRegisterResponse struct {
@@ -212,52 +161,43 @@ func main() {
 	defer cleanupSmokeWireNodes(bizURL, internalToken, smokeRegionID, smokeRelayNodeIDs, smokeDerpNodeIDs)
 	createSmokeWireNodes(bizURL, internalToken, relayAdminURL, derpAdminURL, relayAddr, derpAddr, smokeRegionID, smokeRelayNodeIDs, smokeDerpNodeIDs)
 
-	email := "wire-e2e-" + suffix + "@local.slan"
-	password := "Password123!"
 	deviceID := "dev-wire-e2e-" + suffix
 	nodeID := "node-" + deviceID
 
-	var auth authResponse
-	postJSON(bizURL+"/api/app/auth/register", "", map[string]any{
-		"email":    email,
-		"password": password,
-	}, &auth)
-	if auth.AccessToken == "" {
-		auth.AccessToken = auth.Auth.Session.Token
+	var opsAuth opsAuthResponse
+	postJSON(bizURL+"/api/ops/auth/login", "", map[string]any{
+		"email":    env("SLAN_OPS_EMAIL", "admin1"),
+		"password": env("SLAN_OPS_PASSWORD", "admin1"),
+	}, &opsAuth)
+	if opsAuth.Token == "" {
+		fail("missing Ops token")
 	}
-	if auth.AccessToken == "" {
-		fail("missing access token from register")
-	}
-	userID := auth.Auth.User.UserID
-	if userID == "" {
-		fail("missing userId from register: %+v", auth)
-	}
-	defer cleanupSmokeDevice(bizURL, userID, deviceID)
-
-	var device deviceResponse
-	postJSON(bizURL+"/api/app/devices/register", auth.AccessToken, map[string]any{
-		"userId":    userID,
+	var credential deviceCredentialResponse
+	postJSON(bizURL+"/api/ops/device-credentials", opsAuth.Token, map[string]any{
 		"deviceId":  deviceID,
-		"name":      "wire e2e device",
-		"platform":  "smoke",
-		"osName":    "smoke",
-		"osVersion": "1",
-		"publicKey": "device-public-key-" + suffix,
-	}, &device)
-	if device.DeviceID == "" {
-		device.DeviceID = device.Device.DeviceID
+		"name":      "Wire E2E Device",
+		"scopes":    "standard_device",
+		"expiresAt": 0,
+	}, &credential)
+	if credential.CredentialID == "" || credential.Key == "" {
+		fail("missing device credential: %+v", credential)
 	}
-	if device.DeviceID != deviceID {
-		fail("unexpected device response: %+v", device)
+	var deviceSession map[string]any
+	postJSON(bizURL+"/api/device-auth/token", "", map[string]any{
+		"key": credential.Key, "deviceId": deviceID,
+	}, &deviceSession)
+	var network networkResponse
+	postJSON(bizURL+"/api/ops/networks", opsAuth.Token, map[string]any{
+		"name": "Wire E2E " + suffix, "status": "active",
+	}, &network)
+	if network.NetworkID == "" {
+		fail("missing Ops network: %+v", network)
 	}
-
-	networkID := auth.DefaultNetwork.NetworkID
-	if networkID == "" {
-		networkID = device.DefaultNetworkDevice.NetworkID
-	}
-	if networkID == "" {
-		fail("missing default network: auth=%+v device=%+v", auth, device)
-	}
+	networkID := network.NetworkID
+	postJSON(bizURL+"/api/ops/networks/"+networkID+"/devices", opsAuth.Token, map[string]any{
+		"deviceId": deviceID,
+	}, nil)
+	defer cleanupSmokeDeviceResources(bizURL, opsAuth.Token, networkID, credential.CredentialID, deviceID)
 
 	expectGETStatus(bizURL+"/internal/wire/peers/"+nodeID+"/authz", nil, http.StatusUnauthorized)
 	expectGETStatus(bizURL+"/internal/wire/peers/"+nodeID+"/authz", map[string]string{
@@ -486,14 +426,7 @@ func main() {
 	smokeRelay(relayAddr, relayResp.Ticket, nodeID)
 	smokeDerp(derpAddr, derpResp.Ticket, nodeID)
 
-	disabledValue := false
-	var disabled networkDeviceRecord
-	patchJSON(bizURL+"/api/web/networks/"+networkID+"/devices/"+deviceID, auth.AccessToken, map[string]any{
-		"enabled": disabledValue,
-	}, &disabled)
-	if disabled.DeviceID != deviceID || disabled.Enabled {
-		fail("unexpected disabled network device response: %+v want device=%s enabled=false", disabled, deviceID)
-	}
+	deleteWithBearer(bizURL+"/api/ops/networks/"+networkID+"/devices/"+deviceID, opsAuth.Token)
 
 	expectPostStatus(wireURL+"/relay/tickets", "", map[string]any{
 		"peerId":     nodeID,
@@ -649,23 +582,22 @@ func cleanupSmokeWireNodes(bizURL, internalToken, regionID string, relayNodeIDs,
 	}
 }
 
-func cleanupSmokeDevice(bizURL, userID, deviceID string) {
-	if strings.TrimSpace(userID) == "" || strings.TrimSpace(deviceID) == "" {
+func cleanupSmokeDeviceResources(bizURL, token, networkID, credentialID, deviceID string) {
+	bestEffortBearerRequest(http.MethodDelete, bizURL+"/api/ops/networks/"+networkID, token)
+	bestEffortBearerRequest(http.MethodPost, bizURL+"/api/ops/device-credentials/"+credentialID+"/revoke", token)
+	bestEffortBearerRequest(http.MethodDelete, bizURL+"/api/ops/devices/"+deviceID, token)
+}
+
+func bestEffortBearerRequest(method, endpoint, token string) {
+	if strings.TrimSpace(token) == "" {
 		return
 	}
-	client := &http.Client{
-		Transport: &http.Transport{Proxy: nil},
-		Timeout:   30 * time.Second,
-	}
-	req, err := http.NewRequest(
-		http.MethodDelete,
-		bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
-		nil,
-	)
+	req, err := http.NewRequest(method, endpoint, nil)
 	if err != nil {
 		return
 	}
-	resp, err := client.Do(req)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
 	if err == nil {
 		_ = resp.Body.Close()
 	}
@@ -903,6 +835,19 @@ func deleteWithInternalToken(url, token string) {
 	if resp.StatusCode == http.StatusNotFound {
 		return
 	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("DELETE %s status=%d body=%s", url, resp.StatusCode, string(body))
+	}
+}
+
+func deleteWithBearer(url, token string) {
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	must(err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		fail("DELETE %s status=%d body=%s", url, resp.StatusCode, string(body))

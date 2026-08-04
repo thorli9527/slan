@@ -15,46 +15,63 @@ import (
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
 )
 
-func (s MQTTWebhookService) Authenticate(_ context.Context, input MQTTAuthInput) (MQTTAuthView, error) {
+func (s MQTTWebhookService) Authenticate(ctx context.Context, input MQTTAuthInput) (MQTTAuthView, error) {
 	result, ok := mqttkit.ValidateCredential(s.Config, input.ClientID, input.Username, input.Password, currentTime(s.Now))
 	if !ok {
 		return MQTTAuthView{Allowed: false}, nil
 	}
-	userID := result.DeviceID
+	identityID := result.DeviceID
+	if result.Principal == "device" {
+		credential, found, err := s.Credentials.GetDeviceCredential(ctx, result.CredentialID)
+		if err != nil {
+			return MQTTAuthView{}, err
+		}
+		if !found || credential.DeviceID != result.DeviceID || credential.Status != model.DeviceCredentialStatusActive ||
+			credential.Scopes != deviceCredentialScope {
+			return MQTTAuthView{Allowed: false}, nil
+		}
+		device, found, err := s.Devices.GetDevice(ctx, result.DeviceID)
+		if err != nil {
+			return MQTTAuthView{}, err
+		}
+		if !found || device.Status != "active" {
+			return MQTTAuthView{Allowed: false}, nil
+		}
+	}
 	if result.Principal == "server" {
-		userID = mqttkit.ServerID
+		identityID = mqttkit.ServerID
 	}
 	return MQTTAuthView{
-		Allowed:   true,
-		TenantID:  "slan",
-		UserID:    userID,
-		Principal: result.Principal,
-		DeviceID:  result.DeviceID,
+		Allowed:    true,
+		TenantID:   "slan",
+		IdentityID: identityID,
+		Principal:  result.Principal,
+		DeviceID:   result.DeviceID,
 	}, nil
 }
 
 func (s MQTTWebhookService) CheckACL(ctx context.Context, input MQTTCheckInput) (bool, error) {
 	principal := input.Principal
 	deviceID := input.DeviceID
-	userID := input.UserID
+	identityID := input.IdentityID
 	if principal == "" {
 		if inferredDeviceID, inferredPrincipal := inferMQTTACLIdentity(s.Config, input.ClientID, input.Username, currentTime(s.Now)); inferredPrincipal != "" {
 			principal = inferredPrincipal
 			if deviceID == "" {
 				deviceID = inferredDeviceID
 			}
-			if userID == "" {
+			if identityID == "" {
 				if inferredPrincipal == "server" {
-					userID = mqttkit.ServerID
+					identityID = mqttkit.ServerID
 				} else {
-					userID = inferredDeviceID
+					identityID = inferredDeviceID
 				}
 			}
-		} else if userID == mqttkit.ServerID {
+		} else if identityID == mqttkit.ServerID {
 			principal = "server"
-		} else if userID != "" {
+		} else if identityID != "" {
 			principal = "device"
-			deviceID = userID
+			deviceID = identityID
 		}
 	}
 	allowed := input.Connect || mqttkit.AllowTopicAccess(s.Config, principal, deviceID, input.Topic, input.Subscribe)
@@ -76,19 +93,19 @@ func (s MQTTWebhookService) CheckACL(ctx context.Context, input MQTTCheckInput) 
 		!input.Subscribe &&
 		!input.Connect {
 		fmt.Printf(
-			"mqtt device publish network topic deviceId=%s userId=%s topic=%s allowed=%t\n",
+			"mqtt device publish network topic deviceId=%s identityId=%s topic=%s allowed=%t\n",
 			deviceID,
-			userID,
+			identityID,
 			input.Topic,
 			allowed,
 		)
 	}
 	if mqttkit.IsNetworkTopic(s.Config, input.Topic) {
 		fmt.Printf(
-			"mqtt network acl principal=%s deviceId=%s userId=%s topic=%s subscribe=%t connect=%t allowed=%t\n",
+			"mqtt network acl principal=%s deviceId=%s identityId=%s topic=%s subscribe=%t connect=%t allowed=%t\n",
 			principal,
 			deviceID,
-			userID,
+			identityID,
 			input.Topic,
 			input.Subscribe,
 			input.Connect,
@@ -101,13 +118,13 @@ func (s MQTTWebhookService) CheckACL(ctx context.Context, input MQTTCheckInput) 
 func inferMQTTACLIdentity(cfg mqttkit.Config, clientID, username string, now time.Time) (string, string) {
 	clientID = strings.TrimSpace(clientID)
 	username = strings.TrimSpace(username)
-	if deviceID, expiresAt, ok := mqttkit.ParseDeviceUsername(cfg, username); ok && expiresAt >= now.Unix() {
+	if deviceID, _, expiresAt, ok := mqttkit.ParseDeviceUsername(cfg, username); ok && expiresAt > now.Unix() {
 		baseClientID := mqttkit.DeviceClientID(cfg, deviceID)
 		if clientID == baseClientID || strings.HasPrefix(clientID, baseClientID+"-") {
 			return deviceID, "device"
 		}
 	}
-	if expiresAt, ok := mqttkit.ParseSystemUsername(cfg, username, mqttkit.ServerID); ok && expiresAt >= now.Unix() {
+	if expiresAt, ok := mqttkit.ParseSystemUsername(cfg, username, mqttkit.ServerID); ok && expiresAt > now.Unix() {
 		baseClientID := mqttkit.DeviceClientID(cfg, mqttkit.ServerID)
 		if clientID == baseClientID || strings.HasPrefix(clientID, baseClientID+"-") {
 			return "", "server"

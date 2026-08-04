@@ -20,6 +20,8 @@ const (
 type NetworkDevice struct {
 	NetworkID          string               `json:"networkId"`
 	DeviceID           string               `json:"deviceId"`
+	Direct             bool                 `json:"direct"`
+	DeviceGroupIDs     []string             `json:"deviceGroupIds,omitempty"`
 	Enabled            bool                 `json:"enabled"`
 	MemberStatus       NetworkMemberStatus  `json:"memberStatus"`
 	PresenceStatus     DevicePresenceStatus `json:"presenceStatus"`

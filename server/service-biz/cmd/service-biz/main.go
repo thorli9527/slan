@@ -11,6 +11,9 @@ import (
 )
 
 func main() {
+	if err := serviceapp.ValidateRuntimeEnvironment(); err != nil {
+		log.Fatal(err)
+	}
 	addr := env("SLAN_BIZ_ADDR", ":39080")
 	routeSet := env("SLAN_BIZ_ROUTE_SET", serviceapp.RouteSetAll)
 	server := serviceapp.NewServer()
@@ -20,7 +23,7 @@ func main() {
 	if routeSetPublishesNetworkVersions(routeSet) {
 		go startNetworkVersionPublisher(server)
 		go startNetworkEventDeliveryRetry(server)
-		go startExpiredBootstrapKeyCleanup(server)
+		go startDeviceCredentialCleanup(server)
 	}
 	log.Printf("service-biz listening on %s routeSet=%s", addr, routeSet)
 	if err := http.ListenAndServe(addr, server.RoutesFor(routeSet)); err != nil {
@@ -28,22 +31,24 @@ func main() {
 	}
 }
 
-func startExpiredBootstrapKeyCleanup(server *serviceapp.Server) {
-	cleanup := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		deleted, err := server.Container().Services.Devices.BootstrapAuth.CleanupExpiredDeviceBootstrapKeys(ctx)
+func startDeviceCredentialCleanup(server *serviceapp.Server) {
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		deleted, err := server.Container().Services.Ops.DeviceCredentials.CleanupInvalidDeviceCredentials(ctx)
 		cancel()
 		if err != nil {
-			log.Printf("expired device bootstrap key cleanup failed: %v", err)
+			log.Printf("invalid device credential cleanup failed: %v", err)
 			return
 		}
-		log.Printf("expired device bootstrap key cleanup deleted=%d", deleted)
+		if deleted > 0 {
+			log.Printf("invalid device credential cleanup deleted=%d", deleted)
+		}
 	}
-	cleanup()
+	run()
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
-		cleanup()
+		run()
 	}
 }
 
@@ -57,7 +62,7 @@ func startNetworkEventDeliveryRetry(server *serviceapp.Server) {
 		if err != nil {
 			log.Printf("network event delivery retry partial failure: %v", err)
 		}
-		log.Printf("network event delivery retry scanned=%d republished=%d fallbackPublished=%d", result.Scanned, result.Republished, result.FallbackPublished)
+		log.Printf("network event delivery retry scanned=%d republished=%d deleted=%d", result.Scanned, result.Republished, result.Deleted)
 	}
 }
 

@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 
 REMOTE_HOST="${SLAN_REMOTE_LINUX_HOST:-100.87.66.24}"
 REMOTE_USER="${SLAN_REMOTE_LINUX_USER:-root}"
@@ -15,20 +16,12 @@ REMOTE_PASSWORD="${SLAN_REMOTE_LINUX_PASSWORD:-}"
 REMOTE_SSH_KEY="${SLAN_REMOTE_LINUX_SSH_KEY:-}"
 REMOTE_DIR="${SLAN_REMOTE_LINUX_WORK_DIR:-/tmp/slan-linux-remote-install-check}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 TRAY_MODE="${SLAN_LINUX_TRAY_MODE:-disabled}"
 BUILD_REMOTE_PACKAGE="${SLAN_REMOTE_LINUX_BUILD_PACKAGE_REMOTE:-1}"
 SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1}"
 SERVICE_PORT="${SLAN_CLIENT_CORE_SERVICE_PORT:-46392}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-TTL_SECONDS="${SLAN_REMOTE_LINUX_BOOTSTRAP_TTL_SECONDS:-1800}"
 DEVICE_ALIAS="${SLAN_REMOTE_LINUX_DEVICE_ALIAS:-Remote Linux Install Check}"
-
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-else
-  EMAIL="linux-remote-install-$(date +%s%N)@example.test"
-fi
 
 ssh_opts=(
   -o StrictHostKeyChecking=accept-new
@@ -135,7 +128,7 @@ resolve_linux_package_path() {
     printf '%s\n' "$SLAN_REMOTE_LINUX_PACKAGE"
     return
   fi
-  local candidate="$ROOT_DIR/client_v2/.tmp/installer/linux/SLAN-Client-V2-linux-amd64.tar.gz"
+  local candidate="$ROOT_DIR/client/.tmp/installer/linux/SLAN-Client-V2-linux-amd64.tar.gz"
   if [[ -f "$candidate" ]]; then
     printf '%s\n' "$candidate"
     return
@@ -156,43 +149,19 @@ main() {
   need curl
   need jq
 
-  log "register/login bootstrap test user"
-  curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/register" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
-
-  local auth_json user_id user_token networks_json network_id bootstrap_json bootstrap_id bootstrap_key install_command
-  auth_json="$(curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  user_id="$(printf '%s' "$auth_json" | jq -r '.userId // .auth.userId // .auth.session.userId // empty')"
-  user_token="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-  [[ -n "$user_id" && -n "$user_token" ]] || fail "failed to login bootstrap test user"
-
-  log "resolve default network"
-  networks_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${user_token}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${user_id}")"
-  network_id="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
-  [[ -n "$network_id" ]] || fail "failed to resolve default network"
-
-  log "create bootstrap installation key"
-  bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
-    -H "Authorization: Bearer ${user_token}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"userId\":\"${user_id}\",\"networkId\":\"${network_id}\",\"deviceAlias\":\"${DEVICE_ALIAS}\",\"ttlSeconds\":${TTL_SECONDS}}")"
-  bootstrap_id="$(printf '%s' "$bootstrap_json" | jq -r '.id // .installationKeyId // empty')"
-  bootstrap_key="$(printf '%s' "$bootstrap_json" | jq -r '.key // .installationKey // empty')"
-  [[ -n "$bootstrap_id" && -n "$bootstrap_key" ]] || fail "failed to create bootstrap installation key"
+  log "create Ops device authorization key"
+  local ops_token bootstrap_json bootstrap_id bootstrap_key install_command
+  ops_token="$(slan_ops_login "$OPS_BASE_URL")"
+  bootstrap_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$ops_token" "$DEVICE_ALIAS")"
+  bootstrap_id="$(printf '%s' "$bootstrap_json" | jq -r '.credentialId // empty')"
+  bootstrap_key="$(printf '%s' "$bootstrap_json" | jq -r '.key // empty')"
+  [[ -n "$bootstrap_id" && -n "$bootstrap_key" ]] || fail "failed to create device authorization key"
 
   local package_path
   package_path="$(resolve_linux_package_path)"
   local package_name
   package_name="$(basename "$package_path")"
-  install_command="bash \"$REMOTE_DIR/install.sh\" --server=\"$BIZ_URL\" --installation-key=\"$bootstrap_key\" --tray=\"$TRAY_MODE\" --package-url=\"file://$REMOTE_DIR/$package_name\""
+  install_command="bash \"$REMOTE_DIR/install.sh\" --server=\"$BIZ_URL\" --authorization-key=\"$bootstrap_key\" --tray=\"$TRAY_MODE\" --package-url=\"file://$REMOTE_DIR/$package_name\""
 
   log "prepare remote Linux install host"
   remote_expect_ssh "mkdir -p '$REMOTE_DIR'"
@@ -214,11 +183,13 @@ fi
 
   log "upload Linux package to remote host"
   remote_expect_scp "$package_path" "$REMOTE_DIR/$package_name"
+  remote_expect_ssh "mkdir -p '$REMOTE_DIR/lib'"
+  remote_expect_scp "$ROOT_DIR/client/install/linux/install.sh" "$REMOTE_DIR/install.sh"
+  remote_expect_scp "$ROOT_DIR/client/install/linux/lib/slan-linux-install.sh" "$REMOTE_DIR/lib/slan-linux-install.sh"
 
   log "run remote Linux installer"
   remote_expect_ssh "bash -lc '
 set -euo pipefail
-curl -fsSL \"${BIZ_URL%/}/downloads/clients/install.sh\" -o \"$REMOTE_DIR/install.sh\"
 ${install_command}
 '"
 
@@ -227,9 +198,10 @@ ${install_command}
 set -euo pipefail
 test -x /opt/slan-client-v2/bin/client-core-service
 test -x /usr/bin/slan-client-v2-console
-test -f /etc/slan/bootstrap.env
-grep -q \"^SLAN_CONTROL_BASE_URL=${BIZ_URL}\$\" /etc/slan/bootstrap.env
-grep -q \"^SLAN_INSTALLATION_KEY=${bootstrap_key}\$\" /etc/slan/bootstrap.env
+if [ -f /etc/slan/client-v2-console.env ]; then
+  grep -q \"^SLAN_CONTROL_BASE_URL=${BIZ_URL}\$\" /etc/slan/client-v2-console.env
+  grep -q \"^SLAN_DEVICE_AUTHORIZATION_KEY=${bootstrap_key}\$\" /etc/slan/client-v2-console.env
+fi
 test -f /etc/slan/client-v2-install.env
 grep -q \"^SLAN_LINUX_TRAY_MODE=${TRAY_MODE}\$\" /etc/slan/client-v2-install.env
 jq -e \".deviceId | strings | select(length != 0)\" /var/lib/SLAN/config.json >/dev/null
@@ -239,7 +211,7 @@ systemctl is-active --quiet slan-client-v2.service
   log "verify remote Linux local API"
   remote_expect_ssh "bash -lc '
 set -euo pipefail
-printf \"{\\\"method\\\":\\\"localStatus\\\",\\\"args\\\":{}}\\n\" | nc -w 5 \"$SERVICE_HOST\" \"$SERVICE_PORT\" | jq -e \"(.signedIn | type) == \\\"boolean\\\" and (.switchEnabled | type) == \\\"boolean\\\"\"
+printf \"{\\\"method\\\":\\\"localStatus\\\",\\\"args\\\":{}}\\n\" | nc -w 5 \"$SERVICE_HOST\" \"$SERVICE_PORT\" | jq -e \"(.activated | type) == \\\"boolean\\\" and (.switchEnabled | type) == \\\"boolean\\\"\"
 '"
 
   echo "linuxRemoteInstallCheck: ok host=$REMOTE_HOST package=$package_path tray=$TRAY_MODE bootstrapKeyId=$bootstrap_id"

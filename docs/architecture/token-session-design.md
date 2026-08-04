@@ -1,141 +1,45 @@
-# Token / 会话设计（生产建议）
+# Device Token And Session Design
 
-本文档给出 `service-biz` 在生产环境的 token 与会话管理建议，用于落地以下目标：
+## Identity
 
-- access/refresh TTL 可配置
-- refresh rotation + reuse detection
-- 会话吊销：单用户/单设备/单会话立即生效
-- token 与设备/客户端信息绑定（风控与审计）
-- Redis 故障策略明确且可控
+Device 是客户端唯一身份主体。授权 key 用于一次激活或受控重新激活，不直接作为业务 API 的
+长期 Bearer token。Customer 和 Operator 均不能替代 Device 访问 App API。
 
-## 当前实现概览（便于对照）
+## Exchange
 
-- token 形态：opaque token（随机串）写入 Redis
-- access/refresh：以 key-value 形式保存 `token -> userId`，并依赖 TTL 过期
-- 认证：仅校验 `access_token:{token}` 是否存在并取回 userId
+1. Ops 创建授权 key，服务端只保存带 pepper 的 HMAC-SHA256 摘要。
+2. 客户端调用 `POST /api/device-auth/token`，提交 `key` 和可选 `deviceId`。
+3. 服务端校验摘要、状态、有效期和设备绑定。
+4. 首次交换未绑定 key 时，服务端创建设备并将 key 原子绑定到该设备。
+5. 返回 device token、refresh token、MQTT 凭据和设备 profile。
 
-落点参考：
-- token 签发与写入：[db_access.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/service/db_access.go)
-- Redis token store：[redis.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/repo/redis.go)
+## Session Model
 
-## 1. TTL 配置化
+- `sessionId`：设备会话唯一标识。
+- `deviceId`：会话唯一主体。
+- `credentialId`：签发该会话的授权 key 记录。
+- `accessToken`：短期 Device Bearer。
+- `refreshToken`：用于续期并执行 rotation。
+- `expiresAt` / `refreshExpiry`：访问和续期有效期。
+- `status` / `revokedAt`：吊销状态。
 
-建议在配置中增加 token 相关项（示例）：
+## Rotation And Revocation
 
-- accessTTLSeconds
-- refreshTTLSeconds
-- controlSessionTTLSeconds
+- 每次成功续期生成新的 access/refresh token。
+- 前一个 refresh token 只允许幂等重试窗口，不得再次生成不同 token family。
+- 吊销授权 key 时撤销其全部活动 Device session。
+- 禁用或删除 Device 时撤销该设备全部 session，并停止 MQTT 和网络访问。
+- MQTT credential 的 username 和 HMAC 均绑定 `deviceId`、`credentialId` 与到期时间，有效期不得超过 Device session 或授权 key。
+- 吊销授权 key 后，关联 HTTP session 和该 key 签发的 MQTT credential 均立即失效。
+- Refresh token 每次续期都轮换；数据库使用条件替换保证同一旧 token 只能被消费一次。并发重试在短暂宽限期内返回已生效的同一组新凭据，不会再次轮换。
 
-并统一由 service 层读取配置注入到签发逻辑，避免散落 `time.Hour` 常量。
+## Security Requirements
 
-## 2. 会话模型（Session-first，而不是 Token-first）
-
-建议把“会话”作为一等实体，token 只是会话的凭证：
-
-- sessionId：一次登录/一次设备会话的唯一标识
-- accessToken：短期，频繁使用
-- refreshToken：长期，仅用于换取新的 access/refresh
-
-建议 Redis key 结构（示例）：
-
-- `sess:{sessionId}` -> JSON(sessionMeta)（TTL=refreshTTL）
-- `access:{accessToken}` -> sessionId（TTL=accessTTL）
-- `refresh:{refreshToken}` -> sessionId（TTL=refreshTTL）
-
-其中 sessionMeta 建议包含：
-
-- userId
-- deviceId（可选但强烈建议）
-- clientId / appVersion / platform（用于审计与风控）
-- uaHash / ipHash（可选，用于风控）
-- createdAt / lastSeenAt
-- revokedAt（或单独 revoke set）
-
-## 3. Refresh rotation + reuse detection
-
-### rotation（每次刷新都换 refresh）
-
-刷新接口（建议新增）：`POST /auth/refresh`
-
-- 输入：refreshToken（建议放在 httpOnly cookie 或请求体）
-- 输出：新的 accessToken + 新的 refreshToken
-
-刷新流程（关键点）：
-
-1. 查 `refresh:{oldToken}` 得到 sessionId
-2. 校验 session 未被吊销
-3. 生成 `newAccess`、`newRefresh`
-4. 写入 `access:{newAccess}` 与 `refresh:{newRefresh}`
-5. 删除 `refresh:{oldToken}`（或标记旧 token 已用）
-
-### reuse detection（旧 refresh 被再次使用）
-
-生产环境必须处理“旧 refresh 泄露被重放”的场景。推荐两种方式：
-
-**方式 A：一次性 refresh（推荐）**
-
-- 刷新成功后删除 `refresh:{oldToken}`
-- 若再次使用同一个 oldToken，则查不到 key，直接判定为非法刷新
-- 同时对该 session 触发吊销（防止已泄露）
-
-**方式 B：refresh family 版本号**
-
-- `sess:{sessionId}` 中维护 `refreshVersion`
-- 每次刷新 `refreshVersion++` 并把 version 写入 refresh token 对应的记录
-- 若请求带来的 refreshVersion < 当前版本，判定 reuse → 吊销 session
-
-## 4. 吊销策略（单用户/单设备/单会话）
-
-建议支持三类吊销能力：
-
-- 单会话吊销：删除 `sess:{sessionId}`，并删除会话关联的 token key
-- 单设备吊销：枚举该 deviceId 下所有 sessionId 并吊销
-- 单用户吊销：枚举该 userId 下所有 sessionId 并吊销
-
-为避免枚举成本过高，建议维护索引集合（示例）：
-
-- `user_sessions:{userId}` -> set(sessionId)
-- `device_sessions:{deviceId}` -> set(sessionId)
-
-吊销动作要求“立即生效”：
-
-- access token 校验必须能反查 session 并确认未 revoked
-- 或在吊销时立即删除所有 `access:{token}` 映射（需要维护 token 列表）
-
-## 5. Token 绑定设备/客户端信息
-
-目标：降低 token 被窃取后跨设备滥用的风险，并为审计提供依据。
-
-建议最小绑定集合：
-
-- deviceId（强绑定，适用于多端同设备会话）
-- platform/appVersion（弱绑定，用于异常检测）
-
-实施方式：
-
-- 登录/刷新时都把绑定信息写入 `sess:{sessionId}`
-- 认证中间件在解析 accessToken 后取出 sessionMeta，校验：
-  - userId 匹配
-  - deviceId（如果请求头/客户端上报带 deviceId）一致
-  - 可选：uaHash/ipHash 在允许窗口内（风控策略）
-
-## 6. Redis 故障策略（拒绝/降级/超时）
-
-token 与控制会话强依赖 Redis 时，建议默认策略为：
-
-- Redis 不可用：鉴权相关接口返回 503（拒绝），避免出现“无鉴权放行”的灾难性降级
-
-同时要求：
-
-- Redis 调用必须配置超时（context deadline）
-- 失败重试有上限，并带抖动（避免雪崩）
-- 对关键路径（鉴权/刷新）与非关键路径（lastSeenAt）区别对待
-
-## 7. 接口清单（建议补齐）
-
-- `POST /auth/login`：支持可选 deviceId/clientInfo 字段写入 session
-- `POST /auth/refresh`：refresh rotation
-- `POST /auth/logout`：吊销当前 session
-- `POST /admin/users/{userId}/sessions/revoke`：吊销用户全部会话（运营后台/管理 API）
-- `POST /admin/devices/{deviceId}/sessions/revoke`：吊销设备全部会话
-
+- token 和完整授权 key 不写日志，不进入 URL query。
+- 服务端只保存 key 摘要；pepper 由部署密钥管理。
+- key 交换按来源 IP、key ID 和失败次数限流并写审计事件。
+- 新授权 Key 只使用 `SLAN_DEVICE_CREDENTIAL_PEPPER` 生成摘要。`SLAN_DEVICE_CREDENTIAL_PREVIOUS_PEPPERS` 最多保留 3 个历史 pepper，仅用于校验旧 Key；命中的 pepper 不写入数据库、响应或日志。
+- Device Bearer 必须同时校验 session、Device 状态和资源成员关系。
+- Device 全局虚拟 IP 由 PostgreSQL 原子计数器分配，非空 `virtual_ip` 受部分唯一索引保护；计数器失败或地址池耗尽时拒绝分配，不回退到固定地址。
+- 不迁移或兼容旧账号 token、账号 session 和账号资源归属。
+- Operator 新密码使用 bcrypt 存储；旧 `plain:` / `sha256:` 仅保留校验兼容，不再签发。

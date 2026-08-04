@@ -38,9 +38,7 @@ Required environment variables:
 Optional environment variables:
   SLAN_ANDROID_FLUTTER_DEVICE
   SLAN_BIZ_URL
-  SLAN_WEB_BASE_URL
-  SLAN_TEST_EMAIL
-  SLAN_TEST_PASSWORD
+  SLAN_OPS_BASE_URL
 EOF
   exit 0
 fi

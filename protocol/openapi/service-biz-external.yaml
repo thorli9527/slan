@@ -12,21 +12,16 @@ servers:
     description: Local Docker service-biz
 tags:
   - name: System
-  - name: Auth
-  - name: DeviceLogin
+  - name: DeviceAuth
   - name: DeviceSession
   - name: Devices
-  - name: Invites
   - name: Networks
   - name: DNS
-  - name: PublicMappings
   - name: SecurityGroups
   - name: Relay
   - name: Punch
-  - name: Downloads
   - name: Ops
-security:
-  - userBearer: []
+security: []
 paths:
   /healthz:
     get:
@@ -35,136 +30,16 @@ paths:
       summary: Health check
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-  /api/client-downloads:
-    get:
-      tags: [Downloads]
-      security: []
-      summary: List public client downloads
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-  /downloads/clients/{fileName}:
-    get:
-      tags: [Downloads]
-      security: []
-      summary: Download client package or install script
-      parameters:
-        - $ref: '#/components/parameters/fileName'
-      responses:
-        '200':
-          description: Binary package or script.
-
-  /api/auth/register:
+  /api/device-auth/token:
     post:
-      tags: [Auth]
+      tags: [DeviceAuth]
       security: []
-      summary: Register user and create default network
+      summary: Exchange a device authorization key for device tokens
       requestBody:
-        $ref: '#/components/requestBodies/Register'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/auth/login:
-    post:
-      tags: [Auth]
-      security: []
-      summary: Login user
-      requestBody:
-        $ref: '#/components/requestBodies/Login'
+        $ref: '#/components/requestBodies/DeviceAuthorizationKey'
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-  /api/auth/renew:
-    post:
-      tags: [Auth]
-      summary: Renew user session
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-  /api/auth/logout:
-    post:
-      tags: [Auth]
-      summary: Logout user and optionally revoke a device session
-      requestBody:
-        $ref: '#/components/requestBodies/Logout'
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
-  /api/auth/console-login-keys:
-    post:
-      tags: [DeviceLogin]
-      summary: Create console login key for a device
-      requestBody:
-        $ref: '#/components/requestBodies/DeviceId'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/auth/console-login:
-    post:
-      tags: [DeviceLogin]
-      security: []
-      summary: Login with console login key
-      requestBody:
-        $ref: '#/components/requestBodies/LoginKey'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-  /api/auth/device-login-devices:
-    post:
-      tags: [DeviceLogin]
-      security: []
-      summary: Prepare client device browser login
-      requestBody:
-        $ref: '#/components/requestBodies/DeviceIdentity'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/auth/device-login-devices/{deviceId}/complete:
-    post:
-      tags: [DeviceLogin]
-      security: []
-      summary: Complete client device browser login
-      parameters:
-        - $ref: '#/components/parameters/deviceId'
-      requestBody:
-        $ref: '#/components/requestBodies/CompleteDeviceLogin'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-
-  /api/web/device-bootstrap-keys:
-    get:
-      tags: [DeviceSession]
-      summary: List bootstrap keys
-      parameters:
-        - $ref: '#/components/parameters/userIdQuery'
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [DeviceSession]
-      summary: Create bootstrap key
-      requestBody:
-        $ref: '#/components/requestBodies/BootstrapKey'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/web/device-bootstrap-keys/{keyId}/revoke:
-    post:
-      tags: [DeviceSession]
-      summary: Revoke bootstrap key
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      requestBody:
-        $ref: '#/components/requestBodies/UserIdOptional'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-  /api/app/device/session/bootstrap:
-    post:
-      tags: [DeviceSession]
-      security: []
-      summary: Exchange bootstrap key for device session
-      requestBody:
-        $ref: '#/components/requestBodies/DeviceSessionBootstrap'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/app/device/session/bind:
-    post:
-      tags: [DeviceSession]
-      summary: Bind local device to current user
-      requestBody:
-        $ref: '#/components/requestBodies/DeviceIdentity'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
+        '429': { description: Too many failed authorization-key exchanges from this source. }
   /api/app/device/session/renew:
     post:
       tags: [DeviceSession]
@@ -175,94 +50,24 @@ paths:
         $ref: '#/components/requestBodies/DeviceSessionRenew'
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-
-  /api/users:
-    get:
-      tags: [Auth]
-      summary: List users
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-  /api/users/{userId}/entitlement:
-    get:
-      tags: [Auth]
-      summary: Get user device quota and plan entitlement
-      parameters:
-        - $ref: '#/components/parameters/userId'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-  /api/users/{userId}/password:
-    patch:
-      tags: [Auth]
-      summary: Change user password
-      parameters:
-        - $ref: '#/components/parameters/userId'
-      requestBody:
-        $ref: '#/components/requestBodies/ChangePassword'
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
-  /api/user-aliases:
-    get:
-      tags: [Auth]
-      summary: List user aliases
-      parameters:
-        - name: ownerUserId
-          in: query
-          schema: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    patch:
-      tags: [Auth]
-      summary: Upsert user alias
-      requestBody:
-        $ref: '#/components/requestBodies/UserAlias'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-
-  /api/app/devices:
-    get:
-      tags: [Devices]
-      summary: List devices for user
-      parameters:
-        - $ref: '#/components/parameters/userIdQuery'
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-  /api/app/devices/visible:
-    get:
-      tags: [Devices]
-      summary: List visible devices for user
-      parameters:
-        - $ref: '#/components/parameters/userIdQuery'
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-  /api/app/devices/register:
+  /api/app/client/messages:
     post:
       tags: [Devices]
-      summary: Legacy register device
-      requestBody:
-        $ref: '#/components/requestBodies/RegisterDevice'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/app/devices/{deviceId}:
-    patch:
+      security: [ { deviceBearer: [] } ]
+      summary: Send a device control message
+      requestBody: { $ref: '#/components/requestBodies/FreeForm' }
+      responses: { '202': { $ref: '#/components/responses/JSON' } }
+  /api/app/runtime/endpoints:
+    get:
       tags: [Devices]
-      summary: Update device alias
-      parameters:
-        - $ref: '#/components/parameters/deviceId'
-      requestBody:
-        $ref: '#/components/requestBodies/UpdateDeviceAlias'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-    delete:
-      tags: [Devices]
-      summary: Remove visible device
-      parameters:
-        - $ref: '#/components/parameters/deviceId'
-      responses:
-        '204':
-          description: Deleted.
+      security: [ { deviceBearer: [] } ]
+      summary: Get device runtime endpoints
+      responses: { '200': { $ref: '#/components/responses/JSON' } }
+
   /api/app/devices/{deviceId}/renew:
     post:
       tags: [Devices]
+      security: [ { deviceBearer: [] } ]
       summary: Legacy renew device lease
       parameters:
         - $ref: '#/components/parameters/deviceId'
@@ -273,6 +78,7 @@ paths:
   /api/app/devices/{deviceId}/network-configs:
     get:
       tags: [Devices]
+      security: [ { deviceBearer: [] } ]
       summary: List device network configs
       parameters:
         - $ref: '#/components/parameters/deviceId'
@@ -281,270 +87,57 @@ paths:
   /api/app/devices/{deviceId}/mqtt-credential:
     get:
       tags: [Devices]
+      security: [ { deviceBearer: [] } ]
       summary: Get device MQTT credential
       parameters:
         - $ref: '#/components/parameters/deviceId'
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-
-  /api/device-invites:
+  /api/app/devices/{deviceId}/mqtt-profile:
     get:
-      tags: [Invites]
-      summary: List device invites
-      parameters:
-        - $ref: '#/components/parameters/userIdQuery'
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
+      tags: [Devices]
+      security: [ { deviceBearer: [] } ]
+      summary: Get device MQTT profile
+      parameters: [ { $ref: '#/components/parameters/deviceId' } ]
+      responses: { '200': { $ref: '#/components/responses/JSON' } }
+  /api/app/devices/{deviceId}/runtime:
     post:
-      tags: [Invites]
-      summary: Create device invite
-      requestBody:
-        $ref: '#/components/requestBodies/DeviceInvite'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/device-invites/accept:
+      tags: [Devices]
+      security: [ { deviceBearer: [] } ]
+      summary: Report device runtime state
+      parameters: [ { $ref: '#/components/parameters/deviceId' } ]
+      requestBody: { $ref: '#/components/requestBodies/FreeForm' }
+      responses: { '200': { $ref: '#/components/responses/JSON' } }
+  /api/app/device/runtime/report:
     post:
-      tags: [Invites]
-      summary: Accept device invite
-      requestBody:
-        $ref: '#/components/requestBodies/AcceptDeviceInvite'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-
-  /api/networks:
-    get:
-      tags: [Networks]
-      summary: List networks
-      parameters:
-        - $ref: '#/components/parameters/userIdQuery'
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
+      tags: [Devices]
+      security: [ { deviceBearer: [] } ]
+      summary: Report device runtime state
+      requestBody: { $ref: '#/components/requestBodies/FreeForm' }
+      responses: { '200': { $ref: '#/components/responses/JSON' } }
+  /api/app/devices/{deviceId}/logs:
     post:
-      tags: [Networks]
-      summary: Create network
-      requestBody:
-        $ref: '#/components/requestBodies/CreateNetwork'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}:
-    patch:
-      tags: [Networks]
-      summary: Update network
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-      requestBody:
-        $ref: '#/components/requestBodies/UpdateNetwork'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/devices:
+      tags: [Devices]
+      security: [ { deviceBearer: [] } ]
+      summary: Upload device logs
+      parameters: [ { $ref: '#/components/parameters/deviceId' } ]
+      requestBody: { $ref: '#/components/requestBodies/FreeForm' }
+      responses: { '202': { $ref: '#/components/responses/JSON' } }
+  /api/app/networks/{networkId}/snapshot:
     get:
       tags: [Networks]
-      summary: List network devices
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [Networks]
-      summary: Add device to network
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-      requestBody:
-        $ref: '#/components/requestBodies/AddNetworkDevice'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/devices/{deviceId}:
-    patch:
-      tags: [Networks]
-      summary: Update network device
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/deviceId'
-      requestBody:
-        $ref: '#/components/requestBodies/UpdateNetworkDevice'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-    delete:
-      tags: [Networks]
-      summary: Remove network device
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/deviceId'
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
-  /api/app/networks/{networkId}/network-config:
-    get:
-      tags: [Networks]
-      summary: Get device network config
+      security: [ { deviceBearer: [] } ]
+      summary: Get a device-scoped network snapshot
       parameters:
         - $ref: '#/components/parameters/networkId'
         - name: deviceId
           in: query
           required: true
           schema: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
+      responses: { '200': { $ref: '#/components/responses/JSON' } }
 
-  /api/networks/{networkId}/dns/zones:
-    get:
-      tags: [DNS]
-      summary: List DNS zones
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [DNS]
-      summary: Add DNS zone
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      requestBody:
-        $ref: '#/components/requestBodies/DNSZone'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/dns/zones/{zoneId}:
-    patch:
-      tags: [DNS]
-      summary: Update DNS zone
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/zoneId'
-      requestBody:
-        $ref: '#/components/requestBodies/DNSZone'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-    delete:
-      tags: [DNS]
-      summary: Delete DNS zone
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/zoneId'
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
-  /api/networks/{networkId}/dns/records:
-    get:
-      tags: [DNS]
-      summary: List DNS records
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [DNS]
-      summary: Add DNS record
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      requestBody:
-        $ref: '#/components/requestBodies/DNSRecord'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/dns/records/{recordId}:
-    patch:
-      tags: [DNS]
-      summary: Update DNS record
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/recordId'
-      requestBody:
-        $ref: '#/components/requestBodies/DNSRecord'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-    delete:
-      tags: [DNS]
-      summary: Delete DNS record
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/recordId'
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
 
-  /api/networks/{networkId}/public-mappings:
-    get:
-      tags: [PublicMappings]
-      summary: List public mappings
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [PublicMappings]
-      summary: Create public mapping
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      requestBody:
-        $ref: '#/components/requestBodies/PublicMapping'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/public-mappings/{mappingId}:
-    patch:
-      tags: [PublicMappings]
-      summary: Update public mapping
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/mappingId'
-      requestBody:
-        $ref: '#/components/requestBodies/PublicMapping'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-    delete:
-      tags: [PublicMappings]
-      summary: Delete public mapping
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/mappingId'
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
-
-  /api/networks/{networkId}/security-groups:
-    get:
-      tags: [SecurityGroups]
-      summary: List security groups
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [SecurityGroups]
-      summary: Create security group
-      parameters: [ { $ref: '#/components/parameters/networkId' } ]
-      requestBody:
-        $ref: '#/components/requestBodies/SecurityGroup'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/security-groups/{securityGroupId}:
-    delete:
-      tags: [SecurityGroups]
-      summary: Delete security group
-      parameters:
-        - $ref: '#/components/parameters/networkId'
-        - $ref: '#/components/parameters/securityGroupId'
-      responses:
-        '204': { description: Deleted. }
-  /api/security-groups/{securityGroupId}/rules:
-    get:
-      tags: [SecurityGroups]
-      summary: List security group rules
-      parameters: [ { $ref: '#/components/parameters/securityGroupId' } ]
-      responses:
-        '200': { $ref: '#/components/responses/Items' }
-    post:
-      tags: [SecurityGroups]
-      summary: Add security group rule
-      parameters: [ { $ref: '#/components/parameters/securityGroupId' } ]
-      requestBody:
-        $ref: '#/components/requestBodies/SecurityRule'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/security-groups/rules/{ruleId}:
-    patch:
-      tags: [SecurityGroups]
-      summary: Update security group rule
-      parameters: [ { $ref: '#/components/parameters/ruleId' } ]
-      requestBody:
-        $ref: '#/components/requestBodies/SecurityRule'
-      responses:
-        '200': { $ref: '#/components/responses/JSON' }
-    delete:
-      tags: [SecurityGroups]
-      summary: Delete security group rule
-      parameters: [ { $ref: '#/components/parameters/ruleId' } ]
-      responses:
-        '200': { $ref: '#/components/responses/Status' }
-
-  /api/networks/{networkId}/relay-candidates:
+  /api/app/networks/{networkId}/relay-candidates:
     get:
       tags: [Relay]
       summary: List relay candidates for device
@@ -572,7 +165,7 @@ paths:
         $ref: '#/components/requestBodies/RelayTicket'
       responses:
         '201': { $ref: '#/components/responses/JSON' }
-  /api/networks/{networkId}/punch/connect-sessions:
+  /api/app/networks/{networkId}/punch/connect-sessions:
     post:
       tags: [Punch]
       security:
@@ -594,15 +187,24 @@ paths:
         $ref: '#/components/requestBodies/Login'
       responses:
         '200': { $ref: '#/components/responses/JSON' }
+        '429': { description: Too many failed operator login attempts. }
   /api/ops/auth/password:
     patch:
       tags: [Ops]
       security: [ { operatorBearer: [] } ]
       summary: Change own operator password
+      description: Requires the current password, always targets the authenticated operator, and revokes all existing sessions after success.
       requestBody:
         $ref: '#/components/requestBodies/ChangePassword'
       responses:
-        '204': { description: Password changed. }
+        '200': { $ref: '#/components/responses/JSON' }
+  /api/ops/auth/logout:
+    post:
+      tags: [Ops]
+      security: [ { operatorBearer: [] } ]
+      summary: Revoke the current operator session
+      responses:
+        '204': { description: Logged out. }
   /api/ops/dashboard:
     get:
       tags: [Ops]
@@ -616,20 +218,20 @@ paths:
       security: [ { operatorBearer: [] } ]
       summary: Query audit events
       responses:
-        '200': { $ref: '#/components/responses/Items' }
+        '200': { $ref: '#/components/responses/AuditItems' }
   /api/ops/operators:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List operators, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List operators (admin only), responses: { '200': { $ref: '#/components/responses/Items' } } }
     post:
       tags: [Ops]
       security: [ { operatorBearer: [] } ]
-      summary: Create operator
+      summary: Create operator (admin only)
       requestBody: { $ref: '#/components/requestBodies/FreeForm' }
       responses: { '201': { $ref: '#/components/responses/JSON' } }
   /api/ops/operators/{operatorId}:
     patch:
       tags: [Ops]
       security: [ { operatorBearer: [] } ]
-      summary: Update operator
+      summary: Update operator (admin only)
       parameters: [ { $ref: '#/components/parameters/operatorId' } ]
       requestBody: { $ref: '#/components/requestBodies/FreeForm' }
       responses: { '200': { $ref: '#/components/responses/JSON' } }
@@ -637,74 +239,95 @@ paths:
     post:
       tags: [Ops]
       security: [ { operatorBearer: [] } ]
-      summary: Set operator password
+      summary: Set operator password (admin only)
       parameters: [ { $ref: '#/components/parameters/operatorId' } ]
       requestBody: { $ref: '#/components/requestBodies/NewPassword' }
-      responses: { '204': { description: Password changed. } }
+      responses: { '200': { $ref: '#/components/responses/JSON' } }
 
   /api/ops/relay-nodes:
     get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List relay nodes, responses: { '200': { $ref: '#/components/responses/Items' } } }
     post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create relay node, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
   /api/ops/relay-nodes/{nodeId}:
     patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update relay node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/relay-nodes/{nodeId}/status:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update relay node status, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
   /api/ops/punch-nodes:
     get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List punch nodes, responses: { '200': { $ref: '#/components/responses/Items' } } }
     post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create punch node, requestBody: { $ref: '#/components/requestBodies/PunchNode' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
   /api/ops/punch-nodes/{nodeId}:
     patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update punch node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/PunchNode' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/punch-nodes/{nodeId}/status:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update punch node status, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
   /api/ops/customers:
     get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List customers, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create customer, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
   /api/ops/customers/{customerId}:
     patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update customer, parameters: [ { $ref: '#/components/parameters/customerId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/customers/{customerId}/assign-plan:
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Assign plan to customer, parameters: [ { $ref: '#/components/parameters/customerId' } ], requestBody: { $ref: '#/components/requestBodies/AssignPlan' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
   /api/ops/devices:
     get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List ops devices, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create a managed device, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
   /api/ops/devices/{deviceId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update ops device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], requestBody: { $ref: '#/components/requestBodies/OpsDeviceUpdate' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update ops device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
     delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete ops device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], responses: { '204': { description: Deleted. } } }
-  /api/ops/client-downloads:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List client downloads, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post:
-      tags: [Ops]
-      security: [ { operatorBearer: [] } ]
-      summary: Upload client download
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ClientDownloadUpload'
-      responses:
-        '201': { $ref: '#/components/responses/JSON' }
-  /api/ops/client-downloads/{downloadId}:
-    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete client download, parameters: [ { $ref: '#/components/parameters/downloadId' } ], responses: { '204': { description: Deleted. } } }
-  /api/ops/plans:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List plans, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Upsert plan, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/plans/{planCode}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update plan, parameters: [ { $ref: '#/components/parameters/planCode' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/products:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List products, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create product, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/products/{productId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update product, parameters: [ { $ref: '#/components/parameters/productId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/orders:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List orders, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create order, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/orders/{orderId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update order, parameters: [ { $ref: '#/components/parameters/orderId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/renewals:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List renewals, responses: { '200': { $ref: '#/components/responses/Items' } } }
-  /api/ops/renewals/{renewalId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update renewal, parameters: [ { $ref: '#/components/parameters/renewalId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/device-credentials:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List device authorization keys, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create device authorization key, description: Omit deviceId to bind the key and create the managed device on first exchange. Only the standard_device scope is currently supported., requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/device-credentials/{credentialId}/revoke:
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Revoke device authorization key, parameters: [ { $ref: '#/components/parameters/credentialId' } ], responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/devices/{deviceId}/credentials:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List authorization keys for a device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create an authorization key for a device, parameters: [ { $ref: '#/components/parameters/deviceId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/networks:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List networks, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create network, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/networks/{networkId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update network, parameters: [ { $ref: '#/components/parameters/networkId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete network, parameters: [ { $ref: '#/components/parameters/networkId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/networks/{networkId}/devices:
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Add device to network, parameters: [ { $ref: '#/components/parameters/networkId' } ], requestBody: { $ref: '#/components/requestBodies/DeviceId' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/networks/{networkId}/devices/{deviceId}:
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Remove device from network, parameters: [ { $ref: '#/components/parameters/networkId' }, { $ref: '#/components/parameters/deviceId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/networks/{networkId}/device-groups:
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Add device group to network, parameters: [ { $ref: '#/components/parameters/networkId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/networks/{networkId}/device-groups/{groupId}:
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Remove device group from network, parameters: [ { $ref: '#/components/parameters/networkId' }, { $ref: '#/components/parameters/groupId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/device-groups:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List device groups, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create device group, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/device-groups/{groupId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update device group, parameters: [ { $ref: '#/components/parameters/groupId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete device group, parameters: [ { $ref: '#/components/parameters/groupId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/device-groups/{groupId}/devices:
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Add device group member, parameters: [ { $ref: '#/components/parameters/groupId' } ], requestBody: { $ref: '#/components/requestBodies/DeviceId' }, responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/device-groups/{groupId}/devices/{deviceId}:
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Remove device group member, parameters: [ { $ref: '#/components/parameters/groupId' }, { $ref: '#/components/parameters/deviceId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/networks/{networkId}/dns/zones:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List DNS zones, parameters: [ { $ref: '#/components/parameters/networkId' } ], responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create DNS zone, parameters: [ { $ref: '#/components/parameters/networkId' } ], requestBody: { $ref: '#/components/requestBodies/DNSZone' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/dns/zones/{zoneId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update DNS zone, parameters: [ { $ref: '#/components/parameters/zoneId' } ], requestBody: { $ref: '#/components/requestBodies/DNSZone' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete DNS zone, parameters: [ { $ref: '#/components/parameters/zoneId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/networks/{networkId}/dns/records:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List DNS records, parameters: [ { $ref: '#/components/parameters/networkId' } ], responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create DNS record, parameters: [ { $ref: '#/components/parameters/networkId' } ], requestBody: { $ref: '#/components/requestBodies/DNSRecord' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/dns/records/{recordId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update DNS record, parameters: [ { $ref: '#/components/parameters/recordId' } ], requestBody: { $ref: '#/components/requestBodies/DNSRecord' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete DNS record, parameters: [ { $ref: '#/components/parameters/recordId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/networks/{networkId}/security-groups:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List security groups, parameters: [ { $ref: '#/components/parameters/networkId' } ], responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create security group, parameters: [ { $ref: '#/components/parameters/networkId' } ], requestBody: { $ref: '#/components/requestBodies/SecurityGroup' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/security-groups/{securityGroupId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update security group, parameters: [ { $ref: '#/components/parameters/securityGroupId' } ], requestBody: { $ref: '#/components/requestBodies/SecurityGroup' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete security group, parameters: [ { $ref: '#/components/parameters/securityGroupId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
+  /api/ops/security-groups/{securityGroupId}/rules:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List security rules, parameters: [ { $ref: '#/components/parameters/securityGroupId' } ], responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create security rule, parameters: [ { $ref: '#/components/parameters/securityGroupId' } ], requestBody: { $ref: '#/components/requestBodies/SecurityRule' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/security-rules/{ruleId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update security rule, parameters: [ { $ref: '#/components/parameters/ruleId' } ], requestBody: { $ref: '#/components/requestBodies/SecurityRule' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete security rule, parameters: [ { $ref: '#/components/parameters/ruleId' } ], responses: { '200': { $ref: '#/components/responses/Status' } } }
 
 components:
   securitySchemes:
-    userBearer:
-      type: http
-      scheme: bearer
-      bearerFormat: UserToken
     deviceBearer:
       type: http
       scheme: bearer
@@ -719,25 +342,19 @@ components:
       name: X-Slan-Punch-Signature
       description: Requires X-Slan-Device-ID, X-Slan-MQTT-Username, and md5(deviceId + mqttPassword).
   parameters:
-    userId: { name: userId, in: path, required: true, schema: { type: string } }
-    userIdQuery: { name: userId, in: query, required: false, schema: { type: string } }
     deviceId: { name: deviceId, in: path, required: true, schema: { type: string } }
+    credentialId: { name: credentialId, in: path, required: true, schema: { type: string } }
     networkId: { name: networkId, in: path, required: true, schema: { type: string } }
+    groupId: { name: groupId, in: path, required: true, schema: { type: string } }
     zoneId: { name: zoneId, in: path, required: true, schema: { type: string } }
     recordId: { name: recordId, in: path, required: true, schema: { type: string } }
     mappingId: { name: mappingId, in: path, required: true, schema: { type: string } }
     securityGroupId: { name: securityGroupId, in: path, required: true, schema: { type: string } }
     ruleId: { name: ruleId, in: path, required: true, schema: { type: string } }
     keyId: { name: keyId, in: path, required: true, schema: { type: string } }
-    fileName: { name: fileName, in: path, required: true, schema: { type: string } }
     operatorId: { name: operatorId, in: path, required: true, schema: { type: string } }
     nodeId: { name: nodeId, in: path, required: true, schema: { type: string } }
     customerId: { name: customerId, in: path, required: true, schema: { type: string } }
-    downloadId: { name: downloadId, in: path, required: true, schema: { type: string } }
-    planCode: { name: planCode, in: path, required: true, schema: { type: string } }
-    productId: { name: productId, in: path, required: true, schema: { type: string } }
-    orderId: { name: orderId, in: path, required: true, schema: { type: string } }
-    renewalId: { name: renewalId, in: path, required: true, schema: { type: string } }
   responses:
     JSON:
       description: JSON object response.
@@ -749,6 +366,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ItemsResponse' }
+    AuditItems:
+      description: Audit event collection response.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuditItemsResponse' }
     Status:
       description: Status response.
       content:
@@ -763,17 +385,6 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/FreeFormObject' }
-    Register:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [email, password]
-            properties:
-              email: { type: string, format: email }
-              password: { type: string }
-              name: { type: string }
     Login:
       required: true
       content:
@@ -784,13 +395,6 @@ components:
             properties:
               email: { type: string }
               password: { type: string }
-    Logout:
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              deviceToken: { type: string }
     ChangePassword:
       required: true
       content:
@@ -819,76 +423,17 @@ components:
             required: [deviceId]
             properties:
               deviceId: { type: string }
-    UserIdOptional:
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              userId: { type: string }
-    LoginKey:
+    DeviceAuthorizationKey:
       required: true
       content:
         application/json:
           schema:
             type: object
-            required: [loginKey]
+            required: [key]
             properties:
-              loginKey: { type: string }
-    CompleteDeviceLogin:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              accessToken: { type: string }
-              token: { type: string }
-              action: { type: string }
-    DeviceIdentity:
-      required: true
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/DeviceIdentity' }
-    RegisterDevice:
-      required: true
-      content:
-        application/json:
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/DeviceIdentity'
-              - type: object
-                properties:
-                  userId: { type: string }
-    BootstrapKey:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [networkId]
-            properties:
-              userId: { type: string }
-              networkId: { type: string }
-              deviceAlias: { type: string }
-              ttlSeconds: { type: integer, format: int64 }
-    DeviceSessionBootstrap:
-      required: true
-      content:
-        application/json:
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/DeviceIdentity'
-              - type: object
-                required: [sessionKey]
-                properties:
-                  sessionKey: { type: string }
+              key: { type: string }
+              deviceId: { type: string, description: Required when the key is already bound to a device. }
     DeviceSessionRenew:
-      required: true
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/RuntimeCounters' }
-    LegacyDeviceRenew:
       required: true
       content:
         application/json:
@@ -896,58 +441,17 @@ components:
             allOf:
               - $ref: '#/components/schemas/RuntimeCounters'
               - type: object
+                required: [refreshToken]
                 properties:
-                  userId: { type: string }
-    UpdateDeviceAlias:
+                  refreshToken: { type: string }
+    LegacyDeviceRenew:
       required: true
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              actorUserId: { type: string }
-              alias: { type: string }
-    UserAlias:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              ownerUserId: { type: string }
-              email: { type: string }
-              alias: { type: string }
-    DeviceInvite:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              ownerUserId: { type: string }
-              inviteeEmail: { type: string }
-              deviceId: { type: string }
-              alias: { type: string }
-    AcceptDeviceInvite:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              inviteId: { type: string }
-              userId: { type: string }
-              alias: { type: string }
-    CreateNetwork:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              ownerUserId: { type: string }
-              name: { type: string }
-    UpdateNetwork:
+            allOf:
+              - $ref: '#/components/schemas/RuntimeCounters'
+    DNSZone:
       required: true
       content:
         application/json:
@@ -956,37 +460,6 @@ components:
             properties:
               name: { type: string }
               status: { type: string }
-    AddNetworkDevice:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              deviceId: { type: string }
-              ownerUserId: { type: string }
-              alias: { type: string }
-              role: { type: string }
-              enabled: { type: boolean }
-    UpdateNetworkDevice:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              alias: { type: string }
-              role: { type: string }
-              enabled: { type: boolean }
-    DNSZone:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              zoneName: { type: string }
-              exposeGlobal: { type: boolean }
     DNSRecord:
       required: true
       content:
@@ -996,27 +469,10 @@ components:
             properties:
               zoneId: { type: string }
               name: { type: string }
-              recordType: { type: string }
-              targetDeviceId: { type: string }
-              targetIp: { type: string }
-              cname: { type: string }
+              type: { type: string }
+              value: { type: string }
               port: { type: string }
               ttl: { type: integer }
-    PublicMapping:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              alias: { type: string }
-              publicDomain: { type: string }
-              sourceRecord: { type: string }
-              deviceId: { type: string }
-              protocol: { type: string }
-              port: { type: string }
-              externalPort: { type: string }
-              status: { type: string }
     SecurityGroup:
       required: true
       content:
@@ -1034,13 +490,12 @@ components:
             type: object
             properties:
               direction: { type: string }
-              priority: { type: integer }
-              action: { type: string }
               protocol: { type: string }
-              portFrom: { type: integer }
-              portTo: { type: integer }
+              portRange: { type: string }
               peerType: { type: string }
               peerValue: { type: string }
+              action: { type: string }
+              priority: { type: integer }
               description: { type: string }
               enabled: { type: boolean }
     RelayTicket:
@@ -1086,18 +541,6 @@ components:
               status: { type: string }
               health: { type: string }
               priority: { type: integer }
-    AssignPlan:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [planCode]
-            properties:
-              planCode: { type: string }
-              expiresAt: { type: integer, format: int64 }
-              amount: { type: number }
-              period: { type: string }
   schemas:
     FreeFormObject:
       type: object
@@ -1109,35 +552,33 @@ components:
         items:
           type: array
           items: { type: object, additionalProperties: true }
-    DeviceIdentity:
+    AuditItemsResponse:
       type: object
-      required: [deviceId]
+      required: [items]
       properties:
-        deviceId: { type: string }
-        name: { type: string }
-        platform: { type: string }
-        osName: { type: string }
-        osVersion: { type: string }
-        alias: { type: string }
-        publicKey: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AuditEvent' }
+    AuditEvent:
+      type: object
+      required: [eventId, actorType, actorId, action, resourceType, resourceId, status, createdAt]
+      properties:
+        eventId: { type: string }
+        actorType: { type: string }
+        actorId: { type: string }
+        action: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        status: { type: string }
+        remoteIp: { type: string }
+        detail: { type: string }
+        createdAt: { type: integer, format: int64 }
     RuntimeCounters:
       type: object
       properties:
         networkEnabled: { type: boolean }
         rxBytesTotal: { type: integer, format: int64, minimum: 0 }
         txBytesTotal: { type: integer, format: int64, minimum: 0 }
-    ClientDownloadUpload:
-      type: object
-      properties:
-        file:
-          type: string
-          format: binary
-        platform: { type: string }
-        version: { type: string }
-        channel: { type: string }
-        arch: { type: string }
-        releaseNotes: { type: string }
-        status: { type: string }
     OpsDeviceUpdate:
       type: object
       properties:

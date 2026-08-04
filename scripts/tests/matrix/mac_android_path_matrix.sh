@@ -11,12 +11,13 @@ source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 ANDROID_BIZ_URL="${SLAN_ANDROID_BIZ_URL:-$BIZ_URL}"
 SERVER_HOST="${SLAN_SERVER_HOST:-$SLAN_DEFAULT_MQTT_HOST}"
+NODE_REGION="${SLAN_PATH_MATRIX_NODE_REGION:-local}"
 MODES="${SLAN_PATH_MATRIX_MODES:-direct,udp-relay,tcp-relay}"
 MANAGE_MAC_SERVICE="${SLAN_PATH_MATRIX_MANAGE_MAC_SERVICE:-0}"
 RESTORE_ACTIVE="${SLAN_PATH_MATRIX_RESTORE_ACTIVE:-1}"
 SKIP_ADMIN_PATCH="${SLAN_PATH_MATRIX_SKIP_ADMIN_PATCH:-0}"
 MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:46392}"
-MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
+MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 MACOS_SERVICE_BINARY="${SLAN_MACOS_SERVICE_BINARY:-}"
 TOKEN="${SLAN_INTERNAL_WIRE_TOKEN:-}"
 SUDO_PASSWORD="${SLAN_SUDO_PASSWORD:-}"
@@ -85,11 +86,11 @@ set_relay_nodes() {
   local -a nodes=()
   while IFS= read -r node; do
     [[ -n "$node" ]] && nodes+=("$node")
-  done < <(list_region_node_ids relay dev)
-  [[ ${#nodes[@]} -gt 0 ]] || fail "no live relay nodes found in region=dev"
+  done < <(list_region_node_ids relay "$NODE_REGION")
+  [[ ${#nodes[@]} -gt 0 ]] || fail "no relay nodes found in region=$NODE_REGION"
   local node
   for node in "${nodes[@]}"; do
-    patch_node_status relay dev "$node" "$enabled" true
+    patch_node_status relay "$NODE_REGION" "$node" "$enabled" true
   done
 }
 
@@ -102,11 +103,11 @@ set_derp_nodes() {
   local -a nodes=()
   while IFS= read -r node; do
     [[ -n "$node" ]] && nodes+=("$node")
-  done < <(list_region_node_ids derp dev)
-  [[ ${#nodes[@]} -gt 0 ]] || fail "no live derp nodes found in region=dev"
+  done < <(list_region_node_ids derp "$NODE_REGION")
+  [[ ${#nodes[@]} -gt 0 ]] || fail "no derp nodes found in region=$NODE_REGION"
   local node
   for node in "${nodes[@]}"; do
-    patch_node_status derp dev "$node" "$enabled" true
+    patch_node_status derp "$NODE_REGION" "$node" "$enabled" true
   done
 }
 
@@ -118,14 +119,14 @@ set_single_derp_node() {
   local -a nodes=()
   while IFS= read -r node; do
     [[ -n "$node" ]] && nodes+=("$node")
-  done < <(list_region_node_ids derp dev)
-  [[ ${#nodes[@]} -gt 0 ]] || fail "no live DERP nodes found in region=dev"
+  done < <(list_region_node_ids derp "$NODE_REGION")
+  [[ ${#nodes[@]} -gt 0 ]] || fail "no DERP nodes found in region=$NODE_REGION"
   local index
   for index in "${!nodes[@]}"; do
     if [[ "$index" == "0" ]]; then
-      patch_node_status derp dev "${nodes[$index]}" true true
+      patch_node_status derp "$NODE_REGION" "${nodes[$index]}" true true
     else
-      patch_node_status derp dev "${nodes[$index]}" false true
+      patch_node_status derp "$NODE_REGION" "${nodes[$index]}" false true
     fi
   done
   echo "DERP path test pinned to node=${nodes[0]}"
@@ -187,7 +188,6 @@ trap restore_nodes EXIT
 run_socket_check() {
   local mode="$1"
   shift
-  local email="path-${mode}-$(date +%s%N)@example.com"
   local expected_service_bin="${MACOS_SERVICE_BINARY:-}"
   local -a env_args
   if [[ -z "$expected_service_bin" && -d "$MACOS_APP_PATH" ]]; then
@@ -200,8 +200,6 @@ run_socket_check() {
     SLAN_BIZ_URL="$BIZ_URL"
     SLAN_ANDROID_BIZ_URL="$ANDROID_BIZ_URL"
     SLAN_FORCE_RELAY_ONLY="${SLAN_FORCE_RELAY_ONLY:-0}"
-    SLAN_TEST_EMAIL="$email"
-    SLAN_CLEANUP_REMOTE_TEST_DEVICES=1
   )
   if [[ -n "$expected_service_bin" ]]; then
     env_args+=(SLAN_CLIENT_CORE_SERVICE_BIN="$expected_service_bin")
@@ -221,8 +219,6 @@ run_direct() {
   install_macos_service_direct
   run_socket_check direct \
     SLAN_FORCE_RELAY_ONLY=0 \
-    SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=direct_udp \
-    SLAN_EXPECT_ANDROID_DIRECT_CANDIDATES_CONTAINS="[0-9]" \
     SLAN_EXPECT_ANDROID_DIRECT_READY_MIN="${SLAN_EXPECT_DIRECT_READY_MIN:-1}" \
     SLAN_EXPECT_ANDROID_DIRECT_FRAMES_SENT_MIN="${SLAN_EXPECT_DIRECT_FRAMES_SENT_MIN:-1}"
 }

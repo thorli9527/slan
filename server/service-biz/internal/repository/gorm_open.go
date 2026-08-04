@@ -14,7 +14,7 @@ func OpenGormStore(cfg GormConfig) (*GormStore, error) {
 	if dsn == "" {
 		dsn = defaultGormDSN()
 	}
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{TranslateError: true})
 	if err != nil {
 		return nil, err
 	}

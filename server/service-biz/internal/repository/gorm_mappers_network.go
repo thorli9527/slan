@@ -5,7 +5,6 @@ import "github.com/slan/service-biz/internal/model"
 func networkRecordFromModel(item model.Network) gormNetworkRecord {
 	return gormNetworkRecord{
 		NetworkID:        item.NetworkID,
-		OwnerID:          item.OwnerID,
 		Name:             item.Name,
 		CIDR:             item.CIDR,
 		IntraGroupPolicy: item.IntraGroupPolicy,
@@ -19,7 +18,6 @@ func networkRecordFromModel(item model.Network) gormNetworkRecord {
 func (r gormNetworkRecord) model() model.Network {
 	return model.Network{
 		NetworkID:        r.NetworkID,
-		OwnerID:          r.OwnerID,
 		Name:             r.Name,
 		CIDR:             r.CIDR,
 		IntraGroupPolicy: r.IntraGroupPolicy,
@@ -54,6 +52,8 @@ func networkDeviceRecordFromModel(item model.NetworkDevice) gormNetworkDeviceRec
 	return gormNetworkDeviceRecord{
 		NetworkID:          item.NetworkID,
 		DeviceID:           item.DeviceID,
+		Direct:             item.Direct,
+		DeviceGroupIDs:     jsonStringSlice(item.DeviceGroupIDs),
 		Enabled:            item.Enabled,
 		MemberStatus:       string(item.MemberStatus),
 		PresenceStatus:     string(item.PresenceStatus),
@@ -93,6 +93,8 @@ func (r gormNetworkDeviceRecord) model() model.NetworkDevice {
 	return model.NetworkDevice{
 		NetworkID:          r.NetworkID,
 		DeviceID:           r.DeviceID,
+		Direct:             r.Direct,
+		DeviceGroupIDs:     []string(r.DeviceGroupIDs),
 		Enabled:            r.Enabled,
 		MemberStatus:       model.NetworkMemberStatus(r.MemberStatus),
 		PresenceStatus:     model.DevicePresenceStatus(r.PresenceStatus),
@@ -125,36 +127,6 @@ func (r gormNetworkDeviceRecord) model() model.NetworkDevice {
 		LastPathChange:     r.LastPathChange,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
-	}
-}
-
-func deviceInviteRecordFromModel(item model.DeviceInvite) gormDeviceInviteRecord {
-	return gormDeviceInviteRecord{
-		InviteID:      item.InviteID,
-		InviteCode:    item.InviteCode,
-		InviterUserID: item.InviterUserID,
-		NetworkID:     item.NetworkID,
-		DeviceID:      item.DeviceID,
-		UserID:        item.UserID,
-		Status:        item.Status,
-		CreatedAt:     item.CreatedAt,
-		ExpiresAt:     item.ExpiresAt,
-		AcceptedAt:    item.AcceptedAt,
-	}
-}
-
-func (r gormDeviceInviteRecord) model() model.DeviceInvite {
-	return model.DeviceInvite{
-		InviteID:      r.InviteID,
-		InviteCode:    r.InviteCode,
-		InviterUserID: r.InviterUserID,
-		NetworkID:     r.NetworkID,
-		DeviceID:      r.DeviceID,
-		UserID:        r.UserID,
-		Status:        r.Status,
-		CreatedAt:     r.CreatedAt,
-		ExpiresAt:     r.ExpiresAt,
-		AcceptedAt:    r.AcceptedAt,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/slan/service-biz/internal/model"
+	"gorm.io/gorm"
 )
 
 func (s *GormStore) ListPublicMappings(_ context.Context, networkID string) ([]model.PublicMapping, error) {
@@ -45,7 +46,12 @@ func (s *GormStore) SaveSecurityGroup(_ context.Context, group model.SecurityGro
 }
 
 func (s *GormStore) DeleteSecurityGroup(_ context.Context, securityGroupID string) error {
-	return s.db.Delete(&gormSecurityGroupRecord{}, "security_group_id = ?", securityGroupID).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&gormSecurityRuleRecord{}, "security_group_id = ?", securityGroupID).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&gormSecurityGroupRecord{}, "security_group_id = ?", securityGroupID).Error
+	})
 }
 
 func (s *GormStore) ListSecurityRules(_ context.Context, securityGroupID string) ([]model.SecurityRule, error) {

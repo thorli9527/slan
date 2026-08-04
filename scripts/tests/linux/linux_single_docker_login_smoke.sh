@@ -14,7 +14,7 @@ resolve_linux_package_path() {
     return
   fi
 
-  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local installer_dir="$ROOT_DIR/client/.tmp/installer/linux"
   local host_arch
   host_arch="$(uname -m 2>/dev/null || true)"
   local preferred=()

@@ -14,9 +14,22 @@ type CustomerHandler struct {
 func (h CustomerHandler) Routes() []serviceapi.Route {
 	return withOptAliases([]serviceapi.Route{
 		serviceapi.NewRoute(http.MethodGet, "/api/ops/customers", h.OpsListCustomers),
+		serviceapi.NewRoute(http.MethodPost, "/api/ops/customers", h.OpsCreateCustomer),
 		serviceapi.NewRoute(http.MethodPatch, "/api/ops/customers/{customerId}", h.OpsUpdateCustomer),
-		serviceapi.NewRoute(http.MethodPost, "/api/ops/customers/{customerId}/assign-plan", h.OpsAssignCustomerPlan),
 	})
+}
+
+func (h CustomerHandler) OpsCreateCustomer(w http.ResponseWriter, r *http.Request) {
+	var req updateCustomerRequest
+	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	item, err := h.OpsCustomers.CreateCustomer(r.Context(), req.toCreateInput())
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteJSON(w, http.StatusCreated, customerPayload(item))
 }
 
 func (h CustomerHandler) OpsListCustomers(w http.ResponseWriter, r *http.Request) {
@@ -41,19 +54,4 @@ func (h CustomerHandler) OpsUpdateCustomer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	serviceapi.WriteJSON(w, http.StatusOK, customerPayload(item))
-}
-
-func (h CustomerHandler) OpsAssignCustomerPlan(w http.ResponseWriter, r *http.Request) {
-	var req assignCustomerPlanRequest
-	if !serviceapi.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-	input := req.toInput()
-	serviceapi.SetIfEmpty(&input.CustomerID, requestCustomerID(r))
-	item, err := h.OpsCustomers.AssignCustomerPlan(r.Context(), input)
-	if err != nil {
-		serviceapi.WriteError(w, err)
-		return
-	}
-	serviceapi.WriteJSON(w, http.StatusOK, assignedCustomerPlanPayload(item))
 }

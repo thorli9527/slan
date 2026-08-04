@@ -8,8 +8,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *GormStore) ListNetworksByOwner(_ context.Context, ownerID string) ([]model.Network, error) {
-	return listModels(s.db.Where("owner_id = ?", ownerID).Order("network_id asc"), func(row gormNetworkRecord) model.Network {
+func (s *GormStore) ListNetworks(_ context.Context) ([]model.Network, error) {
+	return listModels(s.db.Order("network_id asc"), func(row gormNetworkRecord) model.Network {
 		return row.model()
 	})
 }
@@ -58,7 +58,7 @@ func (s *GormStore) ListNetworksByDevice(ctx context.Context, deviceID string) (
 
 func (s *GormStore) SaveNetwork(_ context.Context, network model.Network) error {
 	row := networkRecordFromModel(network)
-	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"owner_id", "name", "cidr", "intra_group_policy", "default", "status", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"name", "cidr", "intra_group_policy", "default", "status", "created_at", "updated_at"})
 }
 
 func (s *GormStore) SaveNetworkVersion(_ context.Context, item model.NetworkConfigVersion) error {
@@ -84,8 +84,6 @@ func (s *GormStore) DeleteNetwork(_ context.Context, networkID string) error {
 			func() error {
 				return tx.Delete(&gormNetworkDeviceGroupReferenceRecord{}, "network_id = ?", networkID).Error
 			},
-			func() error { return tx.Delete(&gormDeviceInviteRecord{}, "network_id = ?", networkID).Error },
-			func() error { return tx.Delete(&gormBootstrapKeyRecord{}, "network_id = ?", networkID).Error },
 			func() error { return tx.Delete(&gormNetworkRecord{}, "network_id = ?", networkID).Error },
 		}
 		for _, step := range steps {
@@ -111,7 +109,7 @@ func (s *GormStore) GetNetworkDevice(_ context.Context, networkID, deviceID stri
 
 func (s *GormStore) SaveNetworkDevice(_ context.Context, item model.NetworkDevice) error {
 	row := networkDeviceRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"network_id", "device_id"}, []string{"enabled", "member_status", "presence_status", "mqtt_connected", "virtual_ip", "last_seen_at", "last_heartbeat_at", "last_runtime_state_at", "last_endpoint_at", "last_path_health_at", "endpoints", "nat_type", "active_path", "path_observed_at", "relay_transport", "relay_endpoint", "derp_node_id", "peer_node_id", "path_score", "observed_rtt_ms", "packet_loss_ppm", "relay_mtu", "max_frame_payload", "ticket_expires_at", "ticket_renew_due", "path_downgrades", "path_upgrades", "last_path_change", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"network_id", "device_id"}, []string{"direct", "device_group_ids", "enabled", "member_status", "presence_status", "mqtt_connected", "virtual_ip", "last_seen_at", "last_heartbeat_at", "last_runtime_state_at", "last_endpoint_at", "last_path_health_at", "endpoints", "nat_type", "active_path", "path_observed_at", "relay_transport", "relay_endpoint", "derp_node_id", "peer_node_id", "path_score", "observed_rtt_ms", "packet_loss_ppm", "relay_mtu", "max_frame_payload", "ticket_expires_at", "ticket_renew_due", "path_downgrades", "path_upgrades", "last_path_change", "created_at", "updated_at"})
 }
 
 func (s *GormStore) DeleteNetworkDevice(_ context.Context, networkID, deviceID string) error {
@@ -153,35 +151,4 @@ func (s *GormStore) DeleteNetworkDeviceGroupReference(_ context.Context, network
 
 func (s *GormStore) DeleteNetworkDeviceGroupReferencesByGroup(_ context.Context, groupID string) error {
 	return s.db.Delete(&gormNetworkDeviceGroupReferenceRecord{}, "group_id = ?", strings.TrimSpace(groupID)).Error
-}
-
-func (s *GormStore) ListDeviceInvitesByUser(_ context.Context, userID string) ([]model.DeviceInvite, error) {
-	userID = strings.TrimSpace(userID)
-	return listModels(s.db.Where("user_id = ? OR inviter_user_id = ?", userID, userID).Order("invite_id asc"), func(row gormDeviceInviteRecord) model.DeviceInvite {
-		return row.model()
-	})
-}
-
-func (s *GormStore) ListDeviceInvitesByNetwork(_ context.Context, networkID string) ([]model.DeviceInvite, error) {
-	return listModels(s.db.Where("network_id = ?", networkID).Order("invite_id asc"), func(row gormDeviceInviteRecord) model.DeviceInvite {
-		return row.model()
-	})
-}
-
-func (s *GormStore) GetDeviceInvite(_ context.Context, inviteID string) (model.DeviceInvite, bool, error) {
-	return firstModel(s.db.Where("invite_id = ?", inviteID), func(row gormDeviceInviteRecord) model.DeviceInvite {
-		return row.model()
-	})
-}
-
-func (s *GormStore) GetDeviceInviteByCode(_ context.Context, inviteCode string) (model.DeviceInvite, bool, error) {
-	return firstModel(s.db.Where("invite_code = ?", strings.TrimSpace(inviteCode)), func(row gormDeviceInviteRecord) model.DeviceInvite {
-		return row.model()
-	})
-}
-
-func (s *GormStore) SaveDeviceInvite(_ context.Context, invite model.DeviceInvite) error {
-	row := deviceInviteRecordFromModel(invite)
-	row.InviteCode = strings.TrimSpace(row.InviteCode)
-	return upsertByColumns(s.db, &row, []string{"invite_id"}, []string{"invite_code", "inviter_user_id", "network_id", "device_id", "user_id", "status", "created_at", "expires_at", "accepted_at"})
 }

@@ -2,6 +2,10 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
@@ -10,7 +14,6 @@ import (
 
 const (
 	initializeLockID int64 = 2026062001
-	backfillLockID   int64 = 2026062002
 )
 
 func InitializeGormStore(ctx context.Context, store *repository.GormStore) error {
@@ -21,7 +24,16 @@ func InitializeGormStore(ctx context.Context, store *repository.GormStore) error
 		if err := tx.Migrate(); err != nil {
 			return err
 		}
-		count, err := tx.UserCount(ctx)
+		cutoff, enabled, err := auditRetentionCutoff(time.Now())
+		if err != nil {
+			return err
+		}
+		if enabled {
+			if err := tx.DeleteAuditEventsBefore(ctx, cutoff); err != nil {
+				return err
+			}
+		}
+		count, err := tx.OperatorCount(ctx)
 		if err != nil {
 			return err
 		}
@@ -32,27 +44,27 @@ func InitializeGormStore(ctx context.Context, store *repository.GormStore) error
 	})
 }
 
-func BackfillReferenceDefaults(ctx context.Context, store *repository.GormStore) error {
-	return store.Transaction(func(tx *repository.GormStore) error {
-		if err := tx.AcquireAdvisoryLock(backfillLockID); err != nil {
-			return err
-		}
-		if err := tx.DeleteLegacyDemoSeed(ctx); err != nil {
-			return err
-		}
-		if err := seedReferenceDefaults(ctx, tx, time.Now().Unix()); err != nil {
-			return err
-		}
-		return tx.ResetReferenceSequences()
-	})
+func auditRetentionCutoff(now time.Time) (int64, bool, error) {
+	raw := strings.TrimSpace(os.Getenv("SLAN_AUDIT_RETENTION_DAYS"))
+	if raw == "" || raw == "0" {
+		return 0, false, nil
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days < 0 || days > 3650 {
+		return 0, false, fmt.Errorf("SLAN_AUDIT_RETENTION_DAYS must be between 0 and 3650")
+	}
+	return now.Add(-time.Duration(days) * 24 * time.Hour).Unix(), true, nil
 }
 
 func seedReferenceDefaults(ctx context.Context, store *repository.GormStore, now int64) error {
-	admin := defaultOperator(now)
+	admin, err := defaultOperator(now)
+	if err != nil {
+		return err
+	}
 	if err := store.SaveOperator(ctx, admin); err != nil {
 		return err
 	}
-	if err := seedOpsCatalog(ctx, store, now); err != nil {
+	if err := seedOpsNodes(ctx, store, now); err != nil {
 		return err
 	}
 	if err := store.SaveAuditEvent(ctx, model.AuditEvent{
@@ -75,7 +87,7 @@ func seedReferenceDefaults(ctx context.Context, store *repository.GormStore, now
 	return nil
 }
 
-func seedOpsCatalog(ctx context.Context, store *repository.GormStore, now int64) error {
+func seedOpsNodes(ctx context.Context, store *repository.GormStore, now int64) error {
 	if err := store.SaveRelayNode(ctx, defaultRelayNode(now)); err != nil {
 		return err
 	}
@@ -85,21 +97,6 @@ func seedOpsCatalog(ctx context.Context, store *repository.GormStore, now int64)
 		}
 	} else {
 		if err := store.DeletePunchNode(ctx, "punch000000000000000000000000000001"); err != nil {
-			return err
-		}
-	}
-	for _, plan := range defaultPlans(now) {
-		if err := store.SavePlan(ctx, plan); err != nil {
-			return err
-		}
-	}
-	for _, product := range defaultProducts(now) {
-		if err := store.SaveProduct(ctx, product); err != nil {
-			return err
-		}
-	}
-	for _, item := range defaultDownloads(now) {
-		if err := store.SaveClientDownload(ctx, item); err != nil {
 			return err
 		}
 	}

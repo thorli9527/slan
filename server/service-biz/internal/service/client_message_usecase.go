@@ -13,12 +13,17 @@ import (
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
 )
 
+const (
+	maxClientMessageBodyBytes    = 16 << 10
+	maxClientMessagePayloadBytes = 64 << 10
+)
+
 func (s ClientMessageService) SendClientMessage(ctx context.Context, input SendClientMessageInput) (SendClientMessageView, error) {
 	networkID := normalizeNetworkID(input.NetworkID)
 	fromDeviceID := normalizeDeviceID(input.FromDeviceID)
 	targetDeviceID := normalizeDeviceID(input.TargetDeviceID)
 	body := strings.TrimSpace(input.Body)
-	if networkID == "" || fromDeviceID == "" || targetDeviceID == "" || body == "" {
+	if networkID == "" || fromDeviceID == "" || targetDeviceID == "" || body == "" || len(body) > maxClientMessageBodyBytes {
 		return SendClientMessageView{}, ErrInvalidArgument
 	}
 
@@ -47,6 +52,9 @@ func (s ClientMessageService) SendClientMessage(ctx context.Context, input SendC
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return SendClientMessageView{}, fmt.Errorf("encode client message payload: %w", err)
+	}
+	if len(raw) > maxClientMessagePayloadBytes {
+		return SendClientMessageView{}, ErrInvalidArgument
 	}
 	log.Printf(
 		"client message send begin networkId=%s fromDeviceId=%s targetDeviceId=%s bodyBytes=%d",

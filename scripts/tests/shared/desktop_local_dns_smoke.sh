@@ -78,7 +78,7 @@ wait_for_dns_ready() {
     local status dns_state
     status="$(request localStatus)"
     dns_state="$(request localResolverState)"
-    if jq -e '.signedIn == true and .networkEnabled == true' >/dev/null <<<"$status" &&
+    if jq -e '.activated == true and .networkEnabled == true' >/dev/null <<<"$status" &&
        jq -e '.serverEnabled == true and .serverListening == true and (.serverBindAddr | type == "string") and (.serverBindAddr | test(":[0-9]+$"))' >/dev/null <<<"$dns_state"; then
       printf '%s\n%s\n' "$status" "$dns_state"
       return 0
@@ -133,12 +133,12 @@ status_and_dns="$(wait_for_dns_ready || true)"
 if [[ -z "$status_and_dns" ]]; then
   echo "localStatus=$(request localStatus)" >&2
   echo "localResolverState=$(request localResolverState)" >&2
-  fail "local dns server reaches signed-in/listening state"
+  fail "local dns server reaches activated/listening state"
 fi
 
 status_json="$(printf '%s\n' "$status_and_dns" | sed -n '1p')"
 dns_state_before="$(printf '%s\n' "$status_and_dns" | sed -n '2p')"
-assert_jq "$status_json" '.signedIn == true and .networkEnabled == true' "desktop service signed in and network enabled"
+assert_jq "$status_json" '.activated == true and .networkEnabled == true' "desktop service signed in and network enabled"
 assert_jq "$dns_state_before" '.serverEnabled == true and .serverListening == true' "local dns server listening"
 
 module_json="$(request localNetworkModule)"

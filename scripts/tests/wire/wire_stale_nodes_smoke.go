@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -19,41 +18,17 @@ var staleHTTPClient = &http.Client{
 	Timeout:   5 * time.Second,
 }
 
-type staleAuthResponse struct {
-	AccessToken string `json:"accessToken"`
-}
-
-type staleCleanupAuthResponse struct {
-	Auth struct {
-		User struct {
-			UserID string `json:"userId"`
-		} `json:"user"`
-	} `json:"auth"`
-}
-
-type staleDeviceResponse struct {
-	DeviceID string `json:"deviceId"`
-}
-
-type staleNetworkHomeResponse struct {
-	ActiveNetwork *staleNetworkResponse `json:"activeNetwork,omitempty"`
-	OwnedNetwork  *staleNetworkResponse `json:"ownedNetwork,omitempty"`
+type staleOpsAuthResponse struct {
+	Token string `json:"token"`
 }
 
 type staleNetworkResponse struct {
 	NetworkID string `json:"networkId"`
 }
 
-type staleActivationResponse struct {
-	Attachment struct {
-		AttachmentID string `json:"attachmentId"`
-		NetworkID    string `json:"networkId"`
-		DeviceID     string `json:"deviceId"`
-	} `json:"attachment"`
-}
-
-type staleNodeResponse struct {
-	NodeID string `json:"nodeId"`
+type staleCredentialResponse struct {
+	CredentialID string `json:"credentialId"`
+	Key          string `json:"key"`
 }
 
 type staleWireRegisterResponse struct {
@@ -97,10 +72,11 @@ type staleDerpMap struct {
 }
 
 type staleAuthorizedPeer struct {
-	NodeID   string
-	Email    string
-	Password string
-	DeviceID string
+	NodeID       string
+	OpsToken     string
+	NetworkID    string
+	CredentialID string
+	DeviceID     string
 }
 
 func main() {
@@ -153,7 +129,7 @@ func runStaleSmoke() error {
 	if err != nil {
 		return err
 	}
-	defer cleanupStaleSmokeDeviceBestEffort(bizURL, peer.Email, peer.Password, peer.DeviceID)
+	defer cleanupStaleSmokeDeviceBestEffort(bizURL, peer)
 	if err := waitPathPlanContainsB(wireURL, peer.NodeID); err != nil {
 		return err
 	}
@@ -194,63 +170,52 @@ func compose(args []string, env map[string]string) error {
 
 func createAuthorizedWirePeer(bizURL, wireURL string) (staleAuthorizedPeer, error) {
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
-	email := "wire-stale-" + suffix + "@local.slan"
-	password := "Password123!"
 	deviceID := "dev-wire-stale-" + suffix
-	nodeID := "node-wire-stale-" + suffix
+	nodeID := "node-" + deviceID
+	peer := staleAuthorizedPeer{NodeID: nodeID, DeviceID: deviceID}
 	cleanupOnFailure := true
 	defer func() {
 		if cleanupOnFailure {
-			cleanupStaleSmokeDeviceBestEffort(bizURL, email, password, deviceID)
+			cleanupStaleSmokeDeviceBestEffort(bizURL, peer)
 		}
 	}()
 
-	var auth staleAuthResponse
-	if err := postJSON(bizURL+"/auth/register", "", map[string]any{"email": email, "password": password}, &auth); err != nil {
+	var opsAuth staleOpsAuthResponse
+	if err := postJSON(bizURL+"/api/ops/auth/login", "", map[string]any{
+		"email": env("SLAN_OPS_EMAIL", "admin1"), "password": env("SLAN_OPS_PASSWORD", "admin1"),
+	}, &opsAuth); err != nil {
 		return staleAuthorizedPeer{}, err
 	}
-	var device staleDeviceResponse
-	if err := postJSON(bizURL+"/devices/register", auth.AccessToken, map[string]any{
-		"deviceId":    deviceID,
-		"name":        "wire stale smoke device",
-		"platform":    "smoke",
-		"countryCode": "CN",
-		"publicKey":   "device-public-key-" + suffix,
-	}, &device); err != nil {
+	peer.OpsToken = opsAuth.Token
+	var credential staleCredentialResponse
+	if err := postJSON(bizURL+"/api/ops/device-credentials", opsAuth.Token, map[string]any{
+		"deviceId": deviceID, "name": "Wire Stale Device", "scopes": "standard_device", "expiresAt": 0,
+	}, &credential); err != nil {
 		return staleAuthorizedPeer{}, err
 	}
-	if device.DeviceID != deviceID {
-		return staleAuthorizedPeer{}, fmt.Errorf("unexpected device response: %+v", device)
+	peer.CredentialID = credential.CredentialID
+	if credential.CredentialID == "" || credential.Key == "" {
+		return staleAuthorizedPeer{}, fmt.Errorf("missing device credential: %+v", credential)
 	}
-	var home staleNetworkHomeResponse
-	if err := getJSON(bizURL+"/networks/home", auth.AccessToken, &home); err != nil {
+	if err := postJSON(bizURL+"/api/device-auth/token", "", map[string]any{
+		"key": credential.Key, "deviceId": deviceID,
+	}, nil); err != nil {
 		return staleAuthorizedPeer{}, err
 	}
-	networkID := ""
-	if home.ActiveNetwork != nil {
-		networkID = home.ActiveNetwork.NetworkID
-	}
-	if networkID == "" && home.OwnedNetwork != nil {
-		networkID = home.OwnedNetwork.NetworkID
-	}
-	if networkID == "" {
-		return staleAuthorizedPeer{}, fmt.Errorf("missing network from home: %+v", home)
-	}
-	var activation staleActivationResponse
-	if err := postJSON(bizURL+"/networks/"+networkID+"/activate", auth.AccessToken, map[string]any{"deviceId": deviceID}, &activation); err != nil {
+	var network staleNetworkResponse
+	if err := postJSON(bizURL+"/api/ops/networks", opsAuth.Token, map[string]any{
+		"name": "Wire Stale " + suffix, "status": "active",
+	}, &network); err != nil {
 		return staleAuthorizedPeer{}, err
 	}
-	var node staleNodeResponse
-	if err := postJSON(bizURL+"/nodes/register", auth.AccessToken, map[string]any{
-		"deviceId":      deviceID,
-		"nodeId":        nodeID,
-		"nodePublicKey": "node-public-key-" + suffix,
-		"capabilities":  []string{"wireguard", "relay_udp", "derp_tcp_tls_443"},
-	}, &node); err != nil {
-		return staleAuthorizedPeer{}, err
+	peer.NetworkID = network.NetworkID
+	if network.NetworkID == "" {
+		return staleAuthorizedPeer{}, fmt.Errorf("missing Ops network")
 	}
-	if node.NodeID != nodeID {
-		return staleAuthorizedPeer{}, fmt.Errorf("unexpected node response: %+v", node)
+	if err := postJSON(bizURL+"/api/ops/networks/"+network.NetworkID+"/devices", opsAuth.Token, map[string]any{
+		"deviceId": deviceID,
+	}, nil); err != nil {
+		return staleAuthorizedPeer{}, err
 	}
 	var reg staleWireRegisterResponse
 	if err := postJSON(wireURL+"/peers/register", "", map[string]any{
@@ -271,55 +236,32 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (staleAuthorizedPeer, erro
 	}, &reg); err != nil {
 		return staleAuthorizedPeer{}, err
 	}
-	if reg.Peer.NetworkID != networkID || reg.Peer.NodeID != nodeID {
+	if reg.Peer.NetworkID != network.NetworkID || reg.Peer.NodeID != nodeID {
 		return staleAuthorizedPeer{}, fmt.Errorf("wire did not apply biz authz: %+v", reg.Peer)
 	}
 	cleanupOnFailure = false
-	return staleAuthorizedPeer{NodeID: nodeID, Email: email, Password: password, DeviceID: deviceID}, nil
+	return peer, nil
 }
 
-func cleanupStaleSmokeDeviceBestEffort(bizURL, email, password, deviceID string) {
-	if email == "" || password == "" || deviceID == "" {
+func cleanupStaleSmokeDeviceBestEffort(bizURL string, peer staleAuthorizedPeer) {
+	if peer.OpsToken == "" {
 		return
 	}
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second}
-	var auth staleCleanupAuthResponse
-	payload, err := json.Marshal(map[string]any{"email": email, "password": password})
-	if err != nil {
-		return
+	requests := [][2]string{
+		{http.MethodDelete, bizURL + "/api/ops/networks/" + peer.NetworkID},
+		{http.MethodPost, bizURL + "/api/ops/device-credentials/" + peer.CredentialID + "/revoke"},
+		{http.MethodDelete, bizURL + "/api/ops/devices/" + peer.DeviceID},
 	}
-	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/web/auth/login", bytes.NewReader(payload))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return
-	}
-	if err := json.Unmarshal(body, &auth); err != nil {
-		return
-	}
-	userID := auth.Auth.User.UserID
-	if userID == "" {
-		return
-	}
-	req, err = http.NewRequest(
-		http.MethodDelete,
-		bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
-		nil,
-	)
-	if err != nil {
-		return
-	}
-	resp, err = client.Do(req)
-	if err == nil {
-		_ = resp.Body.Close()
+	for _, item := range requests {
+		req, err := http.NewRequest(item[0], item[1], nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+peer.OpsToken)
+		if resp, err := client.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
 	}
 }
 

@@ -6,7 +6,6 @@ func appControlDeviceSessionPayload(profile servicepkg.DeviceProfileView, sessio
 	return map[string]any{
 		"sessionId":            sessionID,
 		"deviceId":             deviceID,
-		"userId":               profile.Device.OwnerID,
 		"deviceToken":          accessToken,
 		"deviceTokenExpiresAt": expiresAt,
 		"deviceRefreshToken":   refreshToken,
@@ -25,16 +24,6 @@ func sessionActiveNetworkIDs(profile servicepkg.DeviceProfileView, activeNetwork
 	}
 	values = append(values, activeNetworkIDs...)
 	return uniqueStrings(values)
-}
-
-func deviceSessionPayload(view servicepkg.DeviceSessionBootstrapView, punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any) map[string]any {
-	return deviceSessionEnvelope(
-		view.Profile,
-		view.Session,
-		view.MQTT,
-		punchNodes,
-		networkConfigs,
-	)
 }
 
 func boundDeviceSessionPayload(view servicepkg.DeviceSessionBoundView, punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any) map[string]any {

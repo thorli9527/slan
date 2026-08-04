@@ -14,9 +14,23 @@ type DeviceHandler struct {
 func (h DeviceHandler) Routes() []serviceapi.Route {
 	return withOptAliases([]serviceapi.Route{
 		serviceapi.NewRoute(http.MethodGet, "/api/ops/devices", h.OpsListDevices),
+		serviceapi.NewRoute(http.MethodPost, "/api/ops/devices", h.OpsCreateDevice),
 		serviceapi.NewRoute(http.MethodPatch, "/api/ops/devices/{deviceId}", h.OpsUpdateDevice),
 		serviceapi.NewRoute(http.MethodDelete, "/api/ops/devices/{deviceId}", h.OpsDeleteDevice),
 	})
+}
+
+func (h DeviceHandler) OpsCreateDevice(w http.ResponseWriter, r *http.Request) {
+	var req createManagedDeviceRequest
+	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	item, err := h.OpsDevices.CreateDevice(r.Context(), req.toInput())
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteJSON(w, http.StatusCreated, managedDevicePayload(item))
 }
 
 func (h DeviceHandler) OpsListDevices(w http.ResponseWriter, r *http.Request) {

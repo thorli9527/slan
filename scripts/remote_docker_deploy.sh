@@ -10,9 +10,10 @@ ENV_FILE="${3:-${ENV_FILE:-.env.local}}"
 ENV_SOURCE="${ENV_SOURCE:-$ROOT_DIR/$ENV_FILE}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
 REMOTE_USER="${REMOTE_USER:-root}"
-APP_SERVICES="${APP_SERVICES:-server-biz server-biz-web-console server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b server-ui-web opt-ui caddy}"
+APP_SERVICES="${APP_SERVICES:-server-biz server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b opt-ui caddy}"
 INFRA_SERVICES="${INFRA_SERVICES:-postgres redis}"
 BROKER_SERVICES="${BROKER_SERVICES:-bifromq}"
+POST_BROKER_STABILIZATION_SECONDS="${POST_BROKER_STABILIZATION_SECONDS:-15}"
 PRESERVE_ENV_KEYS="${PRESERVE_ENV_KEYS:-POSTGRES_PASSWORD SLAN_RELAY_TICKET_SECRET SLAN_INTERNAL_WIRE_TOKEN SLAN_WIRE_TICKET_SECRET SLAN_WIRE_TICKET_SECRETS SLAN_MQTT_PASSWORD_SECRET}"
 RUN_REMOTE_SMOKE="${RUN_REMOTE_SMOKE:-1}"
 REMOTE_SMOKE_EXECUTION="${REMOTE_SMOKE_EXECUTION:-server}"
@@ -41,7 +42,7 @@ Optional environment variables:
   ENV_FILE=.env.prod
   ENV_SOURCE=/abs/path/to/.env.prod
   COMPOSE_FILE=docker-compose.local.yml
-  APP_SERVICES="server-biz server-biz-web-console ..."
+  APP_SERVICES="server-biz server-biz-ops ..."
   INFRA_SERVICES="postgres redis"
   BROKER_SERVICES="bifromq"
   PRESERVE_ENV_KEYS="POSTGRES_PASSWORD ..."
@@ -51,6 +52,7 @@ Optional environment variables:
   RUN_REMOTE_PUNCH_SMOKE=1
   RUN_REMOTE_UI_OPS_SMOKE=0
   RUN_REMOTE_APP_DNS_ACL_SMOKE=0
+  POST_BROKER_STABILIZATION_SECONDS=15
   RUN_POST_PUBLISH_CLIENT_VALIDATION=0
   RUN_LOCAL_PRECHECKS=1
   TOKEN_SCHEMA_MODE=compatible|strict
@@ -159,11 +161,8 @@ if [ "$RUN_LOCAL_PRECHECKS" = "1" ]; then
   echo "==> Local prechecks: service-biz tests"
   (cd "$ROOT_DIR/server/service-biz" && go test ./...)
 
-  echo "==> Local prechecks: web-ui build"
-  (cd "$ROOT_DIR/server/web-ui" && npm run build)
-
   echo "==> Local prechecks: client-core-service compile check"
-  (cd "$ROOT_DIR/client_v2/rust" && cargo test -p client-core-service --no-run)
+  (cd "$ROOT_DIR/client/rust" && cargo test -p client-core-service --no-run)
 fi
 
 echo "==> Checking remote docker on ${SSH_TARGET}"
@@ -190,10 +189,10 @@ rsync -az --delete \
   --exclude '.dart_tool/' \
   --exclude '.gradle/' \
   --exclude '.tmp/' \
-  --exclude 'client_v2/app_flutter/build/' \
-  --exclude 'client_v2/app_flutter/build.rootcache*/' \
-  --exclude 'client_v2/app_flutter/android/.kotlin/' \
-  --exclude 'client_v2/app_flutter/android/.gradle/' \
+  --exclude 'client/app_flutter/build/' \
+  --exclude 'client/app_flutter/build.rootcache*/' \
+  --exclude 'client/app_flutter/android/.kotlin/' \
+  --exclude 'client/app_flutter/android/.gradle/' \
   "$ROOT_DIR/" "$SSH_TARGET:$REMOTE_DIR/"
 
 REMOTE_ENV_TMP="$REMOTE_DIR/.env.deploy.incoming"
@@ -408,6 +407,28 @@ for service in $infra_services; do
     docker compose --env-file "$env_file" -f "$compose_file" up -d "$service"
   fi
 done
+
+for service in $infra_services; do
+  container_id="$(docker compose --env-file "$env_file" -f "$compose_file" ps -q "$service")"
+  for _ in $(seq 1 60); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
+    case "$status" in
+      healthy|running)
+        break
+        ;;
+      unhealthy|exited|dead)
+        echo "infrastructure service $service failed with status $status" >&2
+        exit 1
+        ;;
+    esac
+    sleep 2
+  done
+  status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
+  if [ "$status" != "healthy" ] && [ "$status" != "running" ]; then
+    echo "infrastructure service $service did not become ready: $status" >&2
+    exit 1
+  fi
+done
 EOF
 
 echo "==> Aligning postgres password with ${ENV_FILE}"
@@ -451,16 +472,10 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T -u postgres pos
   sh -lc "psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 DO \$\$
 DECLARE
-  names text[] := ARRAY[
-    'gorm_user_session_records',
-    'gorm_user_session_record',
-    'gorm_console_login_key_records',
-    'gorm_console_login_key_record',
-    'gorm_device_session_records',
-    'gorm_device_session_record',
-    'gorm_bootstrap_key_records',
-    'gorm_bootstrap_key_record',
-    'gorm_operator_session_records',
+	  names text[] := ARRAY[
+	    'gorm_device_session_records',
+	    'gorm_device_session_record',
+	    'gorm_operator_session_records',
     'gorm_operator_session_record'
   ];
   item text;
@@ -526,26 +541,29 @@ done
 EOF
 fi
 
+if [ -n "$BROKER_SERVICES" ] && [ "$POST_BROKER_STABILIZATION_SECONDS" -gt 0 ]; then
+  echo "==> Waiting ${POST_BROKER_STABILIZATION_SECONDS}s for app MQTT clients to stabilize"
+  sleep "$POST_BROKER_STABILIZATION_SECONDS"
+fi
+
 echo "==> Remote compose status"
 remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' ps"
 
 echo "==> Health checks"
 remote_ssh "cd '$REMOTE_DIR' && \
    docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-biz /bin/sh -lc 'wget -qO- http://127.0.0.1:8080/healthz' && echo && \
-   docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-biz-web-console /bin/sh -lc 'wget -qO- http://127.0.0.1:8080/healthz' && echo && \
    docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-biz-ops /bin/sh -lc 'wget -qO- http://127.0.0.1:8080/healthz' && echo && \
-   docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T server-ui-web /bin/sh -lc 'wget -qO- http://127.0.0.1/ | grep -q \"<app-root\"' && echo web-ui-ok && \
    docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' exec -T opt-ui /bin/sh -lc 'wget -qO- http://127.0.0.1/ | grep -q \"<ops-root\"' && echo ops-ui-ok"
 
 if [ "$RUN_REMOTE_SMOKE" = "1" ]; then
   SLAN_BIZ_PUBLIC_PORT="$(env_value SLAN_BIZ_PUBLIC_PORT)"
-  SLAN_BIZ_CONSOLE_PUBLIC_PORT="$(env_value SLAN_BIZ_CONSOLE_PUBLIC_PORT)"
-  SLAN_WEB_PORT="$(env_value SLAN_WEB_PORT)"
   SLAN_BIZ_OPS_PUBLIC_PORT="$(env_value SLAN_BIZ_OPS_PUBLIC_PORT)"
   SLAN_INTERNAL_WIRE_TOKEN_VALUE="$(env_value SLAN_INTERNAL_WIRE_TOKEN)"
+  SLAN_OPS_DEFAULT_ADMIN_EMAIL_VALUE="$(env_value SLAN_OPS_DEFAULT_ADMIN_EMAIL)"
+  SLAN_OPS_DEFAULT_ADMIN_PASSWORD_VALUE="$(env_value SLAN_OPS_DEFAULT_ADMIN_PASSWORD)"
 
   APP_SMOKE_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}"
-  WEB_SMOKE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_CONSOLE_PUBLIC_PORT:-28081}}"
+  WEB_SMOKE_URL="${SLAN_WEB_BASE_URL:-$APP_SMOKE_URL}"
   OPS_SMOKE_URL="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}}"
 
   if [ -z "${SLAN_INTERNAL_WIRE_TOKEN_VALUE}" ]; then
@@ -555,14 +573,18 @@ if [ "$RUN_REMOTE_SMOKE" = "1" ]; then
     if [ "${REMOTE_SMOKE_EXECUTION}" = "server" ]; then
       remote_ssh "cd '$REMOTE_DIR' && \
         SLAN_INTERNAL_WIRE_TOKEN='${SLAN_INTERNAL_WIRE_TOKEN_VALUE}' \
+        SLAN_OPS_EMAIL='${SLAN_OPS_DEFAULT_ADMIN_EMAIL_VALUE:-admin1}' \
+        SLAN_OPS_PASSWORD='${SLAN_OPS_DEFAULT_ADMIN_PASSWORD_VALUE}' \
         SLAN_BIZ_SMOKE_START=0 \
         SLAN_APP_BASE_URL='http://127.0.0.1:${SLAN_BIZ_PUBLIC_PORT:-28080}' \
-        SLAN_WEB_BASE_URL='http://127.0.0.1:${SLAN_BIZ_CONSOLE_PUBLIC_PORT:-28081}' \
+        SLAN_WEB_BASE_URL='http://127.0.0.1:${SLAN_BIZ_PUBLIC_PORT:-28080}' \
         SLAN_OPS_BASE_URL='http://127.0.0.1:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}' \
         SLAN_SERVICE_BIZ_SMOKE_SEED_WIRE_NODES='${REMOTE_SMOKE_SEED_WIRE_NODES}' \
         bash ./scripts/service_biz_smoke.sh"
     else
       SLAN_INTERNAL_WIRE_TOKEN="${SLAN_INTERNAL_WIRE_TOKEN_VALUE}" \
+      SLAN_OPS_EMAIL="${SLAN_OPS_DEFAULT_ADMIN_EMAIL_VALUE:-admin1}" \
+      SLAN_OPS_PASSWORD="${SLAN_OPS_DEFAULT_ADMIN_PASSWORD_VALUE}" \
       SLAN_BIZ_REMOTE_BASE_URL="${APP_SMOKE_URL}" \
       SLAN_WEB_REMOTE_BASE_URL="${WEB_SMOKE_URL}" \
       SLAN_OPS_REMOTE_BASE_URL="${OPS_SMOKE_URL}" \
@@ -574,14 +596,20 @@ fi
 
 if [ "$RUN_REMOTE_PUNCH_SMOKE" = "1" ]; then
   echo "==> Remote punch smoke"
+  SLAN_BIZ_OPS_PUBLIC_PORT="$(env_value SLAN_BIZ_OPS_PUBLIC_PORT)"
+  SLAN_OPS_DEFAULT_ADMIN_EMAIL_VALUE="$(env_value SLAN_OPS_DEFAULT_ADMIN_EMAIL)"
+  SLAN_OPS_DEFAULT_ADMIN_PASSWORD_VALUE="$(env_value SLAN_OPS_DEFAULT_ADMIN_PASSWORD)"
   SLAN_BIZ_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
+  SLAN_OPS_BASE_URL="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}}" \
+  SLAN_OPS_EMAIL="${SLAN_OPS_DEFAULT_ADMIN_EMAIL_VALUE:-admin1}" \
+  SLAN_OPS_PASSWORD="${SLAN_OPS_DEFAULT_ADMIN_PASSWORD_VALUE}" \
   bash "$ROOT_DIR/scripts/punch_biz_smoke.sh"
 fi
 
 if [ "$RUN_REMOTE_UI_OPS_SMOKE" = "1" ]; then
   echo "==> Remote UI/OPS smoke"
   SLAN_REMOTE_HOST="${REMOTE_HOST}" \
-  SLAN_REMOTE_WEB_BASE="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}" \
+  SLAN_REMOTE_WEB_BASE="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   SLAN_REMOTE_OPS_BASE="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_MAIN_PORT:-24201}}" \
   SLAN_REMOTE_BIZ_BASE="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   bash "$ROOT_DIR/scripts/remote_ui_ops_smoke.sh"
@@ -590,7 +618,7 @@ fi
 if [ "$RUN_REMOTE_APP_DNS_ACL_SMOKE" = "1" ]; then
   echo "==> Remote app DNS/ACL/message smoke"
   SLAN_BIZ_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
-  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}" \
+  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   SLAN_EXPECT_MQTT_HOST="${SLAN_EXPECT_MQTT_HOST:-${REMOTE_HOST}}" \
   bash "$ROOT_DIR/scripts/app_dns_acl_message_smoke.sh"
 fi
@@ -598,7 +626,7 @@ fi
 if [ "$RUN_POST_PUBLISH_CLIENT_VALIDATION" = "1" ]; then
   echo "==> Post-publish Linux/iOS client validation"
   SLAN_BIZ_URL="${SLAN_APP_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
-  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_WEB_PORT:-24200}}" \
+  SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_PUBLIC_PORT:-28080}}" \
   SLAN_OPS_BASE_URL="${SLAN_OPS_BASE_URL:-http://${REMOTE_HOST}:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}}" \
   SLAN_EXPECT_MQTT_HOST="${SLAN_EXPECT_MQTT_HOST:-${REMOTE_HOST}}" \
   bash "$ROOT_DIR/scripts/post_publish_client_validation.sh"

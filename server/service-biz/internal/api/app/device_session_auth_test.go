@@ -14,10 +14,6 @@ type deviceSessionAuthTestUseCase struct {
 	err     error
 }
 
-func (s deviceSessionAuthTestUseCase) BindDeviceSession(context.Context, servicepkg.BindDeviceSessionInput) (servicepkg.DeviceSessionBoundView, error) {
-	return servicepkg.DeviceSessionBoundView{}, nil
-}
-
 func (s deviceSessionAuthTestUseCase) RenewDeviceSession(context.Context, string, servicepkg.RenewDeviceSessionInput) (servicepkg.DeviceSessionBoundView, error) {
 	return servicepkg.DeviceSessionBoundView{}, nil
 }

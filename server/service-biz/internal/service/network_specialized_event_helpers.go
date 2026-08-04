@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
@@ -94,4 +95,45 @@ func publishACLChanged(
 			Rules: networkEventACLRules(securityRules),
 		},
 	)
+}
+
+func publishNetworkDeviceGroupChanged(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	networks repository.NetworkRepository,
+	eventPublisher NetworkEventPublisher,
+	nowFn func() time.Time,
+	networkID string,
+	groupID string,
+	eventType NetworkEventType,
+) error {
+	if eventPublisher == nil {
+		return nil
+	}
+	version, ok, err := networks.GetNetworkVersion(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	payload := any(NetworkEventDeviceGroupRemovedPayload{GroupID: strings.TrimSpace(groupID)})
+	if eventType != NetworkEventDeviceGroupRemoved {
+		groups, err := buildNetworkEventDeviceGroups(ctx, devices, networks, networkID)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, group := range groups {
+			if group.GroupID == strings.TrimSpace(groupID) {
+				payload = NetworkEventDeviceGroupPayload{Group: group}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrNotFound
+		}
+	}
+	return publishNetworkEvent(ctx, eventPublisher, eventType, networkID, uint64(version.Version), currentTime(nowFn).UnixMilli(), payload)
 }

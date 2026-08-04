@@ -29,7 +29,7 @@
     <table>
       <thead><tr><th>节点</th><th>区域</th><th>协议</th><th>公网地址</th><th>最大带宽</th><th>月流量</th><th>会话</th><th>状态</th><th>健康</th><th>操作</th></tr></thead>
       <tbody>
-        <tr *ngFor="let node of vm.relayNodes">
+        <tr *ngFor="let node of pagedRelayNodes">
           <td><strong>{{ node.name }}</strong><br><code>{{ node.nodeId }}</code></td>
           <td>{{ node.region }}</td>
           <td><span class="status" [class.online]="node.transport === 'derp_tcp_tls_443'">{{ vm.relayTransportLabel(node.transport) }}</span><br><code>{{ node.transport }}</code></td>
@@ -61,5 +61,6 @@
         </tr>
       </tbody>
     </table>
+    <ops-pagination [total]="vm.relayNodes.length" [page]="page" [pageSize]="pageSize" (pageChange)="page = $event" (pageSizeChange)="pageSize = $event; resetPage()"></ops-pagination>
   </article>
 </section>

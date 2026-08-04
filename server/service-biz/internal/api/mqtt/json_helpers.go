@@ -1,12 +1,15 @@
 package mqtt
 
 import (
-	"encoding/json"
 	"net/http"
+
+	serviceapi "github.com/slan/service-biz/internal/api"
 )
+
+const maxMQTTWebhookBodyBytes int64 = 256 << 10
 
 func jsonDecoder(r *http.Request) func(any) error {
 	return func(out any) error {
-		return json.NewDecoder(r.Body).Decode(out)
+		return serviceapi.DecodeJSONWithLimit(r, out, maxMQTTWebhookBodyBytes)
 	}
 }

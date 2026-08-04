@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/slan/service-biz/internal/model"
+	"gorm.io/gorm"
 )
 
 func (s *GormStore) ListDNSZones(_ context.Context, networkID string) ([]model.DNSZone, error) {
@@ -24,7 +25,12 @@ func (s *GormStore) SaveDNSZone(_ context.Context, zone model.DNSZone) error {
 }
 
 func (s *GormStore) DeleteDNSZone(_ context.Context, zoneID string) error {
-	return s.db.Delete(&gormDNSZoneRecord{}, "zone_id = ?", zoneID).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&gormDNSRecordRecord{}, "zone_id = ?", zoneID).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&gormDNSZoneRecord{}, "zone_id = ?", zoneID).Error
+	})
 }
 
 func (s *GormStore) ListDNSRecords(_ context.Context, networkID string) ([]model.DNSRecord, error) {

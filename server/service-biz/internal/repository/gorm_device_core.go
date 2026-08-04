@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"hash/fnv"
 	"strings"
 
@@ -11,116 +12,59 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *GormStore) ListDevicesByOwner(_ context.Context, ownerID string) ([]model.Device, error) {
-	var rows []gormDeviceRecord
-	err := s.db.Table("gorm_device_records AS device").
-		Joins("JOIN gorm_device_user_relation_records AS relation ON relation.device_id = device.device_id").
-		Where("relation.user_id = ? AND relation.role = ? AND relation.status = ?", strings.TrimSpace(ownerID), model.DeviceRelationRoleOwner, model.DeviceRelationStatusActive).
-		Order("device.device_id asc").
-		Select("device.*").Scan(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	items := make([]model.Device, 0, len(rows))
-	for _, row := range rows {
-		item := row.model()
-		item.OwnerID = strings.TrimSpace(ownerID)
-		items = append(items, item)
-	}
-	return items, nil
+func (s *GormStore) ListAllDevices(_ context.Context) ([]model.Device, error) {
+	return listModels(s.db.Order("device_id asc"), func(row gormDeviceRecord) model.Device { return row.model() })
 }
 
 func (s *GormStore) GetDevice(_ context.Context, deviceID string) (model.Device, bool, error) {
-	item, ok, err := firstModel(s.db.Where("device_id = ?", deviceID), func(row gormDeviceRecord) model.Device { return row.model() })
-	if err != nil || !ok {
-		return item, ok, err
-	}
-	owner, ownerOK, err := s.getDeviceOwnerRelation(deviceID)
-	if err != nil {
-		return model.Device{}, false, err
-	}
-	if ownerOK {
-		item.OwnerID = owner.UserID
-	}
-	return item, true, nil
+	return firstModel(s.db.Where("device_id = ?", deviceID), func(row gormDeviceRecord) model.Device { return row.model() })
 }
 
 func (s *GormStore) SaveDevice(_ context.Context, device model.Device) error {
 	row := deviceRecordFromModel(device)
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		ownerID := strings.TrimSpace(device.OwnerID)
-		previousOwner, hasPreviousOwner, err := getDeviceOwnerRelation(tx, device.DeviceID)
-		if err != nil {
-			return err
-		}
-		ownerChanged := ownerID != "" && hasPreviousOwner && previousOwner.UserID != ownerID
-		if ownerChanged {
-			if err := clearDeviceOwnershipScope(tx, device.DeviceID); err != nil {
-				return err
-			}
-		}
-		if err := upsertByColumns(tx, &row, []string{"device_id"}, []string{"virtual_ip", "name", "platform", "alias", "os_name", "os_version", "public_key", "device_version", "country_code", "rx_bytes_total", "tx_bytes_total", "status", "created_at", "updated_at", "last_seen_at"}); err != nil {
-			return err
-		}
-		if ownerID == "" {
-			return nil
-		}
-		relation := model.DeviceUserRelation{
-			RelationID: deviceUserRelationID(device.DeviceID, ownerID), DeviceID: device.DeviceID, UserID: ownerID,
-			Role: model.DeviceRelationRoleOwner, SourceType: "registration", Status: model.DeviceRelationStatusActive,
-			CreatedBy: ownerID, CreatedAt: device.CreatedAt, UpdatedAt: device.UpdatedAt,
-		}
-		return saveDeviceUserRelation(tx, relation)
-	})
+	err := upsertByColumns(s.db, &row, []string{"device_id"}, []string{"virtual_ip", "name", "platform", "alias", "os_name", "os_version", "public_key", "device_version", "country_code", "rx_bytes_total", "tx_bytes_total", "status", "created_at", "updated_at", "last_seen_at"})
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrDeviceVirtualIPConflict
+	}
+	return err
 }
 
-func clearDeviceOwnershipScope(tx *gorm.DB, deviceID string) error {
-	if err := tx.Delete(&gormDeviceUserRelationRecord{}, "device_id = ?", deviceID).Error; err != nil {
-		return err
+func (s *GormStore) UpdateDeviceVirtualIP(_ context.Context, deviceID, virtualIP string, updatedAt int64) error {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&gormDeviceRecord{}).
+			Where("device_id = ?", strings.TrimSpace(deviceID)).
+			Updates(map[string]any{"virtual_ip": strings.TrimSpace(virtualIP), "updated_at": updatedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&gormNetworkDeviceRecord{}).
+			Where("device_id = ?", strings.TrimSpace(deviceID)).
+			Updates(map[string]any{"virtual_ip": strings.TrimSpace(virtualIP), "updated_at": updatedAt}).Error
+	})
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrDeviceVirtualIPConflict
 	}
-	if err := tx.Model(&gormDeviceInviteRecord{}).
-		Where("device_id = ? AND status IN ?", deviceID, []string{"pending", "accepted"}).
-		Updates(map[string]any{"status": "revoked"}).Error; err != nil {
-		return err
-	}
-	if err := tx.Delete(&gormDeviceGroupAssignmentRecord{}, "device_id = ?", deviceID).Error; err != nil {
-		return err
-	}
-	if err := tx.Delete(&gormNetworkDeviceRecord{}, "device_id = ?", deviceID).Error; err != nil {
-		return err
-	}
-	return tx.Delete(&gormDeviceSessionRecord{}, "device_id = ?", deviceID).Error
+	return err
 }
 
 func (s *GormStore) DeleteDevice(_ context.Context, deviceID string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Delete(&gormDeviceGroupAssignmentRecord{}, "device_id = ?", deviceID).Error; err != nil {
-			return err
+		steps := []func() error{
+			func() error { return tx.Delete(&gormDeviceCredentialRecord{}, "device_id = ?", deviceID).Error },
+			func() error { return tx.Delete(&gormDeviceSessionRecord{}, "device_id = ?", deviceID).Error },
+			func() error { return tx.Delete(&gormDeviceGroupAssignmentRecord{}, "device_id = ?", deviceID).Error },
+			func() error { return tx.Delete(&gormNetworkDeviceRecord{}, "device_id = ?", deviceID).Error },
 		}
-		if err := tx.Delete(&gormDeviceLoginRecord{}, "device_id = ?", deviceID).Error; err != nil {
-			return err
-		}
-		if err := tx.Delete(&gormDeviceUserRelationRecord{}, "device_id = ?", deviceID).Error; err != nil {
-			return err
+		for _, step := range steps {
+			if err := step(); err != nil {
+				return err
+			}
 		}
 		return tx.Delete(&gormDeviceRecord{}, "device_id = ?", deviceID).Error
 	})
-}
-
-func deviceUserRelationID(deviceID, userID string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(deviceID) + "\x00" + strings.TrimSpace(userID)))
-	return "dur" + hex.EncodeToString(sum[:16])
-}
-
-func (s *GormStore) GetDeviceLoginDevice(_ context.Context, deviceID string) (model.DeviceLoginDevice, bool, error) {
-	return firstModel(s.db.Where("device_id = ?", deviceID), func(row gormDeviceLoginRecord) model.DeviceLoginDevice {
-		return row.model()
-	})
-}
-
-func (s *GormStore) SaveDeviceLoginDevice(_ context.Context, item model.DeviceLoginDevice) error {
-	row := deviceLoginRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"device_id"}, []string{"user_id", "name", "platform", "verify_code", "status", "expires_at", "created_at", "updated_at"})
 }
 
 func (s *GormStore) GetDeviceSessionByAccessToken(_ context.Context, accessToken string) (model.DeviceSession, bool, error) {
@@ -161,6 +105,47 @@ func (s *GormStore) SaveDeviceSession(_ context.Context, item model.DeviceSessio
 		}
 		return upsertByColumns(tx, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "session_mode", "previous_refresh_token_hash", "refresh_rotation_grace_expiry", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
 	})
+}
+
+func (s *GormStore) RotateDeviceSession(_ context.Context, currentRefreshToken string, next model.DeviceSession) (bool, error) {
+	currentRefreshToken = strings.TrimSpace(currentRefreshToken)
+	if currentRefreshToken == "" {
+		return false, nil
+	}
+	row := deviceSessionRecordFromModel(next)
+	rotated := false
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		lockedStore := &GormStore{db: tx}
+		if err := lockedStore.AcquireAdvisoryLock(deviceSessionLockID(next.DeviceID)); err != nil {
+			return err
+		}
+		result := tx.Delete(
+			&gormDeviceSessionRecord{},
+			"device_id = ? AND refresh_token = ? AND status = ? AND revoked_at = 0",
+			strings.TrimSpace(next.DeviceID), currentRefreshToken, "active",
+		)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		rotated = true
+		return nil
+	})
+	return rotated, err
+}
+
+func (s *GormStore) DeleteDeviceSessionForRefreshReuse(_ context.Context, sessionID, previousRefreshTokenHash string, now int64) (bool, error) {
+	result := s.db.Delete(
+		&gormDeviceSessionRecord{},
+		"session_id = ? AND previous_refresh_token_hash = ? AND refresh_rotation_grace_expiry < ?",
+		strings.TrimSpace(sessionID), strings.TrimSpace(previousRefreshTokenHash), now,
+	)
+	return result.RowsAffected > 0, result.Error
 }
 
 func deviceSessionLockID(deviceID string) int64 {

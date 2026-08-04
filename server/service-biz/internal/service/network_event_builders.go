@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,15 +23,24 @@ func newNetworkEventEnvelope(
 	payload any,
 ) NetworkEventEnvelope {
 	networkID = strings.TrimSpace(networkID)
+	payloadDigest := sha256.Sum256(marshalNetworkEventPayload(payload))
 	return NetworkEventEnvelope{
 		Type:       "network_event",
 		NetworkID:  networkID,
 		Version:    version,
-		EventID:    fmt.Sprintf("%s-%s-%d-%d", networkID, eventType, version, occurredAt),
+		EventID:    fmt.Sprintf("%s-%s-%d-%d-%s", networkID, eventType, version, occurredAt, hex.EncodeToString(payloadDigest[:6])),
 		EventType:  eventType,
 		OccurredAt: occurredAt,
 		Payload:    payload,
 	}
+}
+
+func marshalNetworkEventPayload(payload any) []byte {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return []byte(fmt.Sprintf("%T:%v", payload, payload))
+	}
+	return encoded
 }
 
 func publishNetworkEvent(
@@ -50,10 +63,9 @@ func publishNetworkEvent(
 
 func buildNetworkEventSnapshotFromRepositories(
 	ctx context.Context,
-	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsRepository,
+	ops repository.OpsNodeRepository,
 	nowFn func() time.Time,
 	networkID string,
 ) (NetworkSnapshotPayload, error) {
@@ -84,7 +96,6 @@ func buildNetworkEventSnapshotFromRepositories(
 		}, nil
 	}
 	core := NetworkCoreService{
-		Users:    users,
 		Devices:  devices,
 		Networks: networks,
 		Ops:      ops,
@@ -94,7 +105,59 @@ func buildNetworkEventSnapshotFromRepositories(
 	if err != nil {
 		return NetworkSnapshotPayload{}, err
 	}
-	return buildNetworkEventSnapshotPayload(resolved), nil
+	payload := buildNetworkEventSnapshotPayload(resolved)
+	deviceGroups, err := buildNetworkEventDeviceGroups(ctx, devices, networks, networkID)
+	if err != nil {
+		return NetworkSnapshotPayload{}, err
+	}
+	payload.DeviceGroups = deviceGroups
+	return payload, nil
+}
+
+func buildNetworkEventDeviceGroups(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	networks repository.NetworkRepository,
+	networkID string,
+) ([]NetworkEventDeviceGroupView, error) {
+	groupRepository, ok := networks.(repository.NetworkDeviceGroupRepository)
+	if !ok || devices == nil {
+		return []NetworkEventDeviceGroupView{}, nil
+	}
+	references, err := groupRepository.ListNetworkDeviceGroupReferences(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	assignments, err := devices.ListDeviceGroupAssignments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	membersByGroupID := make(map[string][]string, len(references))
+	for _, assignment := range assignments {
+		for _, groupID := range assignment.GroupIDs {
+			membersByGroupID[groupID] = append(membersByGroupID[groupID], assignment.DeviceID)
+		}
+	}
+	result := make([]NetworkEventDeviceGroupView, 0, len(references))
+	for _, reference := range references {
+		group, exists, err := devices.GetDeviceGroup(ctx, reference.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		memberDeviceIDs := append([]string(nil), membersByGroupID[group.GroupID]...)
+		slices.Sort(memberDeviceIDs)
+		result = append(result, NetworkEventDeviceGroupView{
+			GroupID: group.GroupID, Name: group.Name, Tags: []string{},
+			MemberDeviceIDs: memberDeviceIDs, UpdatedAt: group.UpdatedAt,
+		})
+	}
+	slices.SortFunc(result, func(left, right NetworkEventDeviceGroupView) int {
+		return strings.Compare(left.GroupID, right.GroupID)
+	})
+	return result, nil
 }
 
 func networkEventMemberView(member model.NetworkDevice, now time.Time) NetworkEventMemberView {

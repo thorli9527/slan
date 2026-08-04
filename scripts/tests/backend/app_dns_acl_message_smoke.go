@@ -27,22 +27,12 @@ type appSmokeClient struct {
 	logFile  *os.File
 }
 
-type authEnvelope struct {
+type opsAuthEnvelope struct {
 	Auth struct {
-		User struct {
-			UserID string `json:"userId"`
-		} `json:"user"`
 		Session struct {
 			Token string `json:"token"`
 		} `json:"session"`
 	} `json:"auth"`
-	DefaultNetwork struct {
-		NetworkID string `json:"networkId"`
-	} `json:"defaultNetwork"`
-}
-
-type itemsEnvelope[T any] struct {
-	Items []T `json:"items"`
 }
 
 type networkRow struct {
@@ -89,22 +79,27 @@ type smokeFailure struct {
 }
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
+var opsAccessToken string
 
 func main() {
 	defer exitOnFailure()
 
 	var bizURL string
-	var webBaseURL string
+	var opsBaseURL string
 	var serviceBin string
-	var password string
+	var opsEmail string
+	var opsPassword string
+	var authorizationKeys string
 	var expectMQTTHost string
 	var checkMessages bool
 	var clientCount int
 	var timeout time.Duration
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
-	flag.StringVar(&webBaseURL, "web-base-url", envDefault("SLAN_WEB_BASE_URL", strings.TrimRight(envDefault("SLAN_BIZ_WEB_BASE_URL", "http://127.0.0.1:28081"), "/")), "web console base URL")
-	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client_v2/rust/target/release/client-core-service"), "client-core-service binary")
-	flag.StringVar(&password, "password", "Password123!", "test user password")
+	flag.StringVar(&opsBaseURL, "ops-base-url", envDefault("SLAN_OPS_BASE_URL", "http://127.0.0.1:28082"), "Ops API base URL")
+	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client/rust/target/release/client-core-service"), "client-core-service binary")
+	flag.StringVar(&opsEmail, "ops-email", envDefault("SLAN_OPS_EMAIL", "admin1"), "Ops operator email")
+	flag.StringVar(&opsPassword, "ops-password", envDefault("SLAN_OPS_PASSWORD", "admin1"), "Ops operator password")
+	flag.StringVar(&authorizationKeys, "authorization-keys", envDefault("SLAN_DEVICE_AUTHORIZATION_KEYS", ""), "comma-separated device authorization keys")
 	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host")
 	flag.BoolVar(&checkMessages, "check-messages", true, "also verify MQTT client_message delivery")
 	flag.IntVar(&clientCount, "clients", 2, "number of logical app clients to start")
@@ -113,28 +108,20 @@ func main() {
 	if clientCount < 2 {
 		fail("-clients must be >= 2")
 	}
+	keys := splitRequiredValues(authorizationKeys, clientCount, "-authorization-keys")
 
 	bizURL = strings.TrimRight(bizURL, "/")
-	webBaseURL = strings.TrimRight(webBaseURL, "/")
+	opsBaseURL = strings.TrimRight(opsBaseURL, "/")
 	serviceBin = filepath.Clean(serviceBin)
 	if _, err := os.Stat(serviceBin); err != nil {
-		fail("client-core-service binary is not available at %s: %v\nrun: cd client_v2/rust && cargo build -p client-core-service", serviceBin, err)
+		fail("client-core-service binary is not available at %s: %v\nrun: cd client/rust && cargo build -p client-core-service", serviceBin, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	email := fmt.Sprintf("app-dns-acl-message-%d@example.test", time.Now().UnixNano())
-	auth := register(ctx, bizURL, email, password)
-	userID := auth.Auth.User.UserID
-	userToken := auth.Auth.Session.Token
-	networkID := auth.DefaultNetwork.NetworkID
-	if networkID == "" {
-		networkID = firstNetworkID(ctx, webBaseURL, auth.Auth.User.UserID)
-	}
-	if networkID == "" {
-		fail("registered user has no default network")
-	}
+	opsAccessToken = loginOps(ctx, opsBaseURL, opsEmail, opsPassword)
+	networkID := ""
 	resources := &provisionedResources{}
 
 	root := filepath.Join(os.TempDir(), "slan-app-dns-acl-message-"+uniqueSuffix())
@@ -144,7 +131,7 @@ func main() {
 		fmt.Printf("appDnsAclMessageSmoke: workDir=%s\n", root)
 	}
 	clients := make([]*appSmokeClient, 0, clientCount)
-	defer cleanupIntegration(webBaseURL, &networkID, userID, resources, &clients)
+	defer cleanupIntegration(opsBaseURL, &networkID, resources)
 	for index := 0; index < clientCount; index++ {
 		name := fmt.Sprintf("app-%c", 'a'+rune(index))
 		deviceID := fmt.Sprintf("app-smoke-%c-%s", 'a'+rune(index), uniqueSuffix())
@@ -156,16 +143,14 @@ func main() {
 		}
 	}()
 
-	for _, client := range clients {
-		login(ctx, client, email, password)
+	for index, client := range clients {
+		activate(ctx, client, keys[index])
 		assertMQTTBrokerHost(ctx, bizURL, client.deviceID, expectMQTTHost)
 		waitControlReady(ctx, client)
 	}
 
-	provisionDNSAndACL(ctx, webBaseURL, networkID, clients, resources)
-	for _, client := range clients {
-		assertAppNetworkConfig(ctx, bizURL, userToken, networkID, client.deviceID, clientCount)
-	}
+	networkID = createOpsNetwork(ctx, opsBaseURL, clients)
+	provisionDNSAndACL(ctx, opsBaseURL, networkID, clients, resources)
 
 	minPeers := clientCount - 1
 	minResolverRecords := clientCount
@@ -195,7 +180,7 @@ func main() {
 	for _, client := range clients {
 		deviceIDs = append(deviceIDs, client.name+"="+client.deviceID)
 	}
-	fmt.Printf("appDnsAclMessageSmoke: ok email=%s network=%s clients=%s\n", email, networkID, strings.Join(deviceIDs, ","))
+	fmt.Printf("appDnsAclMessageSmoke: ok network=%s clients=%s\n", networkID, strings.Join(deviceIDs, ","))
 }
 
 func startService(ctx context.Context, serviceBin, bizURL, stateDir, deviceID, name string) *appSmokeClient {
@@ -237,61 +222,6 @@ func (client *appSmokeClient) stop() {
 	}
 }
 
-func assertAppNetworkConfig(ctx context.Context, bizURL, userToken, networkID, deviceID string, clientCount int) {
-	var out map[string]any
-	getAuthorizedJSON(
-		ctx,
-		bizURL+"/api/app/networks/"+url.PathEscape(networkID)+"/network-config?deviceId="+url.QueryEscape(deviceID),
-		userToken,
-		&out,
-	)
-	resolverRecords := jsonArrayLen(out["resolverRecords"])
-	securityRules := jsonArrayLen(out["securityRules"])
-	if securityRules == 0 {
-		securityRules = jsonArrayLen(out["rules"])
-	}
-	if securityRules == 0 {
-		securityRules = jsonIntValue(out["securityRuleCount"])
-	}
-	peers := jsonArrayLen(out["peers"])
-	if resolverRecords < clientCount {
-		fail("app network-config resolverRecords too small for %s: got=%d want>=%d payload=%#v", deviceID, resolverRecords, clientCount, out)
-	}
-	if securityRules < clientCount*2-2 {
-		fail("app network-config securityRules too small for %s: got=%d payload=%#v", deviceID, securityRules, out)
-	}
-	if peers < clientCount-1 {
-		fail("app network-config peers too small for %s: got=%d want>=%d payload=%#v", deviceID, peers, clientCount-1, out)
-	}
-	fmt.Printf("appDnsAclMessageSmoke: networkConfig device=%s peers=%d resolverRecords=%d securityRules=%d\n", deviceID, peers, resolverRecords, securityRules)
-}
-
-func jsonArrayLen(value any) int {
-	switch typed := value.(type) {
-	case []any:
-		return len(typed)
-	case []map[string]any:
-		return len(typed)
-	default:
-		return 0
-	}
-}
-
-func jsonIntValue(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case float32:
-		return int(typed)
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	default:
-		return 0
-	}
-}
-
 func waitServiceReady(ctx context.Context, client *appSmokeClient) {
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
@@ -327,16 +257,18 @@ func waitControlReady(ctx context.Context, client *appSmokeClient) {
 	fail("%s control transport is not ready: %#v", client.name, last)
 }
 
-func provisionDNSAndACL(ctx context.Context, webBaseURL, networkID string, clients []*appSmokeClient, resources *provisionedResources) {
-	var groups itemsEnvelope[securityGroupRow]
-	getJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/security-groups", &groups)
-	if len(groups.Items) == 0 {
-		fail("network %s has no security groups", networkID)
+func provisionDNSAndACL(ctx context.Context, opsBaseURL, networkID string, clients []*appSmokeClient, resources *provisionedResources) {
+	var group securityGroupRow
+	postJSON(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/security-groups", map[string]any{
+		"name": "app-smoke-security-" + uniqueSuffix(),
+	}, &group)
+	if group.SecurityGroupID == "" {
+		fail("created security group returned empty id")
 	}
 	zoneName := "app-smoke-" + uniqueSuffix() + ".lan"
 	var zone dnsZoneRow
-	postJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/dns/zones", map[string]any{
-		"zoneName": zoneName,
+	postJSON(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/dns/zones", map[string]any{
+		"name": zoneName,
 	}, &zone)
 	if zone.ZoneID == "" {
 		fail("created dns zone returned empty zone id")
@@ -344,13 +276,13 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, networkID string, clien
 	resources.zoneIDs = append(resources.zoneIDs, zone.ZoneID)
 	for _, client := range clients {
 		var record dnsRecordRow
-		postJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/dns/records", map[string]any{
-			"zoneId":         zone.ZoneID,
-			"name":           client.name,
-			"recordType":     "A",
-			"targetDeviceId": client.deviceID,
-			"port":           "443",
-			"ttl":            60,
+		postJSON(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(networkID)+"/dns/records", map[string]any{
+			"zoneId": zone.ZoneID,
+			"name":   client.name,
+			"type":   "A",
+			"value":  client.deviceID,
+			"port":   "443",
+			"ttl":    60,
 		}, &record)
 		if record.RecordID != "" {
 			resources.recordIDs = append(resources.recordIDs, record.RecordID)
@@ -361,8 +293,8 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, networkID string, clien
 			if from == target {
 				continue
 			}
-			addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "ingress", "device", from.deviceID, 443, resources)
-			addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "egress", "device", target.deviceID, 443, resources)
+			addRule(ctx, opsBaseURL, group.SecurityGroupID, "ingress", "device", from.deviceID, 443, resources)
+			addRule(ctx, opsBaseURL, group.SecurityGroupID, "egress", "device", target.deviceID, 443, resources)
 		}
 	}
 	deviceIDs := make([]string, 0, len(clients))
@@ -372,15 +304,14 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, networkID string, clien
 	fmt.Printf("appDnsAclMessageSmoke: provisioned dnsZone=%s clients=%s\n", zoneName, strings.Join(deviceIDs, ","))
 }
 
-func addRule(ctx context.Context, webBaseURL, securityGroupID, direction, peerType, peerValue string, port int, resources *provisionedResources) {
+func addRule(ctx context.Context, opsBaseURL, securityGroupID, direction, peerType, peerValue string, port int, resources *provisionedResources) {
 	var out securityRuleRow
-	postJSON(ctx, webBaseURL+"/api/web/security-groups/"+url.PathEscape(securityGroupID)+"/rules", map[string]any{
+	postJSON(ctx, opsBaseURL+"/api/ops/security-groups/"+url.PathEscape(securityGroupID)+"/rules", map[string]any{
 		"direction": direction,
 		"priority":  100,
 		"action":    "allow",
 		"protocol":  "tcp",
-		"portFrom":  port,
-		"portTo":    port,
+		"portRange": fmt.Sprintf("%d", port),
 		"peerType":  peerType,
 		"peerValue": peerValue,
 		"enabled":   true,
@@ -517,16 +448,30 @@ func localRequest(address, method string, args map[string]any, timeout time.Dura
 	return response, nil
 }
 
-func register(ctx context.Context, bizURL, email, password string) authEnvelope {
-	var out authEnvelope
-	postJSON(ctx, bizURL+"/api/app/auth/register", map[string]any{"email": email, "password": password}, &out)
-	if out.Auth.Session.Token == "" {
-		fail("register returned empty session token")
+func loginOps(ctx context.Context, opsBaseURL, email, password string) string {
+	var out opsAuthEnvelope
+	postJSON(ctx, opsBaseURL+"/api/ops/auth/login", map[string]any{"email": email, "password": password}, &out)
+	if strings.TrimSpace(out.Auth.Session.Token) == "" {
+		fail("Ops login returned empty access token")
 	}
-	if strings.TrimSpace(out.Auth.User.UserID) == "" {
-		fail("register returned empty user id")
+	return out.Auth.Session.Token
+}
+
+func createOpsNetwork(ctx context.Context, opsBaseURL string, clients []*appSmokeClient) string {
+	var network networkRow
+	postJSON(ctx, opsBaseURL+"/api/ops/networks", map[string]any{
+		"name":   "app-dns-acl-" + uniqueSuffix(),
+		"status": "active",
+	}, &network)
+	if network.NetworkID == "" {
+		fail("created Ops network returned empty id")
 	}
-	return out
+	for _, client := range clients {
+		postJSON(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(network.NetworkID)+"/devices", map[string]any{
+			"deviceId": client.deviceID,
+		}, nil)
+	}
+	return network.NetworkID
 }
 
 func assertMQTTBrokerHost(ctx context.Context, bizURL, deviceID, expectedHost string) {
@@ -545,83 +490,61 @@ func assertMQTTBrokerHost(ctx context.Context, bizURL, deviceID, expectedHost st
 	fmt.Printf("appDnsAclMessageSmoke: mqtt device=%s broker=%s\n", deviceID, out.MQTT.BrokerURL)
 }
 
-func login(ctx context.Context, client *appSmokeClient, email, password string) {
+func activate(ctx context.Context, client *appSmokeClient, authorizationKey string) {
 	response, err := localRequest(client.address, "dispatch", map[string]any{
-		"type": "loginWithPassword",
+		"type": "localActivateDevice",
 		"payload": map[string]any{
-			"email":    email,
-			"password": password,
+			"key": authorizationKey,
 		},
 	}, 45*time.Second)
 	if err != nil {
-		fail("%s login request failed: %v", client.name, err)
+		fail("%s activation request failed: %v", client.name, err)
 	}
-	if response["signedIn"] != true {
-		fail("%s login did not sign in: %#v", client.name, response)
+	if response["activated"] != true {
+		fail("%s activation failed: %#v", client.name, response)
 	}
 	actualDeviceID, ok := response["deviceId"].(string)
 	if !ok || strings.TrimSpace(actualDeviceID) == "" {
-		fail("%s login returned empty device id: %#v", client.name, response)
+		fail("%s activation returned empty device id: %#v", client.name, response)
 	}
 	if actualDeviceID != client.deviceID {
 		client.deviceID = actualDeviceID
 	}
 }
 
-func cleanupIntegration(webBaseURL string, networkID *string, userID string, resources *provisionedResources, clients *[]*appSmokeClient) {
+func splitRequiredValues(raw string, expected int, flagName string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) != expected {
+		fail("%s must contain exactly %d comma-separated values", flagName, expected)
+	}
+	return values
+}
+
+func cleanupIntegration(opsBaseURL string, networkID *string, resources *provisionedResources) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if resources != nil {
 		for index := len(resources.ruleIDs) - 1; index >= 0; index-- {
-			deleteJSON(ctx, webBaseURL+"/api/web/security-groups/rules/"+url.PathEscape(resources.ruleIDs[index]))
+			deleteJSON(ctx, opsBaseURL+"/api/ops/security-rules/"+url.PathEscape(resources.ruleIDs[index]))
 		}
 		if networkID != nil && strings.TrimSpace(*networkID) != "" {
 			for index := len(resources.recordIDs) - 1; index >= 0; index-- {
-				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/dns/records/"+url.PathEscape(resources.recordIDs[index]))
+				deleteJSON(ctx, opsBaseURL+"/api/ops/dns/records/"+url.PathEscape(resources.recordIDs[index]))
 			}
 			for index := len(resources.zoneIDs) - 1; index >= 0; index-- {
-				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/dns/zones/"+url.PathEscape(resources.zoneIDs[index]))
+				deleteJSON(ctx, opsBaseURL+"/api/ops/dns/zones/"+url.PathEscape(resources.zoneIDs[index]))
 			}
 		}
 	}
-	cleanupDevicesForUser(ctx, webBaseURL, userID, clients)
-}
-
-func cleanupDevicesForUser(ctx context.Context, webBaseURL, userID string, clients *[]*appSmokeClient) {
-	if strings.TrimSpace(userID) == "" {
-		return
+	if networkID != nil && strings.TrimSpace(*networkID) != "" {
+		deleteJSON(ctx, opsBaseURL+"/api/ops/networks/"+url.PathEscape(*networkID))
 	}
-	deviceIDSet := make(map[string]struct{})
-	if clients != nil {
-		for _, client := range *clients {
-			if client != nil && strings.TrimSpace(client.deviceID) != "" {
-				deviceIDSet[client.deviceID] = struct{}{}
-			}
-		}
-	}
-	var listed struct {
-		Items []struct {
-			DeviceID string `json:"deviceId"`
-		} `json:"items"`
-	}
-	getBestEffortJSON(ctx, webBaseURL+"/api/web/devices?userId="+url.QueryEscape(userID), &listed)
-	for _, item := range listed.Items {
-		if strings.TrimSpace(item.DeviceID) != "" {
-			deviceIDSet[item.DeviceID] = struct{}{}
-		}
-	}
-	for deviceID := range deviceIDSet {
-		deleteJSON(ctx, webBaseURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID))
-	}
-}
-
-func firstNetworkID(ctx context.Context, webBaseURL, userID string) string {
-	var out itemsEnvelope[networkRow]
-	getJSON(ctx, webBaseURL+"/api/web/networks?userId="+url.QueryEscape(userID), &out)
-	if len(out.Items) == 0 {
-		return ""
-	}
-	return out.Items[0].NetworkID
 }
 
 func getJSON(ctx context.Context, rawURL string, out any) {
@@ -629,32 +552,8 @@ func getJSON(ctx context.Context, rawURL string, out any) {
 	if err != nil {
 		fail("build request %s: %v", rawURL, err)
 	}
+	setOpsAuthorization(req)
 	doJSON(req, out)
-}
-
-func getAuthorizedJSON(ctx context.Context, rawURL, bearerToken string, out any) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		fail("build request %s: %v", rawURL, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+bearerToken)
-	doJSON(req, out)
-}
-
-func getBestEffortJSON(ctx context.Context, rawURL string, out any) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return
-	}
-	_ = json.NewDecoder(resp.Body).Decode(out)
 }
 
 func postJSON(ctx context.Context, rawURL string, body any, out any) {
@@ -667,6 +566,7 @@ func postJSON(ctx context.Context, rawURL string, body any, out any) {
 		fail("build request %s: %v", rawURL, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setOpsAuthorization(req)
 	doJSON(req, out)
 }
 
@@ -675,9 +575,16 @@ func deleteJSON(ctx context.Context, rawURL string) {
 	if err != nil {
 		return
 	}
+	setOpsAuthorization(req)
 	resp, err := httpClient.Do(req)
 	if err == nil {
 		_ = resp.Body.Close()
+	}
+}
+
+func setOpsAuthorization(req *http.Request) {
+	if strings.Contains(req.URL.Path, "/api/ops/") && strings.TrimSpace(opsAccessToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+opsAccessToken)
 	}
 }
 

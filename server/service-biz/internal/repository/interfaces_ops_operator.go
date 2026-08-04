@@ -16,4 +16,7 @@ type OperatorRepository interface {
 type OperatorSessionRepository interface {
 	GetOperatorSessionByAccessToken(ctx context.Context, accessToken string) (model.OperatorSession, bool, error)
 	SaveOperatorSession(ctx context.Context, session model.OperatorSession) error
+	DeleteOperatorSessionsByOperatorID(ctx context.Context, operatorID string) error
+	DeleteOperatorSessionByAccessToken(ctx context.Context, accessToken string) error
+	DeleteExpiredOperatorSessions(ctx context.Context, now int64) error
 }

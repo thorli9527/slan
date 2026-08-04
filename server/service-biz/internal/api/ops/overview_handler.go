@@ -10,7 +10,7 @@ import (
 
 type OverviewHandler struct {
 	OpsDashboardReader servicepkg.OpsDashboardUseCase
-	OpsAudit     servicepkg.OpsAuditUseCase
+	OpsAudit           servicepkg.OpsAuditUseCase
 }
 
 func (h OverviewHandler) Routes() []serviceapi.Route {

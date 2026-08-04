@@ -11,9 +11,7 @@ func newUseCases(repositories Repositories, ids IDGenerators, runtime Runtime) U
 
 func newUseCasesFromServices(services Services) UseCases {
 	return UseCases{
-		Auth:      newAuthUseCasesFromServices(services.Auth),
-		Devices:   newDeviceUseCasesFromServices(services.Devices, services.Auth),
-		Downloads: newDownloadUseCasesFromServices(services.Downloads),
+		Devices:   newDeviceUseCasesFromServices(services.Devices),
 		Network:   newNetworkUseCasesFromServices(services.Network),
 		Ops:       newOpsUseCasesFromServices(services.Ops),
 		Wire:      newWireUseCasesFromServices(services.Wire),

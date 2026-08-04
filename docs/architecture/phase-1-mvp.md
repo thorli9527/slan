@@ -2,74 +2,37 @@
 
 ## Goal
 
-Phase 1 should prove the shortest usable loop for SLAN:
+验证最短设备组网闭环：
 
-1. User registers or logs in.
-2. Client registers its device and node identity.
-3. User creates one owned network or joins another user's network.
-4. Server assigns virtual IP and default subnet access.
-5. Client fetches bootstrap and NetworkMap data.
-6. Client connects to the MQTT control channel.
-7. Client attempts P2P first and falls back to relay when needed.
-8. UI shows connection, network, member, and address binding status.
+1. Operator 创建设备授权 key。
+2. 客户端使用 key 换取 device token、refresh token 和 MQTT 凭据。
+3. Operator 创建 Network，并直接加入 Device 或引用 DeviceGroup。
+4. 客户端拉取自身网络配置和虚拟 IP。
+5. 客户端建立 MQTT 控制通道。
+6. 客户端优先 P2P，失败后回退 Relay/DERP。
+7. 客户端展示设备和网络运行状态。
 
 ## Scope
 
 ### `service-biz`
 
-- User registration and login.
-- JWT authentication.
-- Device and node registration.
-- One owned network per account.
-- Join by owner email or Join Key.
-- Join approval.
-- Default subnet and virtual IP allocation.
-- MQTT control channel.
-- NetworkMap, bootstrap, and relay ticket APIs.
+- 设备授权 key 的创建、交换、过期和吊销。
+- Device session 的签发、续期和撤销。
+- Ops 管理 Network、Device、DeviceGroup、DNS 和 ACL。
+- IP 分配、MQTT 控制、内部 wire 授权和运行配置。
 
-### `client/app_core`
+### Client
 
-- Persist login credentials.
-- Fetch network and device configuration.
-- Establish MQTT control channel.
-- Run NAT detection.
-- Attempt P2P.
-- Fall back to relay.
-- Maintain encrypted tunnel state.
-- Report runtime network status.
-
-### `client/app`
-
-- Login/register screens.
-- Network list and active network view.
-- Create network dialog with DHCP options.
-- Join network dialog.
-- Address binding, network status, and remark display.
-- Basic error and state feedback.
-
-### Out of Scope for Phase 1
-
-- Full DNS management.
-- Traceroute and advanced diagnostics.
-- Fine-grained ACL policies.
-- Billing.
-- Operations dashboards.
-- Manual subnet creation in the console.
-- Dedicated device management page.
-
-## Design Notes
-
-- The console no longer creates extra subnets manually. It displays the default subnet and DHCP plan generated during network creation.
-- Device-specific actions are folded into network management views through address binding, status, and remarks.
-- Protocol contracts live under `protocol/` and are checked against web, Flutter, Rust controller, Go DTOs, OpenAPI, protobuf, and public HTTP routes.
+- 持久化设备身份和加密凭据。
+- 拉取网络配置并维持 MQTT 控制通道。
+- NAT 探测、P2P、Relay/DERP fallback 和加密隧道。
+- 授权、连接状态和基础错误反馈。
 
 ## Acceptance Criteria
 
-1. User can register and log in.
-2. User can create one owned network.
-3. User can join another network by owner email or Join Key.
-4. Owner can approve or reject join requests.
-5. Client can fetch network members and assigned virtual IPs.
-6. Client can establish the MQTT control channel.
-7. Client can prefer P2P and fall back to relay.
-8. UI can show network status, address binding, remarks, and basic errors.
+1. 有效 key 可激活设备，无效、过期或已吊销 key 被拒绝。
+2. Device token 只能访问自身及已加入网络的运行资源。
+3. Operator 可独立管理网络、设备和设备组关系。
+4. 客户端可续期、重连并恢复最新网络配置。
+5. P2P 不可用时可自动回退 Relay/DERP。
+6. 整个客户端流程不需要账号、密码或账号会话。

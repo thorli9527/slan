@@ -4,14 +4,12 @@ import "strings"
 
 func normalizeCreateDNSZoneInput(input CreateDNSZoneInput) CreateDNSZoneInput {
 	input.NetworkID = strings.TrimSpace(input.NetworkID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	return input
 }
 
 func normalizeUpdateDNSZoneInput(input UpdateDNSZoneInput) UpdateDNSZoneInput {
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Status = strings.TrimSpace(input.Status)
 	return input
@@ -23,7 +21,6 @@ func normalizeDNSZoneID(zoneID string) string {
 
 func normalizeCreateDNSRecordInput(input CreateDNSRecordInput) CreateDNSRecordInput {
 	input.NetworkID = strings.TrimSpace(input.NetworkID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Type = strings.ToUpper(strings.TrimSpace(input.Type))
@@ -34,7 +31,6 @@ func normalizeCreateDNSRecordInput(input CreateDNSRecordInput) CreateDNSRecordIn
 
 func normalizeUpdateDNSRecordInput(input UpdateDNSRecordInput) UpdateDNSRecordInput {
 	input.RecordID = strings.TrimSpace(input.RecordID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Type = strings.ToUpper(strings.TrimSpace(input.Type))
@@ -56,12 +52,10 @@ func normalizeDNSRecordID(recordID string) string {
 
 func normalizeDeleteDNSZoneInput(input DeleteDNSZoneInput) DeleteDNSZoneInput {
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	return input
 }
 
 func normalizeDeleteDNSRecordInput(input DeleteDNSRecordInput) DeleteDNSRecordInput {
 	input.RecordID = strings.TrimSpace(input.RecordID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	return input
 }

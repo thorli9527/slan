@@ -32,6 +32,28 @@ func validateManagedDNSRecordTarget(
 		if strings.TrimSpace(value) == "" {
 			return invalidArgumentError("DNS CNAME target is required")
 		}
+	default:
+		return invalidArgumentError("DNS record type must be A, AAAA, or CNAME")
+	}
+	return nil
+}
+
+func validateManagedDNSRecordZone(
+	ctx context.Context,
+	networks repository.NetworkRepository,
+	networkID string,
+	zoneID string,
+) error {
+	zoneID = strings.TrimSpace(zoneID)
+	if zoneID == "" {
+		return invalidArgumentError("DNS zone is required")
+	}
+	zone, err := requireManagedDNSZone(ctx, networks, zoneID)
+	if err != nil {
+		return err
+	}
+	if zone.NetworkID != strings.TrimSpace(networkID) {
+		return invalidArgumentError("DNS zone must belong to the current network")
 	}
 	return nil
 }
@@ -47,35 +69,31 @@ func requireManagedDNSZone(ctx context.Context, networks repository.NetworkRepos
 	return item, nil
 }
 
-func requireOwnedManagedDNSZone(
+func requireManagedDNSZoneWithNetwork(
 	ctx context.Context,
-	users repository.UserRepository,
 	networks repository.NetworkRepository,
-	actorUserID string,
 	zoneID string,
 ) (model.DNSZone, error) {
 	item, err := requireManagedDNSZone(ctx, networks, zoneID)
 	if err != nil {
 		return model.DNSZone{}, err
 	}
-	if _, err := requireOwnedManagedNetwork(ctx, users, networks, actorUserID, item.NetworkID); err != nil {
+	if _, err := requireManagedNetwork(ctx, networks, item.NetworkID); err != nil {
 		return model.DNSZone{}, err
 	}
 	return item, nil
 }
 
-func requireOwnedManagedDNSRecord(
+func requireManagedDNSRecordWithNetwork(
 	ctx context.Context,
-	users repository.UserRepository,
 	networks repository.NetworkRepository,
-	actorUserID string,
 	recordID string,
 ) (model.DNSRecord, error) {
 	item, err := requireManagedDNSRecord(ctx, networks, recordID)
 	if err != nil {
 		return model.DNSRecord{}, err
 	}
-	if _, err := requireOwnedManagedNetwork(ctx, users, networks, actorUserID, item.NetworkID); err != nil {
+	if _, err := requireManagedNetwork(ctx, networks, item.NetworkID); err != nil {
 		return model.DNSRecord{}, err
 	}
 	return item, nil

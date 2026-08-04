@@ -17,14 +17,19 @@ type Credential struct {
 	ExpiresAt   int64  `json:"expiresAt"`
 }
 
-func CredentialForDevice(cfg Config, deviceID string, now time.Time) *Credential {
-	if !cfg.Enabled || strings.TrimSpace(deviceID) == "" {
+func CredentialForDevice(cfg Config, deviceID, credentialID string, now time.Time, expiresAtLimit int64) *Credential {
+	deviceID = strings.TrimSpace(deviceID)
+	credentialID = strings.TrimSpace(credentialID)
+	if !cfg.Enabled || deviceID == "" || credentialID == "" {
 		return nil
 	}
 	expiresAt := now.Add(cfg.CredentialTTL).Unix()
-	clientID := fmt.Sprintf("%s-%s", defaultString(cfg.ClientIDPrefix, "slan-device"), strings.TrimSpace(deviceID))
-	username := fmt.Sprintf("%s:%s:%d", defaultString(cfg.UsernamePrefix, "device"), strings.TrimSpace(deviceID), expiresAt)
-	password := sign(cfg.Secret, clientID, username, deviceID)
+	if expiresAtLimit > 0 && expiresAt > expiresAtLimit {
+		expiresAt = expiresAtLimit
+	}
+	clientID := fmt.Sprintf("%s-%s", defaultString(cfg.ClientIDPrefix, "slan-device"), deviceID)
+	username := fmt.Sprintf("%s:%s:%s:%d", defaultString(cfg.UsernamePrefix, "device"), deviceID, credentialID, expiresAt)
+	password := sign(cfg.Secret, clientID, username, deviceID, credentialID)
 	return &Credential{
 		BrokerURL:   publicBrokerURL(cfg),
 		ClientID:    clientID,

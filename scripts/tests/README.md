@@ -125,9 +125,8 @@ routine regression runs.
   `SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=udp` by default.
 - Dual Android sender-side socket probes now wait for
   `SLAN_TEST_SOCKET_TARGETS_READY` before firing UDP/TCP payloads.
-- Mixed Mac/Android, Mac/iOS, and Linux/Mac checks now default to a unique test
-  email per run unless `SLAN_TEST_EMAIL` is set explicitly. This avoids stale
-  remote devices polluting peer/session selection during matrix tests.
+- Mixed Mac/Android, Mac/iOS, and Linux/Mac checks create independent device
+  authorization keys per run, avoiding stale remote devices in peer selection.
 - Android + remote Linux now runs
   `scripts/tests/linux/linux_remote_install_check.sh` first by default. Set
   `SLAN_RUN_REMOTE_LINUX_INSTALL_CHECK=0` only when you intentionally want to

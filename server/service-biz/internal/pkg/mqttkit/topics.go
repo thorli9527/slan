@@ -52,7 +52,7 @@ func NetworkIDFromTopic(cfg Config, topic string) string {
 	return parts[0]
 }
 
-func ParseDeviceUsername(cfg Config, username string) (string, int64, bool) {
+func ParseDeviceUsername(cfg Config, username string) (string, string, int64, bool) {
 	return parseDeviceUsername(cfg, username)
 }
 
@@ -72,13 +72,13 @@ func deviceClientID(cfg Config, id string) string {
 	return defaultString(cfg.ClientIDPrefix, "slan-device") + "-" + strings.ReplaceAll(strings.TrimSpace(id), "/", "-")
 }
 
-func parseDeviceUsername(cfg Config, username string) (string, int64, bool) {
+func parseDeviceUsername(cfg Config, username string) (string, string, int64, bool) {
 	parts := strings.Split(strings.TrimSpace(username), ":")
-	if len(parts) != 3 || parts[0] != usernamePrefix(cfg) {
-		return "", 0, false
+	if len(parts) != 4 || parts[0] != usernamePrefix(cfg) || parts[1] == "system" {
+		return "", "", 0, false
 	}
-	expiresAt, err := strconv.ParseInt(parts[2], 10, 64)
-	return parts[1], expiresAt, err == nil && parts[1] != ""
+	expiresAt, err := strconv.ParseInt(parts[3], 10, 64)
+	return parts[1], parts[2], expiresAt, err == nil && parts[1] != "" && parts[2] != ""
 }
 
 func parseSystemUsername(cfg Config, username, expectedID string) (int64, bool) {

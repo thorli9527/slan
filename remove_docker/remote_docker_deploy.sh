@@ -149,7 +149,7 @@ if [ "$RUN_LOCAL_PRECHECKS" = "1" ]; then
   (cd "$ROOT_DIR/server/web-ui" && npm run build)
 
   echo "==> Local prechecks: client-core-service compile check"
-  (cd "$ROOT_DIR/client_v2/rust" && cargo test -p client-core-service --no-run)
+  (cd "$ROOT_DIR/client/rust" && cargo test -p client-core-service --no-run)
 fi
 
 echo "==> Checking remote docker on ${SSH_TARGET}"
@@ -176,7 +176,7 @@ rsync -az --delete \
   --exclude '.dart_tool/' \
   --exclude '.gradle/' \
   --exclude '.tmp/' \
-  --exclude 'client_v2/app_flutter/build/' \
+  --exclude 'client/app_flutter/build/' \
   "$ROOT_DIR/" "$SSH_TARGET:$REMOTE_DIR/"
 
 REMOTE_ENV_TMP="$REMOTE_DIR/.env.deploy.incoming"
@@ -356,8 +356,6 @@ DECLARE
   names text[] := ARRAY[
     'gorm_user_session_records',
     'gorm_user_session_record',
-    'gorm_console_login_key_records',
-    'gorm_console_login_key_record',
     'gorm_device_session_records',
     'gorm_device_session_record',
     'gorm_bootstrap_key_records',

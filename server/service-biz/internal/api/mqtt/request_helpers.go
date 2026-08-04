@@ -231,11 +231,11 @@ func (r checkRequest) input(httpReq *http.Request) servicepkg.MQTTCheckInput {
 	reader := newValueReader(r.Values)
 	principal := reader.nestedString("principal", "principal")
 	deviceID := reader.nestedString("deviceId", "deviceId", "deviceID")
-	userID := reader.nestedString("userId", "userId", "userID")
+	identityID := reader.nestedString("userId", "userId", "userID")
 	clientID := reader.nestedString("clientId", "clientId", "clientID")
 	username := reader.nestedString("username", "username", "userName")
-	if userID == "" {
-		userID = headerValue(httpReq, "userId", "userID", "user_id", "User_id")
+	if identityID == "" {
+		identityID = headerValue(httpReq, "userId", "userID", "user_id", "User_id")
 	}
 	if deviceID == "" {
 		deviceID = headerValue(httpReq, "deviceId", "deviceID", "device_id", "Device_id")
@@ -248,14 +248,14 @@ func (r checkRequest) input(httpReq *http.Request) servicepkg.MQTTCheckInput {
 	}
 	topic, subscribe, connect := checkTopic(r.Values)
 	return servicepkg.MQTTCheckInput{
-		Principal: principal,
-		DeviceID:  deviceID,
-		UserID:    userID,
-		ClientID:  clientID,
-		Username:  username,
-		Topic:     topic,
-		Subscribe: subscribe,
-		Connect:   connect,
+		Principal:  principal,
+		DeviceID:   deviceID,
+		IdentityID: identityID,
+		ClientID:   clientID,
+		Username:   username,
+		Topic:      topic,
+		Subscribe:  subscribe,
+		Connect:    connect,
 	}
 }
 

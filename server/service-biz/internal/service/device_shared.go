@@ -12,19 +12,15 @@ import (
 )
 
 type DeviceCoreService struct {
-	Catalog      DeviceCatalogUseCase
-	Provisioning DeviceProvisioningUseCase
-	Runtime      DeviceRuntimeAccessUseCase
+	Catalog DeviceCatalogUseCase
+	Runtime DeviceRuntimeAccessUseCase
 }
 
 type deviceCoreDependencies struct {
-	Users          repository.UserRepository
 	Devices        repository.DeviceRepository
-	Relations      repository.DeviceRelationRepository
 	Networks       repository.NetworkRepository
 	MQTT           mqttkit.Config
 	EventPublisher NetworkEventPublisher
-	NewDeviceID    func() string
 	Now            func() time.Time
 }
 
@@ -32,88 +28,31 @@ type DeviceCatalogService struct {
 	deviceCoreDependencies
 }
 
-type DeviceProvisioningService struct {
-	deviceCoreDependencies
-}
-
 type DeviceRuntimeAccessService struct {
 	deviceCoreDependencies
 }
 
-type DeviceBootstrapService struct {
-	Keys     DeviceBootstrapKeyUseCase
-	Sessions DeviceBootstrapSessionUseCase
-}
-
-type deviceBootstrapDependencies struct {
-	Users     repository.UserRepository
-	Devices   repository.DeviceRepository
-	Networks  repository.NetworkRepository
-	MQTT      mqttkit.Config
-	NewSessID func(string) string
-	Now       func() time.Time
-}
-
-type DeviceBootstrapKeyService struct {
-	deviceBootstrapDependencies
-}
-
-type DeviceBootstrapSessionService struct {
-	deviceBootstrapDependencies
-}
-
-func NewDeviceBootstrapService(
-	users repository.UserRepository,
-	devices repository.DeviceRepository,
-	networks repository.NetworkRepository,
-	mqtt mqttkit.Config,
-	newSessionID func(string) string,
-	now func() time.Time,
-) DeviceBootstrapService {
-	deps := deviceBootstrapDependencies{
-		Users:     users,
-		Devices:   devices,
-		Networks:  networks,
-		MQTT:      mqtt,
-		NewSessID: newSessionID,
-		Now:       now,
-	}
-	return DeviceBootstrapService{
-		Keys:     DeviceBootstrapKeyService{deviceBootstrapDependencies: deps},
-		Sessions: DeviceBootstrapSessionService{deviceBootstrapDependencies: deps},
-	}
-}
-
 func NewDeviceCoreService(
-	users repository.UserRepository,
 	devices repository.DeviceRepository,
-	relations repository.DeviceRelationRepository,
 	networks repository.NetworkRepository,
 	mqtt mqttkit.Config,
-	newDeviceID func() string,
 	now func() time.Time,
 ) DeviceCoreService {
 	deps := deviceCoreDependencies{
-		Users:          users,
 		Devices:        devices,
-		Relations:      relations,
 		Networks:       networks,
 		MQTT:           mqtt,
 		EventPublisher: NewNetworkEventPublisher(mqtt),
-		NewDeviceID:    newDeviceID,
 		Now:            now,
 	}
 	return DeviceCoreService{
-		Catalog:      DeviceCatalogService{deviceCoreDependencies: deps},
-		Provisioning: DeviceProvisioningService{deviceCoreDependencies: deps},
-		Runtime:      DeviceRuntimeAccessService{deviceCoreDependencies: deps},
+		Catalog: DeviceCatalogService{deviceCoreDependencies: deps},
+		Runtime: DeviceRuntimeAccessService{deviceCoreDependencies: deps},
 	}
 }
 
 type DeviceGroupService struct {
-	Users           repository.UserRepository
 	Devices         repository.DeviceRepository
-	Relations       DeviceGroupRelationReader
 	Networks        repository.NetworkRepository
 	NetworkGroups   repository.NetworkDeviceGroupRepository
 	EventPublisher  NetworkEventPublisher
@@ -121,77 +60,22 @@ type DeviceGroupService struct {
 	Now             func() time.Time
 }
 
-type DeviceGroupRelationReader interface {
-	GetDeviceUserRelation(ctx context.Context, deviceID, userID string) (model.DeviceUserRelation, bool, error)
-}
-
 type DeviceSessionService struct {
-	Devices   repository.DeviceRepository
-	Networks  repository.NetworkRepository
-	Users     repository.UserRepository
-	MQTT      mqttkit.Config
-	NewSessID func(string) string
-	Now       func() time.Time
-}
-
-func (s DeviceBootstrapService) CreateDeviceBootstrapKey(ctx context.Context, input CreateDeviceBootstrapKeyInput) (DeviceBootstrapKeyView, error) {
-	return s.Keys.CreateDeviceBootstrapKey(ctx, input)
-}
-
-func (s DeviceBootstrapService) ListDeviceBootstrapKeys(ctx context.Context, userID string) ([]DeviceBootstrapKeyView, error) {
-	return s.Keys.ListDeviceBootstrapKeys(ctx, userID)
-}
-
-func (s DeviceBootstrapService) RevokeDeviceBootstrapKey(ctx context.Context, input RevokeDeviceBootstrapKeyInput) (DeviceBootstrapKeyView, error) {
-	return s.Keys.RevokeDeviceBootstrapKey(ctx, input)
-}
-
-func (s DeviceBootstrapService) CleanupExpiredDeviceBootstrapKeys(ctx context.Context) (int64, error) {
-	return s.Keys.CleanupExpiredDeviceBootstrapKeys(ctx)
-}
-
-func (s DeviceBootstrapService) BootstrapDeviceSession(ctx context.Context, input BootstrapDeviceSessionInput) (DeviceSessionBootstrapView, error) {
-	return s.Sessions.BootstrapDeviceSession(ctx, input)
-}
-
-func (s DeviceCoreService) ListDevices(ctx context.Context, ownerID string) ([]DeviceView, error) {
-	return s.Catalog.ListDevices(ctx, ownerID)
-}
-
-func (s DeviceCoreService) ListVisibleDevices(ctx context.Context, ownerID string) ([]DeviceView, error) {
-	return s.Catalog.ListVisibleDevices(ctx, ownerID)
-}
-
-func (s DeviceCoreService) ListDeviceProfiles(ctx context.Context, ownerID string) ([]DeviceProfileView, error) {
-	return s.Catalog.ListDeviceProfiles(ctx, ownerID)
-}
-
-func (s DeviceCoreService) ListVisibleDeviceProfiles(ctx context.Context, ownerID string) ([]DeviceProfileView, error) {
-	return s.Catalog.ListVisibleDeviceProfiles(ctx, ownerID)
-}
-
-func (s DeviceCoreService) GetDevice(ctx context.Context, deviceID string) (DeviceView, error) {
-	return s.Catalog.GetDevice(ctx, deviceID)
+	Devices     repository.DeviceRepository
+	Credentials repository.DeviceCredentialRepository
+	Audit       repository.AuditRepository
+	Networks    repository.NetworkRepository
+	MQTT        mqttkit.Config
+	NewSessID   func(string) string
+	Now         func() time.Time
 }
 
 func (s DeviceCoreService) GetDeviceProfile(ctx context.Context, deviceID string) (DeviceProfileView, error) {
 	return s.Catalog.GetDeviceProfile(ctx, deviceID)
 }
 
-func (s DeviceCoreService) RegisterDevice(ctx context.Context, input RegisterDeviceInput) (DeviceProfileView, error) {
-	return s.Provisioning.RegisterDevice(ctx, input)
-}
-
-func (s DeviceCoreService) UpdateDeviceAlias(ctx context.Context, input UpdateDeviceAliasInput) (DeviceProfileView, error) {
-	return s.Provisioning.UpdateDeviceAlias(ctx, input)
-}
-
-func (s DeviceCoreService) DeleteDevice(ctx context.Context, input DeleteDeviceInput) error {
-	return s.Provisioning.DeleteDevice(ctx, input)
-}
-
 func (s DeviceCoreService) RenewDevice(ctx context.Context, deviceID string) (DeviceProfileView, error) {
-	return s.Provisioning.RenewDevice(ctx, deviceID)
+	return s.Runtime.RenewDevice(ctx, deviceID)
 }
 
 func (s DeviceCoreService) UpdateDeviceRuntime(ctx context.Context, input UpdateDeviceRuntimeInput) (DeviceProfileView, error) {
@@ -202,26 +86,16 @@ func (s DeviceCoreService) DeviceNetworkConfigs(ctx context.Context, deviceID st
 	return s.Runtime.DeviceNetworkConfigs(ctx, deviceID)
 }
 
-func (s DeviceCoreService) DeviceMQTTCredential(ctx context.Context, deviceID string) (*mqttkit.Credential, error) {
-	return s.Runtime.DeviceMQTTCredential(ctx, deviceID)
+func (s DeviceCoreService) DeviceMQTTCredential(ctx context.Context, deviceID, credentialID string, expiresAt int64) (*mqttkit.Credential, error) {
+	return s.Runtime.DeviceMQTTCredential(ctx, deviceID, credentialID, expiresAt)
 }
 
-func (s DeviceCoreService) DeviceMQTTProfile(ctx context.Context, deviceID string) (DeviceMQTTProfileView, error) {
-	return s.Runtime.DeviceMQTTProfile(ctx, deviceID)
+func (s DeviceCoreService) DeviceMQTTProfile(ctx context.Context, deviceID, credentialID string, expiresAt int64) (DeviceMQTTProfileView, error) {
+	return s.Runtime.DeviceMQTTProfile(ctx, deviceID, credentialID, expiresAt)
 }
 
 func deviceNow(now func() time.Time) time.Time {
 	return currentTime(now)
-}
-
-func newManagedDeviceID(next func() string) string {
-	return generatedID(next, "device")
-}
-
-func newDeviceBootstrapKeyID(devices repository.DeviceRepository) string {
-	return repositoryID[deviceBootstrapKeyIDProvider](devices, "dbk", func(provider deviceBootstrapKeyIDProvider) string {
-		return provider.NewDeviceBootstrapKeyID()
-	})
 }
 
 func newDeviceGroupID(devices repository.DeviceRepository) string {
@@ -299,8 +173,8 @@ func mqttNetworkIDs(networks []model.Network) []string {
 	return ids
 }
 
-func newDeviceMQTTProfile(cfg mqttkit.Config, now time.Time, deviceID string, networks []model.Network) DeviceMQTTProfileView {
-	credential := mqttkit.CredentialForDevice(cfg, deviceID, now)
+func newDeviceMQTTProfile(cfg mqttkit.Config, now time.Time, deviceID, credentialID string, expiresAt int64, networks []model.Network) DeviceMQTTProfileView {
+	credential := mqttkit.CredentialForDevice(cfg, deviceID, credentialID, now, expiresAt)
 	view := DeviceMQTTProfileView{
 		Enabled:         cfg.Enabled,
 		TopicPrefix:     mqttDeviceTopicPrefix(cfg, deviceID),
@@ -320,6 +194,14 @@ func newDeviceMQTTProfile(cfg mqttkit.Config, now time.Time, deviceID string, ne
 }
 
 func newManagedDeviceSession(now time.Time, next func(string) string, deviceID string, sessionMode string) (model.DeviceSession, error) {
+	accessTTL, err := deviceAccessTTL()
+	if err != nil {
+		return model.DeviceSession{}, err
+	}
+	refreshTTL, err := deviceRefreshTTL(sessionMode)
+	if err != nil {
+		return model.DeviceSession{}, err
+	}
 	access, err := randomHex(24)
 	if err != nil {
 		return model.DeviceSession{}, err
@@ -335,8 +217,8 @@ func newManagedDeviceSession(now time.Time, next func(string) string, deviceID s
 		RefreshToken:  refresh,
 		Status:        tokenStatusActive,
 		SessionMode:   normalizedSessionMode(sessionMode),
-		ExpiresAt:     now.Add(defaultDeviceAccessTTL).Unix(),
-		RefreshExpiry: now.Add(deviceRefreshTTL(sessionMode)).Unix(),
+		ExpiresAt:     now.Add(accessTTL).Unix(),
+		RefreshExpiry: now.Add(refreshTTL).Unix(),
 		CreatedAt:     now.Unix(),
 		UpdatedAt:     now.Unix(),
 	}, nil

@@ -8,9 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -28,57 +26,36 @@ type serviceClient struct {
 	logFile  *os.File
 }
 
-type authResponse struct {
-	AccessToken string `json:"accessToken,omitempty"`
-	Auth        struct {
-		User struct {
-			UserID string `json:"userId"`
-		} `json:"user"`
-		Session struct {
-			Token string `json:"token"`
-		} `json:"session"`
-	} `json:"auth,omitempty"`
-}
-
 type smokeFailure struct {
 	message string
 }
-
-var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
 	defer exitOnFailure()
 
 	var bizURL string
 	var serviceBin string
-	var password string
+	var authorizationKeys string
 	var fromPlatform string
 	var targetPlatform string
 	var timeout time.Duration
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
-	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client_v2/rust/target/release/client-core-service"), "client-core-service binary")
-	flag.StringVar(&password, "password", "Password123!", "test user password")
+	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client/rust/target/release/client-core-service"), "client-core-service binary")
+	flag.StringVar(&authorizationKeys, "authorization-keys", envDefault("SLAN_DEVICE_AUTHORIZATION_KEYS", ""), "comma-separated authorization keys for source and target devices")
 	flag.StringVar(&fromPlatform, "from-platform", "mac", "source service platform label")
 	flag.StringVar(&targetPlatform, "target-platform", "ios", "target service platform label")
 	flag.DurationVar(&timeout, "timeout", 60*time.Second, "smoke timeout")
 	flag.Parse()
+	keys := splitRequiredValues(authorizationKeys, 2, "authorization keys")
 
 	bizURL = strings.TrimRight(bizURL, "/")
 	serviceBin = filepath.Clean(serviceBin)
 	if _, err := os.Stat(serviceBin); err != nil {
-		fail("client-core-service binary is not available at %s: %v\nrun: cd client_v2/rust && cargo build -p client-core-service", serviceBin, err)
+		fail("client-core-service binary is not available at %s: %v\nrun: cd client/rust && cargo build -p client-core-service", serviceBin, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
-	email := fmt.Sprintf("client-core-service-smoke-%d@example.test", time.Now().UnixNano())
-	auth := register(ctx, bizURL, email, password)
-	userID := auth.Auth.User.UserID
-	authToken := auth.AccessToken
-	if strings.TrimSpace(authToken) == "" {
-		authToken = auth.Auth.Session.Token
-	}
 
 	root := filepath.Join(os.TempDir(), "slan-client-core-service-message-smoke-"+uniqueSuffix())
 	defer func() {
@@ -91,14 +68,11 @@ func main() {
 
 	from := startService(ctx, serviceBin, bizURL, filepath.Join(root, "from"), "smoke-"+fromPlatform+"-"+uniqueSuffix(), fromPlatform)
 	target := startService(ctx, serviceBin, bizURL, filepath.Join(root, "target"), "smoke-"+targetPlatform+"-"+uniqueSuffix(), targetPlatform)
-	defer func() {
-		cleanupDevices(bizURL, authToken, userID, []string{from.deviceID, target.deviceID})
-	}()
 	defer from.stop()
 	defer target.stop()
 
-	login(ctx, from, email, password)
-	login(ctx, target, email, password)
+	activate(ctx, from, keys[0])
+	activate(ctx, target, keys[1])
 	waitControlReady(ctx, from)
 	waitControlReady(ctx, target)
 	time.Sleep(6 * time.Second)
@@ -108,8 +82,7 @@ func main() {
 	waitClientMessage(ctx, target, from.deviceID, body)
 
 	fmt.Printf(
-		"clientCoreServiceMessageSmoke: ok email=%s from=%s target=%s body=%s\n",
-		email,
+		"clientCoreServiceMessageSmoke: ok from=%s target=%s body=%s\n",
 		from.deviceID,
 		target.deviceID,
 		body,
@@ -176,32 +149,40 @@ func waitServiceReady(ctx context.Context, client *serviceClient) {
 	fail("%s service did not become ready at %s", client.name, client.address)
 }
 
-func login(ctx context.Context, client *serviceClient, email, password string) {
-	response, err := localRequest(client.address, "dispatch", map[string]any{
-		"type": "loginWithPassword",
-		"payload": map[string]any{
-			"email":    email,
-			"password": password,
-		},
-	}, 45*time.Second)
+func activate(ctx context.Context, client *serviceClient, authorizationKey string) {
+	response, err := localRequest(client.address, "localActivateDevice", map[string]any{"key": authorizationKey}, 45*time.Second)
 	if err != nil {
-		fail("%s login request failed: %v", client.name, err)
+		fail("%s device activation request failed: %v", client.name, err)
 	}
-	if response["signedIn"] != true {
-		fail("%s login did not sign in: %#v", client.name, response)
+	if response["activated"] != true {
+		fail("%s device activation failed: %#v", client.name, response)
 	}
 	actualDeviceID, ok := response["deviceId"].(string)
 	if !ok || strings.TrimSpace(actualDeviceID) == "" {
-		fail("%s login returned empty device id: %#v", client.name, response)
+		fail("%s activation returned empty device id: %#v", client.name, response)
 	}
 	if actualDeviceID != client.deviceID {
 		client.deviceID = actualDeviceID
 	}
 	select {
 	case <-ctx.Done():
-		fail("%s login timeout: %v", client.name, ctx.Err())
+		fail("%s activation timeout: %v", client.name, ctx.Err())
 	default:
 	}
+}
+
+func splitRequiredValues(raw string, count int, label string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) != count {
+		fail("%s must contain exactly %d comma-separated values", label, count)
+	}
+	return values
 }
 
 func waitControlReady(ctx context.Context, client *serviceClient) {
@@ -310,103 +291,6 @@ func localRequest(address, method string, args map[string]any, timeout time.Dura
 		return response, errors.New(errorValue)
 	}
 	return response, nil
-}
-
-func register(ctx context.Context, bizURL, email, password string) authResponse {
-	var out authResponse
-	postJSON(ctx, bizURL+"/api/app/auth/register", "", map[string]any{
-		"email":    email,
-		"password": password,
-	}, &out)
-	if strings.TrimSpace(out.AccessToken) == "" {
-		out.AccessToken = out.Auth.Session.Token
-	}
-	if strings.TrimSpace(out.AccessToken) == "" {
-		fail("register returned empty access token")
-	}
-	if strings.TrimSpace(out.Auth.User.UserID) == "" {
-		fail("register returned empty userId")
-	}
-	return out
-}
-
-func cleanupDevices(bizURL, token, userID string, deviceIDs []string) {
-	if strings.TrimSpace(userID) == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	deviceIDSet := make(map[string]struct{}, len(deviceIDs))
-	for _, deviceID := range deviceIDs {
-		if strings.TrimSpace(deviceID) == "" {
-			continue
-		}
-		deviceIDSet[deviceID] = struct{}{}
-	}
-	var listed struct {
-		Items []struct {
-			DeviceID string `json:"deviceId"`
-		} `json:"items"`
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/web/devices?userId="+url.QueryEscape(userID), nil)
-	if err == nil {
-		if strings.TrimSpace(token) != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		if resp, err := httpClient.Do(req); err == nil {
-			func() {
-				defer resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					_ = json.NewDecoder(resp.Body).Decode(&listed)
-				}
-			}()
-		}
-	}
-	for _, item := range listed.Items {
-		if strings.TrimSpace(item.DeviceID) != "" {
-			deviceIDSet[item.DeviceID] = struct{}{}
-		}
-	}
-	for deviceID := range deviceIDSet {
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, bizURL+"/api/web/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID), nil)
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(token) != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		resp, err := httpClient.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-		}
-	}
-}
-
-func postJSON(ctx context.Context, url, token string, body any, out any) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		fail("encode request %s: %v", url, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		fail("build request %s: %v", url, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		fail("%s %s: %v", req.Method, req.URL, err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fail("%s %s: HTTP %d: %s", req.Method, req.URL, resp.StatusCode, string(respBody))
-	}
-	if err := json.Unmarshal(respBody, out); err != nil {
-		fail("decode %s: %v body=%s", req.URL, err, string(respBody))
-	}
 }
 
 func freeLocalAddress() string {

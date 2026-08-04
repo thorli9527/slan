@@ -5,9 +5,9 @@
 ## 语言原生测试目录
 
 - Flutter 单元测试：
-  [`client_v2/app_flutter/test`](/Users/thorli/workspace/slan/slan/client_v2/app_flutter/test)
+  [`client/app_flutter/test`](/Users/thorli/workspace/slan/slan/client/app_flutter/test)
 - Flutter 集成测试：
-  [`client_v2/app_flutter/integration_test`](/Users/thorli/workspace/slan/slan/client_v2/app_flutter/integration_test)
+  [`client/app_flutter/integration_test`](/Users/thorli/workspace/slan/slan/client/app_flutter/integration_test)
 - Go / Rust 服务端测试：
   继续按语言惯例保留在各自模块内，例如 `*_test.go`、crate 内测试模块。
 

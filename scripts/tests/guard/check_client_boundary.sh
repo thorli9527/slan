@@ -7,7 +7,7 @@ ROOT_DIR="$SCRIPT_DIR"
 while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
-FLUTTER_LIB_DIR="$ROOT_DIR/client_v2/app_flutter/lib"
+FLUTTER_LIB_DIR="$ROOT_DIR/client/app_flutter/lib"
 
 check_flutter_lib_no_direct_app_api() {
   if rg -n '"[^"]*/api/app/|'\''[^'\'']*/api/app/'\''' \
@@ -41,7 +41,7 @@ check_flutter_lib_no_business_state_plugin_reads() {
 }
 
 check_boundary_doc_present() {
-  test -s "$ROOT_DIR/client_v2/docs/client-architecture-boundary.md"
+  test -s "$ROOT_DIR/client/docs/client-architecture-boundary.md"
 }
 
 check_flutter_lib_no_direct_app_api

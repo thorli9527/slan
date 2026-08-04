@@ -1,79 +1,39 @@
-# SLAN Client Login Flow
+# SLAN Client Device Authentication
 
-This document is the source of truth for client login behavior.
+This document is the source of truth for client authentication behavior.
 
-## Browser Login From Client
+## Device Activation
 
-Client login uses device-scoped MQTT delivery. It does not wait for login completion through repeated server requests.
+Client identity is device-scoped. The client has no user account, user session,
+device claim, or browser-assisted login flow.
 
-1. Client service resolves the stable local `deviceId`.
-2. Client service calls `POST /api/auth/device-login-devices` with `deviceId`, platform metadata, and public key.
-3. Server registers a pre-login device if it does not exist. If the device already exists, the server reuses it. The server then returns MQTT credentials and a login URL.
-4. Client opens Web Console with only:
+1. An operator creates the device in Opt.
+2. An operator creates an authorization key for that device. The plaintext key is
+   returned once and must be delivered to the device securely.
+3. The client calls `POST /api/device-auth/token` with the authorization key and
+   its stable local `deviceId` when available.
+4. The server validates the key status, expiry, scope, and bound device, then
+   returns the device profile, device token, MQTT credentials, and network
+   configuration.
+5. The client stores the device session securely and uses the device bearer token
+   for `/api/app` resources.
+6. The client renews its device session before expiry. Revoking the authorization
+   key invalidates sessions issued from that key.
 
-```text
-?auth=login&deviceId=<deviceId>
-```
+An authorization key is never a user credential and must not create a user
+session. A device cannot be claimed by, assigned to, or inferred from a user.
 
-5. If the browser already has a valid Web Console session, Web Console completes client login immediately.
-6. If the browser is not signed in, Web Console signs in first, then completes client login.
-7. Web Console calls `POST /api/auth/device-login-devices/{deviceId}/complete`.
-8. Server verifies that the target device exists. If it is still a pre-login device, the server binds it to the browser user; if it already belongs to another user, the server rejects the login. The server then publishes `device_user_login_succeeded` to that device's MQTT topic.
-9. Client consumes `device_user_login_succeeded`, persists the user session and device session, emits `session.changed`, and moves to the signed-in page.
+## Open Web Console
 
-The browser login URL must only carry the login intent and target device. It must not include:
+The desktop client may open the configured Web Console URL. It does not append a
+device ID, user session, authorization key, device token, or temporary console
+login key. Web Console authentication is an independent browser workflow.
 
-- `clientPlatform`
-- `clientName`
+## Local State
 
-The complete endpoint must never create a missing device. Device creation for browser login happens only during the client-initiated prepare call.
+The local service owns device identity and credentials. Flutter and native shell
+plugins only invoke local commands and display the resulting device/network state.
 
-## Open Web Console From Signed-In Client
-
-Opening Web Console from an already signed-in client is a separate flow.
-
-1. Client asks local service for a new `consoleLoginKey` every time the signed-in user clicks Web Console.
-2. Local service requests `POST /api/auth/console-login-keys` using the current user session and the current `deviceId`.
-3. Server creates a short-lived, single-use `consoleLoginKey` bound to the current user session and optional device.
-4. Client opens Web Console with `consoleLoginKey` and optional `deviceId`.
-5. Web Console consumes the key through `POST /api/auth/console-login`.
-6. If the server accepts the key, Web Console persists the returned browser session and navigates to the user's default page.
-7. If the server rejects the key, Web Console must show an invalid/expired credential prompt and must not enter the authenticated UI.
-
-`consoleLoginKey` is only for opening Web Console from a signed-in client. It is not used for client browser login, and the client must not reuse an old key.
-
-## Angular Web Console Responsibilities
-
-Angular keeps these concerns separated:
-
-- `app-auth-flow.ts`: URL parsing, browser auth storage, and URL cleanup.
-- `app.component.auth.ts`: login/register, browser session restore, console login key consumption, and client login completion.
-- `app.component.ts`: startup sequencing only.
-
-Startup order:
-
-1. If `auth=login&deviceId=...` is present and browser auth already exists, complete client login immediately. This calls the server complete endpoint, and the server publishes MQTT login success to that device.
-2. Consume `consoleLoginKey` if present. This is only for opening Web Console from an already signed-in client. A valid key goes to the default signed-in page; an invalid or expired key shows an illegal credential message and returns to the login screen.
-3. Restore browser auth from local storage for normal Web Console navigation.
-4. If client login completion fails, stay on the login screen and clear stale browser auth.
-
-## Logout
-
-Logout clears both sides of local identity:
-
-1. Client calls the local logout command.
-2. Local service clears persisted user session and device session.
-3. Server logout can clear the user session and device session when tokens are supplied.
-4. Client emits `session.changed` with signed-out state.
-
-## Renewal
-
-User session and device session are renewed independently:
-
-- User session: `POST /api/auth/renew`.
-- Device session: `POST /api/app/device/session/renew`.
-- MQTT credentials are refreshed through the device/session responses.
-
-## Removed Legacy Behavior
-
-Client login completion is no longer modeled as browser-side waiting or repeated HTTP requests. The only supported completion path is the Web Console complete endpoint followed by device-scoped MQTT notification.
+Logout or deactivation clears local device credentials and runtime state. It does
+not operate on a user session. Network, device, device-group, and authorization-key
+management remains exclusively in Opt.

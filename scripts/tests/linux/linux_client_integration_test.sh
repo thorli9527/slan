@@ -91,13 +91,13 @@ grep -q "SLAN_CONTROL_BASE_URL=${api_url}" /etc/slan/client-v2.env.example \
 assert_tcp "$service_host" "$service_port" "local service TCP ${service_host}:${service_port}"
 
 state="$(request localState)"
-assert_jq "$state" '.signedIn == false and .networkEnabled == false and .error == null' "localState unsigned clean state"
+assert_jq "$state" '.activated == false and .networkEnabled == false and .error == null' "localState unsigned clean state"
 
 status="$(request localStatus)"
-assert_jq "$status" '.service == "client-core-service" and .signedIn == false and .networkEnabled == false' "localStatus unsigned service state"
+assert_jq "$status" '.service == "client-core-service" and .activated == false and .networkEnabled == false' "localStatus unsigned service state"
 
 session="$(request localSession)"
-assert_jq "$session" '.signedIn == false and .expired == false and .deviceId == null' "localSession unsigned clean state"
+assert_jq "$session" '.activated == false and .expired == false and .deviceId == null' "localSession unsigned clean state"
 
 network_module="$(request localNetworkModule)"
 assert_jq "$network_module" '.networkCount == 0 and .peerCount == 0 and (.configs | length) == 0' "localNetworkModule unsigned clean state"

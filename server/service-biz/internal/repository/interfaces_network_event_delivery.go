@@ -10,6 +10,7 @@ type NetworkEventDeliveryRepository interface {
 	GetNetworkEventDelivery(ctx context.Context, eventID, targetDeviceID string) (model.NetworkEventDelivery, bool, error)
 	ListDueNetworkEventDeliveries(ctx context.Context, dueAt int64, limit int) ([]model.NetworkEventDelivery, error)
 	SaveNetworkEventDelivery(ctx context.Context, item model.NetworkEventDelivery) error
+	DeleteExpiredNetworkEventDeliveries(ctx context.Context, expiresAt int64) (int64, error)
 }
 
 type NetworkEventDeliveryStore interface {

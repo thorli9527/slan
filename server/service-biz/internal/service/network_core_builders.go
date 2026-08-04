@@ -16,33 +16,24 @@ func buildNetworkSummaryView(ctx context.Context, devices repository.DeviceRepos
 		return NetworkSummaryView{}, err
 	}
 	deviceCount := 0
-	memberOwners := make(map[string]struct{})
 	for _, membership := range memberships {
 		if !networkMemberActive(membership) {
 			continue
 		}
 		deviceCount++
-		device, ok, err := devices.GetDevice(ctx, membership.DeviceID)
-		if err != nil {
-			return NetworkSummaryView{}, err
-		}
-		if ok && device.OwnerID != "" {
-			memberOwners[device.OwnerID] = struct{}{}
-		}
 	}
 	zones, err := networks.ListDNSZones(ctx, item.NetworkID)
 	if err != nil {
 		return NetworkSummaryView{}, err
 	}
 	view.DeviceCount = deviceCount
-	view.MemberCount = len(memberOwners)
+	view.MemberCount = deviceCount
 	view.ZoneName = networkSummaryZoneName(item, zones)
 	return view, nil
 }
 
 func buildNetworkConfigView(
 	ctx context.Context,
-	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
 	network model.Network,
@@ -122,12 +113,12 @@ func buildNetworkConfigView(
 	if _, ipnet, err := net.ParseCIDR(network.CIDR); err == nil && ipnet != nil {
 		prefixLen, _ = ipnet.Mask.Size()
 	}
-	deviceGroupsByDevice, err := buildNetworkConfigDeviceGroupsByDevice(ctx, devices, network.OwnerID, deviceIDs)
+	deviceGroupsByDevice, err := buildNetworkConfigDeviceGroupsByDevice(ctx, devices, deviceIDs)
 	if err != nil {
 		return NetworkConfigView{}, err
 	}
 	localMembership, localMembershipFound := findLocalNetworkMembership(device.DeviceID, networkDevices)
-	peers, err := buildNetworkConfigPeerViews(ctx, users, devices, device.DeviceID, networkDevices, globalIPs)
+	peers, err := buildNetworkConfigPeerViews(ctx, devices, device.DeviceID, networkDevices, globalIPs)
 	if err != nil {
 		return NetworkConfigView{}, err
 	}
@@ -170,14 +161,13 @@ func buildNetworkSecurityRuleViews(ctx context.Context, networks repository.Netw
 func buildNetworkConfigDeviceGroupsByDevice(
 	ctx context.Context,
 	devices repository.DeviceRepository,
-	ownerUserID string,
 	deviceIDs []string,
 ) (map[string][]string, error) {
 	out := make(map[string][]string)
-	if devices == nil || strings.TrimSpace(ownerUserID) == "" {
+	if devices == nil {
 		return out, nil
 	}
-	assignments, err := devices.ListDeviceGroupAssignments(ctx, ownerUserID)
+	assignments, err := devices.ListDeviceGroupAssignments(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +226,6 @@ func findLocalNetworkMembership(deviceID string, memberships []model.NetworkDevi
 
 func buildNetworkConfigPeerViews(
 	ctx context.Context,
-	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	localDeviceID string,
 	memberships []model.NetworkDevice,
@@ -254,18 +243,8 @@ func buildNetworkConfigPeerViews(
 		if !ok {
 			continue
 		}
-		ownerEmail := ""
-		if peerDevice.OwnerID != "" {
-			if owner, ok, err := users.GetUser(ctx, peerDevice.OwnerID); err != nil {
-				return nil, err
-			} else if ok {
-				ownerEmail = owner.Email
-			}
-		}
 		peers = append(peers, NetworkConfigPeerView{
 			DeviceID:   peerDevice.DeviceID,
-			OwnerID:    peerDevice.OwnerID,
-			OwnerEmail: ownerEmail,
 			Alias:      peerDevice.Alias,
 			GlobalIP:   globalIPs[peerDevice.DeviceID],
 			GlobalName: networkGlobalName(peerDevice.DeviceID, peerDevice.Alias, peerDevice.Name),

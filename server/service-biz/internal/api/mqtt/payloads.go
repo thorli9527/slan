@@ -25,11 +25,11 @@ type mqtt5AuthFailed struct {
 func authAllowedPayload(view servicepkg.MQTTAuthView) *authOK {
 	return &authOK{
 		TenantID: view.TenantID,
-		UserID:   view.UserID,
+		UserID:   view.IdentityID,
 		Attrs: map[string]string{
 			"principal": view.Principal,
 			"deviceId":  view.DeviceID,
-			"userId":    view.UserID,
+			"userId":    view.IdentityID,
 		},
 	}
 }

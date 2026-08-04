@@ -1,7 +1,7 @@
 package service
 
 type OpsDashboardView struct {
-	Users     int `json:"users"`
+	Customers int `json:"customers"`
 	Devices   int `json:"devices"`
 	Networks  int `json:"networks"`
 	Operators int `json:"operators"`
@@ -15,5 +15,7 @@ type OpsAuditEventView struct {
 	ResourceType string `json:"resourceType"`
 	ResourceID   string `json:"resourceId"`
 	Status       string `json:"status"`
+	RemoteIP     string `json:"remoteIp,omitempty"`
+	Detail       string `json:"detail,omitempty"`
 	CreatedAt    int64  `json:"createdAt"`
 }

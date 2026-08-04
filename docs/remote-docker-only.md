@@ -15,7 +15,6 @@ SLAN development and deployment now use the remote Docker host only.
 ## Public IP Endpoints
 
 - API: `http://47.245.40.231:28080`
-- Web Console: `http://47.245.40.231:24200`
 - Ops Console: `http://47.245.40.231:24201`
 - MQTT: `47.245.40.231`
 - Wire: `47.245.40.231:29100`
@@ -48,7 +47,7 @@ Deploy or redeploy with:
 Default publish validation already includes:
 
 - Remote health checks
-- `app/web/ops` lightweight smoke
+- `app/ops` lightweight smoke
 - `punch` smoke
 
 Run the default publish flow with:
@@ -83,7 +82,7 @@ RUN_POST_PUBLISH_CLIENT_VALIDATION=1 .tmp/remote-deploy/deploy_to_47.245.40.231.
 
 Relevant switches:
 
-- `RUN_REMOTE_SMOKE=1` keeps the lightweight `app/web/ops` smoke enabled.
+- `RUN_REMOTE_SMOKE=1` keeps the lightweight `app/ops` smoke enabled.
 - `RUN_REMOTE_PUNCH_SMOKE=1` keeps the punch smoke enabled.
 - `RUN_REMOTE_APP_DNS_ACL_SMOKE=1` adds app-side DNS/ACL/message validation.
 - `RUN_REMOTE_UI_OPS_SMOKE=1` adds the heavier UI/OPS workflow validation.
@@ -95,13 +94,12 @@ Relevant switches:
 After publish succeeds, Linux and iOS client-side validation should use the same isolated endpoints:
 
 - `api/app` traffic goes to `http://47.245.40.231:28080`
-- `api/web` traffic goes to `http://47.245.40.231:24200`
 
 Linux client validation:
 
 ```bash
 SLAN_TEST_API_URL=http://47.245.40.231:28080 \
-SLAN_TEST_WEB_URL=http://47.245.40.231:24200 \
+SLAN_TEST_WEB_URL=http://47.245.40.231:28080 \
 SLAN_TEST_OPS_URL=http://47.245.40.231:24201 \
 scripts/linux_client_integration_test.sh
 ```
@@ -110,7 +108,7 @@ iOS DNS/ACL validation:
 
 ```bash
 SLAN_BIZ_URL=http://47.245.40.231:28080 \
-SLAN_WEB_BASE_URL=http://47.245.40.231:24200 \
+SLAN_WEB_BASE_URL=http://47.245.40.231:28080 \
 scripts/ios_app_dns_acl_smoke.sh
 ```
 
@@ -118,7 +116,7 @@ Mac + iOS integration validation:
 
 ```bash
 SLAN_BIZ_URL=http://47.245.40.231:28080 \
-SLAN_WEB_BASE_URL=http://47.245.40.231:24200 \
+SLAN_WEB_BASE_URL=http://47.245.40.231:28080 \
 scripts/mac_ios_integration_check.sh
 ```
 

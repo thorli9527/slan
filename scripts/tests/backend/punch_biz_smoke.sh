@@ -12,63 +12,34 @@ if [ ! -e "$ROOT_DIR/scripts/lib/client_default_endpoints.sh" ]; then
   exit 1
 fi
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 
 BASE_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}}"
 RUN_ID="$(date +%s%N)"
-EMAIL="${SLAN_TEST_EMAIL:-punch-smoke-${RUN_ID}@example.test}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 DEVICE_A="${SLAN_PUNCH_SMOKE_DEVICE_A:-punch-smoke-mac-${RUN_ID}}"
 DEVICE_B="${SLAN_PUNCH_SMOKE_DEVICE_B:-punch-smoke-android-${RUN_ID}}"
 DENY_FILE="${TMPDIR:-/tmp}/slan-punch-smoke-deny-${RUN_ID}.json"
-USER_ID=""
-USER_TOKEN=""
+OPS_TOKEN=""
 NETWORK_ID=""
-MEMBER_GROUP_ID=""
-DEVICE_A_CREATED=0
-DEVICE_B_CREATED=0
+CREDENTIAL_ID_A=""
+CREDENTIAL_ID_B=""
 
 best_effort_curl() {
   command curl --silent --show-error --connect-timeout 5 --max-time 20 "$@" >/dev/null 2>&1 || true
 }
 
-cleanup_device() {
-  local device_id="$1"
-  case "${device_id}" in
-    punch-smoke-*${RUN_ID}*)
-      [[ -n "${USER_ID}" ]] || return 0
-      best_effort_curl -X DELETE \
-        "${WEB_BASE_URL}/api/web/devices/${device_id}?actorUserId=${USER_ID}" \
-        -H "Authorization: Bearer ${USER_TOKEN}"
-      ;;
-  esac
-}
-
 cleanup() {
-  if [[ -n "${MEMBER_GROUP_ID}" && -n "${NETWORK_ID}" ]]; then
-    best_effort_curl -X DELETE \
-      "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
-      -H "Authorization: Bearer ${USER_TOKEN}"
+  if [[ -n "$OPS_TOKEN" ]]; then
+    slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" 2>/dev/null || true
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$CREDENTIAL_ID_A" 2>/dev/null || true
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$CREDENTIAL_ID_B" 2>/dev/null || true
+    [[ -n "$DEVICE_A" ]] && best_effort_curl -X DELETE "$OPS_BASE_URL/api/ops/devices/$DEVICE_A" -H "Authorization: Bearer $OPS_TOKEN"
+    [[ -n "$DEVICE_B" ]] && best_effort_curl -X DELETE "$OPS_BASE_URL/api/ops/devices/$DEVICE_B" -H "Authorization: Bearer $OPS_TOKEN"
   fi
-  if [[ "${DEVICE_A_CREATED}" == "1" ]]; then
-    cleanup_device "${DEVICE_A}"
-  fi
-  if [[ "${DEVICE_B_CREATED}" == "1" ]]; then
-    cleanup_device "${DEVICE_B}"
-  fi
-  if [[ -n "${MEMBER_GROUP_ID}" && -n "${USER_ID}" ]]; then
-    best_effort_curl -X DELETE \
-      "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
-      -H "Authorization: Bearer ${USER_TOKEN}"
-  fi
-  rm -f "${DENY_FILE}"
+  rm -f "$DENY_FILE"
 }
 trap cleanup EXIT
-
-json_value() {
-  local key="$1"
-  sed -n "s/.*\"${key}\":\"\\([^\"]*\\)\".*/\\1/p"
-}
 
 curl_json() {
   local attempt
@@ -84,100 +55,78 @@ curl_json() {
 md5_hex() {
   local value="$1"
   if command -v md5 >/dev/null 2>&1; then
-    printf '%s' "${value}" | md5
+    printf '%s' "$value" | md5
     return
   fi
   if command -v md5sum >/dev/null 2>&1; then
-    printf '%s' "${value}" | md5sum | awk '{print $1}'
+    printf '%s' "$value" | md5sum | awk '{print $1}'
     return
   fi
-  printf '%s' "${value}" | openssl dgst -md5 -r | awk '{print $1}'
+  printf '%s' "$value" | openssl dgst -md5 -r | awk '{print $1}'
 }
 
-AUTH="$(curl_json -X POST "${BASE_URL}/api/app/auth/register" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"name\":\"Punch Smoke\"}")"
-USER_ID="$(printf '%s' "${AUTH}" | json_value userId)"
-NETWORK_ID="$(printf '%s' "${AUTH}" | json_value networkId)"
-USER_TOKEN="$(printf '%s' "${AUTH}" | json_value token)"
-if [[ -z "${USER_ID}" || -z "${NETWORK_ID}" || -z "${USER_TOKEN}" ]]; then
-  echo "missing userId, networkId, or user token from register response" >&2
-  exit 1
-fi
+command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
 
-curl_json -X POST "${BASE_URL}/api/app/devices/register" \
+SOURCE_DEVICE_A="$(curl_json -X POST "$OPS_BASE_URL/api/ops/devices" \
+  -H "Authorization: Bearer $OPS_TOKEN" \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_A}\",\"name\":\"Punch Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"15.0\",\"alias\":\"Punch Mac\",\"publicKey\":\"punch-smoke-pub-a-${RUN_ID}\"}" >/dev/null
-DEVICE_A_CREATED=1
-curl_json -X POST "${BASE_URL}/api/app/devices/register" \
+  -d "{\"name\":\"Punch Smoke Mac $RUN_ID\",\"alias\":\"Punch Smoke Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"smoke\",\"publicKey\":\"punch-smoke-mac-key-$RUN_ID\"}")"
+DEVICE_A="$(printf '%s' "$SOURCE_DEVICE_A" | jq -er '.deviceId')"
+SOURCE_DEVICE_B="$(curl_json -X POST "$OPS_BASE_URL/api/ops/devices" \
+  -H "Authorization: Bearer $OPS_TOKEN" \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_B}\",\"name\":\"Punch Android\",\"platform\":\"android\",\"osName\":\"Android\",\"osVersion\":\"15\",\"alias\":\"Punch Android\",\"publicKey\":\"punch-smoke-pub-b-${RUN_ID}\"}" >/dev/null
-DEVICE_B_CREATED=1
+  -d "{\"name\":\"Punch Smoke Android $RUN_ID\",\"alias\":\"Punch Smoke Android\",\"platform\":\"android\",\"osName\":\"Android\",\"osVersion\":\"smoke\",\"publicKey\":\"punch-smoke-android-key-$RUN_ID\"}")"
+DEVICE_B="$(printf '%s' "$SOURCE_DEVICE_B" | jq -er '.deviceId')"
+CREDENTIAL_A="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Punch Smoke Mac" "$DEVICE_A")"
+CREDENTIAL_ID_A="$(printf '%s' "$CREDENTIAL_A" | jq -er '.credentialId')"
+AUTHORIZATION_KEY_A="$(printf '%s' "$CREDENTIAL_A" | jq -er '.key')"
+CREDENTIAL_B="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Punch Smoke Android" "$DEVICE_B")"
+CREDENTIAL_ID_B="$(printf '%s' "$CREDENTIAL_B" | jq -er '.credentialId')"
+AUTHORIZATION_KEY_B="$(printf '%s' "$CREDENTIAL_B" | jq -er '.key')"
 
-MEMBER_GROUP="$(curl_json -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+SESSION_A="$(curl_json -X POST "$BASE_URL/api/device-auth/token" \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"name\":\"Punch Network Members ${RUN_ID}\",\"description\":\"punch smoke network membership\"}")"
-MEMBER_GROUP_ID="$(printf '%s' "${MEMBER_GROUP}" | json_value groupId)"
-if [[ -z "${MEMBER_GROUP_ID}" ]]; then
-  echo "missing network member group id" >&2
-  exit 1
-fi
-for member_device_id in "${DEVICE_A}" "${DEVICE_B}"; do
-  curl_json -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${member_device_id}/groups" \
-    -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\"]}" >/dev/null
-done
-curl_json -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  -d "{\"key\":\"$AUTHORIZATION_KEY_A\",\"deviceId\":\"$DEVICE_A\"}")"
+DEVICE_TOKEN_A="$(printf '%s' "$SESSION_A" | jq -er '.deviceSession.deviceToken')"
+MQTT_USERNAME_A="$(printf '%s' "$SESSION_A" | jq -er '.mqtt.username')"
+MQTT_PASSWORD_A="$(printf '%s' "$SESSION_A" | jq -er '.mqtt.password')"
+curl_json -X POST "$BASE_URL/api/device-auth/token" \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${MEMBER_GROUP_ID}\"}" >/dev/null
+  -d "{\"key\":\"$AUTHORIZATION_KEY_B\",\"deviceId\":\"$DEVICE_B\"}" >/dev/null
 
-BIND_A="$(curl_json -X POST "${BASE_URL}/api/app/device/session/bind" \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"deviceId\":\"${DEVICE_A}\"}")"
-DEVICE_TOKEN_A="$(printf '%s' "${BIND_A}" | json_value deviceToken)"
-MQTT_USERNAME_A="$(printf '%s' "${BIND_A}" | json_value username)"
-MQTT_PASSWORD_A="$(printf '%s' "${BIND_A}" | json_value password)"
-if [[ -z "${DEVICE_TOKEN_A}" || -z "${MQTT_USERNAME_A}" || -z "${MQTT_PASSWORD_A}" ]]; then
-  echo "missing deviceToken or mqtt credential from requester bind response" >&2
-  exit 1
-fi
+NETWORK="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "Punch Smoke $RUN_ID")"
+NETWORK_ID="$(printf '%s' "$NETWORK" | jq -er '.networkId')"
+slan_ops_add_network_device "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$DEVICE_A"
+slan_ops_add_network_device "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$DEVICE_B"
+
 PUNCH_SIGNATURE_A="$(md5_hex "${DEVICE_A}${MQTT_PASSWORD_A}")"
-curl_json -X POST "${BASE_URL}/api/app/device/session/bind" \
+SESSION="$(curl_json -X POST "$BASE_URL/api/app/networks/$NETWORK_ID/punch/connect-sessions" \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"deviceId\":\"${DEVICE_B}\"}" >/dev/null
-
-SESSION="$(curl_json -X POST "${BASE_URL}/api/app/networks/${NETWORK_ID}/punch/connect-sessions" \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${DEVICE_TOKEN_A}" \
-  -H "X-Slan-Device-ID: ${DEVICE_A}" \
-  -H "X-Slan-MQTT-Username: ${MQTT_USERNAME_A}" \
-  -H "X-Slan-Punch-Signature: ${PUNCH_SIGNATURE_A}" \
-  -d "{\"requesterNodeId\":\"node-${DEVICE_A}\",\"peerNodeId\":\"node-${DEVICE_B}\",\"ttlSeconds\":30}")"
-if ! printf '%s' "${SESSION}" | grep -q '"sessionId":"'; then
-  echo "punch connect-session response missing sessionId: ${SESSION}" >&2
+  -H "Authorization: Bearer $DEVICE_TOKEN_A" \
+  -H "X-Slan-Device-ID: $DEVICE_A" \
+  -H "X-Slan-MQTT-Username: $MQTT_USERNAME_A" \
+  -H "X-Slan-Punch-Signature: $PUNCH_SIGNATURE_A" \
+  -d "{\"requesterNodeId\":\"node-$DEVICE_A\",\"peerNodeId\":\"node-$DEVICE_B\",\"ttlSeconds\":30}")"
+printf '%s' "$SESSION" | jq -e --arg networkId "$NETWORK_ID" \
+  '.sessionId | type == "string" and length > 0' >/dev/null || {
+    echo "punch connect-session response missing sessionId: $SESSION" >&2
+    exit 1
+  }
+printf '%s' "$SESSION" | jq -e --arg networkId "$NETWORK_ID" '.networkId == $networkId' >/dev/null || {
+  echo "punch connect-session response has unexpected networkId: $SESSION" >&2
   exit 1
-fi
-if ! printf '%s' "${SESSION}" | grep -q "\"networkId\":\"${NETWORK_ID}\""; then
-  echo "punch connect-session response has unexpected networkId: ${SESSION}" >&2
-  exit 1
-fi
+}
 
-if curl_json -X POST "${BASE_URL}/api/app/networks/${NETWORK_ID}/punch/connect-sessions" \
+if curl_json -X POST "$BASE_URL/api/app/networks/$NETWORK_ID/punch/connect-sessions" \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${DEVICE_TOKEN_A}" \
-  -H "X-Slan-Device-ID: ${DEVICE_A}" \
-  -H "X-Slan-MQTT-Username: ${MQTT_USERNAME_A}" \
-  -H "X-Slan-Punch-Signature: ${PUNCH_SIGNATURE_A}" \
-  -d "{\"requesterNodeId\":\"node-${DEVICE_A}\",\"peerNodeId\":\"node-missing-${RUN_ID}\",\"ttlSeconds\":30}" >"${DENY_FILE}" 2>/dev/null; then
+  -H "Authorization: Bearer $DEVICE_TOKEN_A" \
+  -H "X-Slan-Device-ID: $DEVICE_A" \
+  -H "X-Slan-MQTT-Username: $MQTT_USERNAME_A" \
+  -H "X-Slan-Punch-Signature: $PUNCH_SIGNATURE_A" \
+  -d "{\"requesterNodeId\":\"node-$DEVICE_A\",\"peerNodeId\":\"node-missing-$RUN_ID\",\"ttlSeconds\":30}" >"$DENY_FILE" 2>/dev/null; then
   echo "punch connect-session unexpectedly allowed missing peer" >&2
   exit 1
 fi
 
-echo "punch biz smoke passed base=${BASE_URL} network=${NETWORK_ID} session=$(printf '%s' "${SESSION}" | json_value sessionId)"
+echo "punch biz smoke passed base=$BASE_URL network=$NETWORK_ID session=$(printf '%s' "$SESSION" | jq -r '.sessionId')"

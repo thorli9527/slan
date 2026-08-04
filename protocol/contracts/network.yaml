@@ -1,6 +1,6 @@
 version: 1
 slice: network
-source_of_truth: server/service-biz/internal/biz
+source_of_truth: server/service-biz/internal/service
 contracts:
   CreateNetworkRequest:
     fields:
@@ -19,9 +19,6 @@ contracts:
       allocationEndIp:
         type: string
         required: false
-      bindDeviceId:
-        type: string
-        required: false
   UpdateNetworkRequest:
     fields:
       name:
@@ -33,11 +30,6 @@ contracts:
       cidr:
         type: string
         required: true
-  UpdateNetworkJoinKeyRequest:
-    fields:
-      joinKey:
-        type: string
-        required: false
   UpdateNetworkDNSRequest:
     fields:
       servers:
@@ -49,37 +41,9 @@ contracts:
       wildcards:
         type: string[]
         required: false
-  SwitchNetworkRequest:
-    fields:
-      deviceId:
-        type: string
-        required: true
-  JoinNetworkRequest:
-    fields:
-      deviceId:
-        type: string
-        required: true
-  DeactivateNetworkRequest:
-    fields:
-      deviceId:
-        type: string
-        required: true
   UpdateNetworkMemberStatusRequest:
     fields:
       status:
-        type: string
-        required: true
-  InviteNetworkMemberRequest:
-    fields:
-      email:
-        type: string
-        required: true
-  JoinNetworkByKeyRequest:
-    fields:
-      joinKey:
-        type: string
-        required: true
-      deviceId:
         type: string
         required: true
   UpdateAttachmentIPRequest:
@@ -88,8 +52,6 @@ contracts:
         type: string
         required: true
   UpdateAttachmentRemarkRequest:
-    # Network owners can update any member remark; device owners can update
-    # their own attachment remark so clients can store a local alias at join.
     fields:
       remark:
         type: string
@@ -111,15 +73,9 @@ contracts:
       defaultSubnetCidr:
         type: string
         required: false
-      joinKeyConfigured:
-        type: bool
-        required: false
   NetworkHome:
     fields:
       activeNetwork:
-        type: Network
-        required: false
-      ownedNetwork:
         type: Network
         required: false
       hasNetwork:
@@ -239,18 +195,9 @@ contracts:
       defaultSubnetCidr:
         type: string
         required: false
-      joinKeyConfigured:
-        type: bool
-        required: false
-      ownedByCurrentUser:
-        type: bool
-        required: true
       dns:
         type: DNSConfig
         required: true
-      joinKey:
-        type: string
-        required: false
       subnets:
         type: Subnet[]
         required: true
@@ -272,12 +219,6 @@ contracts:
         type: string
         required: true
       deviceName:
-        type: string
-        required: true
-      userId:
-        type: string
-        required: true
-      userEmail:
         type: string
         required: true
       role:

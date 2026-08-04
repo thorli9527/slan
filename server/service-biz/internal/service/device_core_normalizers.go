@@ -2,32 +2,6 @@ package service
 
 import "strings"
 
-func normalizeDeviceOwnerID(ownerID string) string {
-	return strings.TrimSpace(ownerID)
-}
-
-func normalizeRegisterDeviceInput(input RegisterDeviceInput) RegisterDeviceInput {
-	input.DeviceID = strings.TrimSpace(input.DeviceID)
-	input.OwnerID = strings.TrimSpace(input.OwnerID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
-	input.Name = strings.TrimSpace(input.Name)
-	input.Platform = strings.TrimSpace(input.Platform)
-	input.Alias = strings.TrimSpace(input.Alias)
-	input.OSName = strings.TrimSpace(input.OSName)
-	input.OSVersion = strings.TrimSpace(input.OSVersion)
-	input.PublicKey = strings.TrimSpace(input.PublicKey)
-	input.DeviceVersion = strings.TrimSpace(input.DeviceVersion)
-	input.CountryCode = strings.TrimSpace(input.CountryCode)
-	return input
-}
-
-func normalizeUpdateDeviceAliasInput(input UpdateDeviceAliasInput) UpdateDeviceAliasInput {
-	input.DeviceID = strings.TrimSpace(input.DeviceID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
-	input.Alias = strings.TrimSpace(input.Alias)
-	return input
-}
-
 func normalizeUpdateDeviceRuntimeInput(input UpdateDeviceRuntimeInput) UpdateDeviceRuntimeInput {
 	input.DeviceID = strings.TrimSpace(input.DeviceID)
 	input.NetworkID = strings.TrimSpace(input.NetworkID)
@@ -68,10 +42,4 @@ func normalizeUpdateDeviceRuntimeInput(input UpdateDeviceRuntimeInput) UpdateDev
 
 func normalizeDeviceID(deviceID string) string {
 	return strings.TrimSpace(deviceID)
-}
-
-func normalizeDeleteDeviceInput(input DeleteDeviceInput) DeleteDeviceInput {
-	input.DeviceID = strings.TrimSpace(input.DeviceID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
-	return input
 }

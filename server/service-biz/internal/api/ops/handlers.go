@@ -14,10 +14,10 @@ type RouteDependencies struct {
 	Node              servicepkg.OpsNodeUseCase
 	Customer          servicepkg.OpsCustomerUseCase
 	ManagedDevice     servicepkg.OpsManagedDeviceUseCase
-	CatalogDownloads  servicepkg.OpsCatalogDownloadUseCase
-	CatalogPlans      servicepkg.OpsCatalogPlanUseCase
-	CatalogProducts   servicepkg.OpsCatalogProductUseCase
-	CatalogOrders     servicepkg.OpsCatalogOrderUseCase
+	DeviceCredential  servicepkg.DeviceCredentialUseCase
+	Resources         servicepkg.OpsResourceUseCase
+	NetworkDNS        servicepkg.NetworkDNSUseCase
+	NetworkAccess     servicepkg.NetworkAccessUseCase
 }
 
 func Routes(deps RouteDependencies) []serviceapi.Route {
@@ -25,13 +25,15 @@ func Routes(deps RouteDependencies) []serviceapi.Route {
 		authRoutes(deps),
 		overviewRoutes(deps),
 		managementRoutes(deps),
-		catalogRoutes(deps),
 	)
 }
 
 func authRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
-		AuthHandler{OpsAuthSessions: deps.AuthSessions, OpsOperatorPasswords: deps.OperatorPasswords}.Routes(),
+		AuthHandler{
+			OpsAuthSessions: deps.AuthSessions, OpsOperatorPasswords: deps.OperatorPasswords,
+			LoginLimiter: newOpsLoginLimiter(),
+		}.Routes(),
 		OperatorHandler{OpsOperators: deps.Operators, OpsOperatorPasswords: deps.OperatorPasswords}.Routes(),
 	)
 }
@@ -47,14 +49,8 @@ func managementRoutes(deps RouteDependencies) []serviceapi.Route {
 		NodeHandler{OpsNodes: deps.Node}.Routes(),
 		CustomerHandler{OpsCustomers: deps.Customer}.Routes(),
 		DeviceHandler{OpsDevices: deps.ManagedDevice}.Routes(),
-	)
-}
-
-func catalogRoutes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.CombineRoutes(
-		ClientDownloadHandler{OpsCatalogDownloads: deps.CatalogDownloads}.Routes(),
-		PlanHandler{OpsCatalogPlans: deps.CatalogPlans}.Routes(),
-		ProductHandler{OpsCatalogProducts: deps.CatalogProducts}.Routes(),
-		OrderHandler{OpsCatalogOrders: deps.CatalogOrders}.Routes(),
+		DeviceCredentialHandler{Credentials: deps.DeviceCredential}.Routes(),
+		ResourceHandler{Resources: deps.Resources}.Routes(),
+		NetworkPolicyHandler{DNS: deps.NetworkDNS, Access: deps.NetworkAccess}.Routes(),
 	)
 }

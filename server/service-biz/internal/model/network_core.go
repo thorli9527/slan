@@ -2,7 +2,6 @@ package model
 
 type Network struct {
 	NetworkID        string `json:"networkId"`
-	OwnerID          string `json:"ownerId"`
 	Name             string `json:"name"`
 	CIDR             string `json:"cidr,omitempty"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`

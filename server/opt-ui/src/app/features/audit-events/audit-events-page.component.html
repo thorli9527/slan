@@ -1,0 +1,46 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>安全审计</h2>
+        <p>最近 200 条登录、授权 Key 和安全异常记录，其中 {{ vm.warningAuditEventCount }} 条告警。</p>
+      </div>
+      <div class="toolbar">
+        <select [(ngModel)]="vm.auditStatusFilter" (ngModelChange)="resetPage()" aria-label="状态筛选">
+          <option value="">全部状态</option>
+          <option value="warning">warning</option>
+          <option value="success">success</option>
+          <option value="failure">failure</option>
+        </select>
+        <select [(ngModel)]="vm.auditActionFilter" (ngModelChange)="resetPage()" aria-label="动作筛选">
+          <option value="">全部动作</option>
+          <option *ngFor="let action of vm.auditActions" [value]="action">{{ action }}</option>
+        </select>
+        <select [(ngModel)]="vm.auditResourceTypeFilter" (ngModelChange)="resetPage()" aria-label="资源类型筛选">
+          <option value="">全部资源</option>
+          <option *ngFor="let resourceType of vm.auditResourceTypes" [value]="resourceType">{{ resourceType }}</option>
+        </select>
+        <input class="search-input" [(ngModel)]="vm.auditKeyword" (ngModelChange)="resetPage()" aria-label="审计关键字" placeholder="账号、设备、IP 或详情">
+      </div>
+    </div>
+
+    <div class="audit-table-wrap">
+      <table class="audit-table">
+        <thead><tr><th>时间</th><th>状态</th><th>动作</th><th>执行主体</th><th>资源</th><th>来源 IP</th><th>详情</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let event of pagedAuditEvents" [class.warning]="event.status === 'warning'">
+            <td>{{ event.createdAt }}</td>
+            <td><span class="status" [class.online]="event.status === 'success'">{{ event.status }}</span></td>
+            <td><strong>{{ event.action }}</strong></td>
+            <td>{{ event.actorType }}<br><code>{{ event.actorId || '-' }}</code></td>
+            <td>{{ event.resourceType }}<br><code>{{ event.resourceId || '-' }}</code></td>
+            <td><code>{{ event.remoteIp || '-' }}</code></td>
+            <td class="detail-cell">{{ event.detail || '-' }}</td>
+          </tr>
+          <tr *ngIf="vm.filteredAuditEvents.length === 0"><td colspan="7" class="empty-cell">暂无匹配的审计事件</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ops-pagination [total]="vm.filteredAuditEvents.length" [page]="page" [pageSize]="pageSize" (pageChange)="page = $event" (pageSizeChange)="pageSize = $event; resetPage()"></ops-pagination>
+  </article>
+</section>

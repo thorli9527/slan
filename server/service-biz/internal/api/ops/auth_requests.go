@@ -16,14 +16,16 @@ func (r opsLoginRequest) toInput() servicepkg.OpsLoginInput {
 
 type opsChangePasswordRequest struct {
 	OperatorID  string `json:"operatorId"`
+	OldPassword string `json:"oldPassword"`
 	Password    string `json:"password"`
 	NewPassword string `json:"newPassword"`
 }
 
 func (r opsChangePasswordRequest) toInput() servicepkg.OpsChangePasswordInput {
 	return servicepkg.OpsChangePasswordInput{
-		OperatorID: r.OperatorID,
-		Password:   firstNonEmpty(r.Password, r.NewPassword),
+		OperatorID:  r.OperatorID,
+		OldPassword: r.OldPassword,
+		Password:    firstNonEmpty(r.Password, r.NewPassword),
 	}
 }
 

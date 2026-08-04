@@ -8,8 +8,8 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
-RUST_DIR="$ROOT_DIR/client_v2/rust"
+APP_DIR="$ROOT_DIR/client/app_flutter"
+RUST_DIR="$ROOT_DIR/client/rust"
 
 SERVICE_BIND="${SLAN_CLIENT_CORE_SERVICE_BIND:-0.0.0.0:46392}"
 SERVICE_PORT="${SERVICE_BIND##*:}"

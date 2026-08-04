@@ -1,7 +1,7 @@
 # server-wire
 
 `server-wire` is an isolated control service for the WireGuard-shaped network
-model. It does not reuse `server-biz` internals so protocol
+model. It does not reuse `service-biz` internals so protocol
 and path logic can evolve without mixing with the legacy control plane.
 
 For the matching UDP-only relay data plane, use the separate
@@ -57,7 +57,7 @@ Container environment:
 - `SLAN_WIRE_POSTGRES_DSN=postgres://postgres:change-me-postgres-password@postgres:5432/slan?sslmode=disable`
 
 When `SLAN_WIRE_BIZ_INTERNAL_URL` is set, peer registration is authorized
-through `server-biz /internal/wire/peers/{peerId}/authz`. The business control
+through `service-biz /internal/wire/peers/{peerId}/authz`. The business control
 plane response overrides client-provided `networkId`, `nodeId`, `virtualIps`,
 and `allowedIps`.
 

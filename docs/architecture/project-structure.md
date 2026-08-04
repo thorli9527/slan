@@ -9,12 +9,11 @@
 ```text
 slan/
 ├─ client/
-│  ├─ app/                              # Flutter 客户端
-│  └─ app_core/                         # 客户端核心
+│  ├─ app_flutter/                      # Flutter 客户端
+│  └─ rust/                             # 客户端网络核心
 │
 ├─ server/
 │  ├─ service-biz/                  # 业务控制面
-│  ├─ web-ui/                       # 客户 Web Console
 │  ├─ opt-ui/                       # 运营管理控制台
 │  ├─ server-wire/                      # 联网控制面
 │  ├─ server-wire-relay/                # UDP relay 数据面
@@ -29,37 +28,32 @@ slan/
 
 ## 模块职责
 
-### `client/app`
+### `client/app_flutter`
 
 - 负责 UI、交互、页面状态、系统托盘和桌面端应用行为。
-- 调用 `app_core` 提供的接口，不直接实现组网协议和隧道逻辑。
+- 调用 Rust core 提供的接口，不直接实现组网协议和隧道逻辑。
 
-### `client/app_core`
+### `client/rust`
 
 - 负责客户端网络核心。
-- 包括登录后配置拉取、WireGuard endpoint 管理、路径探测、LAN/IPv6/direct/relay/DERP 切换、TUN/TAP、DNS 与诊断。
+- 包括设备授权、配置拉取、WireGuard endpoint 管理、路径探测、LAN/IPv6/direct/relay/DERP 切换、TUN/TAP、DNS 与诊断。
 
 ### `server/service-biz`
 
 - 负责业务控制面。
-- 包括用户、网络、设备、成员权限、IP 分配、ACL、业务审计和业务 bootstrap。
+- 包括设备身份、网络、设备组、IP 分配、ACL、授权 key、业务审计和 Ops API。
 - 不负责 WireGuard 路径规划、联网票据签发和业务流量中继。
-
-### `server/web-ui`
-
-- 负责客户侧 Web Console。
-- 包括注册登录、设备、网络、内网域名、安全组、接入码等面向 C 端的管理界面。
 
 ### `server/opt-ui`
 
 - 负责运营管理控制台。
-- 包括运营用户、客户、商品/订单、套餐、续费和中继节点运营配置。
+- 包括运营用户、客户、授权 Key 和中继节点运营配置。
 
 ### `server/server-wire`
 
 - 负责联网控制面。
 - 包括 peer 注册、endpoint 上报、路径探测与评分、runtime config、relay/DERP ticket 签发、DERP map 和内部拓扑接口。
-- 不负责用户、组织、计费、审计等业务域。
+- 不负责客户资料、授权 key、审计等业务域。
 
 ### `server/server-wire-relay`
 
@@ -75,8 +69,8 @@ slan/
 
 ## 实施约束
 
-- `client/app` 不实现网络协议与打洞逻辑。
-- `client/app_core` 不依赖 Flutter 页面结构。
+- `client/app_flutter` 不实现网络协议与打洞逻辑。
+- `client/rust` 不依赖 Flutter 页面结构。
 - `server/service-biz` 不承担联网控制面和数据面职责。
 - `server/server-wire` 不承担业务域职责。
 - `server/server-wire-relay` 和 `server/server-wire-derp` 不签发票据，只校验票据。

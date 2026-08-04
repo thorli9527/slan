@@ -11,6 +11,10 @@ func newOpsSessionID(next func(string) string) string {
 }
 
 func newOperatorSession(now time.Time, next func(string) string, operatorID string) (model.OperatorSession, error) {
+	ttl, err := operatorSessionTTL()
+	if err != nil {
+		return model.OperatorSession{}, err
+	}
 	token, err := randomHex(24)
 	if err != nil {
 		return model.OperatorSession{}, err
@@ -19,7 +23,7 @@ func newOperatorSession(now time.Time, next func(string) string, operatorID stri
 		SessionID:   newOpsSessionID(next),
 		OperatorID:  operatorID,
 		AccessToken: token,
-		ExpiresAt:   now.Add(24 * time.Hour).Unix(),
+		ExpiresAt:   now.Add(ttl).Unix(),
 		CreatedAt:   now.Unix(),
 	}, nil
 }

@@ -6,6 +6,7 @@ func normalizeUpdateDeviceInput(input UpdateDeviceInput) UpdateDeviceInput {
 	input.DeviceID = strings.TrimSpace(input.DeviceID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Alias = strings.TrimSpace(input.Alias)
+	input.VirtualIP = strings.TrimSpace(input.VirtualIP)
 	input.Status = strings.TrimSpace(input.Status)
 	return input
 }

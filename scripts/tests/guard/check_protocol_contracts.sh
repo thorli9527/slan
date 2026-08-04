@@ -14,15 +14,48 @@ check_no_legacy_new_names() {
     --glob '!**/.git/**' \
     --glob '!**/target/**' \
     --glob '!**/node_modules/**' \
-    --glob '!scripts/check_protocol_contracts.sh'; then
+    --glob '!scripts/check_protocol_contracts.sh' \
+    --glob '!scripts/tests/guard/check_protocol_contracts.sh'; then
     echo "legacy -new project names remain" >&2
     return 1
   fi
 }
 
+check_no_client_user_contracts() {
+  local contract_roots=(
+    "$ROOT_DIR/protocol/openapi/service-biz-external.yaml"
+    "$ROOT_DIR/server/service-biz/internal/api/app"
+    "$ROOT_DIR/server/service-biz/internal/model"
+    "$ROOT_DIR/server/service-biz/internal/service"
+  )
+  if rg -n '/api/auth/(register|login|renew|logout)|/api/users|/api/user-aliases|/api/device-invites|ownerUserId|owner_user_id|listVisibleManagedDevices' \
+    "${contract_roots[@]}" \
+    --glob '!**/*_test.go'; then
+    echo "client user contracts or ownership fields were reintroduced" >&2
+    return 1
+  fi
+}
+
+check_no_sensitive_payload_logs() {
+  local server_roots=(
+    "$ROOT_DIR/server/service-biz"
+    "$ROOT_DIR/server/server-wire"
+    "$ROOT_DIR/server/server-wire-punch"
+    "$ROOT_DIR/server/server-wire-relay"
+    "$ROOT_DIR/server/server-wire-derp"
+  )
+  if rg -n 'payload=%[sqv]|head=%s|string\([^[:space:]]*\.Payload\(\)\)' \
+    "${server_roots[@]}" \
+    --glob '*.go' \
+    --glob '!**/*_test.go'; then
+    echo "raw payload or packet bytes must not be written to production logs" >&2
+    return 1
+  fi
+}
+
 check_required_contracts() {
-	test -s "$ROOT_DIR/protocol/openapi/phase1.yaml"
-	test -s "$ROOT_DIR/protocol/contracts/auth-registration.yaml"
+		test -s "$ROOT_DIR/protocol/openapi/service-biz-external.yaml"
+		test -s "$ROOT_DIR/protocol/contracts/device-authorization.yaml"
 	test -s "$ROOT_DIR/protocol/contracts/control-plane.yaml"
 	test -s "$ROOT_DIR/protocol/contracts/network.yaml"
 	test -s "$ROOT_DIR/protocol/contracts/system.yaml"
@@ -39,19 +72,16 @@ check_server_contract_compile() {
 
 check_client_contract_compile() {
   if command -v zsh >/dev/null 2>&1; then
-    zsh -lc "cd '$ROOT_DIR/client_v2/rust' && cargo check -p client-core-service"
+    zsh -lc "cd '$ROOT_DIR/client/rust' && cargo check -p client-core-service"
   else
-    (cd "$ROOT_DIR/client_v2/rust" && cargo check -p client-core-service)
+    (cd "$ROOT_DIR/client/rust" && cargo check -p client-core-service)
   fi
-  test -s "$ROOT_DIR/client_v2/app_flutter/lib/bridge/client_core_bridge.dart"
-  test -s "$ROOT_DIR/client_v2/app_flutter/lib/bridge/client_commands.dart"
-  test -s "$ROOT_DIR/client_v2/app_flutter/lib/bridge/client_view_state.dart"
+  test -s "$ROOT_DIR/client/app_flutter/lib/bridge/client_core_bridge.dart"
+  test -s "$ROOT_DIR/client/app_flutter/lib/bridge/client_commands.dart"
+  test -s "$ROOT_DIR/client/app_flutter/lib/bridge/client_view_state.dart"
 }
 
-check_web_contract_compile() {
-  test -s "$ROOT_DIR/server/web-ui/src/ui/app-api.service.ts"
-  test -s "$ROOT_DIR/server/web-ui/src/ui/app-auth-flow.ts"
-  test -s "$ROOT_DIR/server/web-ui/src/ui/app.models.ts"
+	check_web_contract_compile() {
   test -s "$ROOT_DIR/server/opt-ui/src/app/app.component.ts"
 }
 
@@ -64,6 +94,8 @@ check_client_api_surface_audit() {
 }
 
 check_no_legacy_new_names
+check_no_client_user_contracts
+check_no_sensitive_payload_logs
 check_required_contracts
 check_server_contract_compile
 check_client_contract_compile

@@ -10,7 +10,6 @@ RUN go mod download
 COPY . .
 
 RUN GOOS=linux GOARCH=amd64 go build -o /out/service-biz ./cmd/service-biz
-RUN GOOS=linux GOARCH=amd64 go build -o /out/service-biz-backfill-defaults ./cmd/service-biz-backfill-defaults
 
 FROM alpine:3.20
 
@@ -28,7 +27,6 @@ ENV SLAN_SERVICE_BIZ_DB_TIMEZONE=UTC
 ENV SLAN_BIZ_ADDR=:8080
 
 COPY --from=builder /out/service-biz /app/service-biz
-COPY --from=builder /out/service-biz-backfill-defaults /app/service-biz-backfill-defaults
 
 EXPOSE 8080
 

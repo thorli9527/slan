@@ -215,7 +215,7 @@ fi
 
 if [[ "$RUN_TRI_MESSAGE" == "1" ]]; then
   run_step "Run Mac + Android + iOS tri-device message chain" tri_message run_in_root env \
-    SLAN_CLIENT_CORE_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service" \
+    SLAN_CLIENT_CORE_SERVICE_BIN="$ROOT_DIR/client/rust/target/debug/client-core-service" \
     bash scripts/tests/matrix/mac_android_ios_message_check.sh
 fi
 

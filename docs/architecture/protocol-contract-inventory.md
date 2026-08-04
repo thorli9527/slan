@@ -6,9 +6,8 @@ This document tracks the duplicated business contracts that currently exist
 across:
 
 - `server/service-biz` (backend source-of-truth in transition)
-- `server/web-ui/src/ui` (Web Console API contracts)
-- `client_v2/app_flutter/lib/bridge` (Flutter local service contracts)
-- `client_v2/rust/crates/client-core-service/src` (Rust control-plane contracts)
+- `client/app_flutter/lib/bridge` (Flutter local service contracts)
+- `client/rust/crates/client-core-service/src` (Rust control-plane contracts)
 
 The goal is not to force one-step unification. The goal is to make the next
 round of protocol-source extraction concrete and low-risk.
@@ -29,11 +28,11 @@ Current scope:
 - Verifies required contract and OpenAPI files exist.
 - Runs `go test ./...` for `server/service-biz`.
 - Runs `cargo check -p client-core-service`.
-- Verifies key Web Console and Flutter bridge contract files exist.
+- Verifies key Ops UI and Flutter bridge contract files exist.
 
 Full drift checking against generated schema is still a production hardening
 item. Until that exists, full functional verification should also run
-`flutter analyze`, `flutter test`, `cargo test --workspace`, Web Console
+`flutter analyze`, `flutter test`, `cargo test --workspace`, Ops UI
 `npm run build`, and the service smoke scripts.
 
 ## Current Sources
@@ -53,25 +52,19 @@ item. Until that exists, full functional verification should also run
 - `protocol/contracts/network.yaml`
 - `protocol/contracts/system.yaml`
 
-### Web
-
-- API service: `server/web-ui/src/ui/app-api.service.ts`
-- Web auth flow: `server/web-ui/src/ui/app-auth-flow.ts`
-- UI models: `server/web-ui/src/ui/app.models.ts`
-
 ### Flutter
 
-- Local service bridge: `client_v2/app_flutter/lib/bridge/client_core_bridge.dart`
-- Local service API: `client_v2/app_flutter/lib/bridge/client_core_local_service.dart`
-- Commands: `client_v2/app_flutter/lib/bridge/client_commands.dart`
-- View state: `client_v2/app_flutter/lib/bridge/client_view_state.dart`
+- Local service bridge: `client/app_flutter/lib/bridge/client_core_bridge.dart`
+- Local service API: `client/app_flutter/lib/bridge/client_core_local_service.dart`
+- Commands: `client/app_flutter/lib/bridge/client_commands.dart`
+- View state: `client/app_flutter/lib/bridge/client_view_state.dart`
 
 ### Rust Controller Client
 
-- HTTP control-plane client: `client_v2/rust/crates/client-core-service/src/control_plane.rs`
-- Session persistence and renewal: `client_v2/rust/crates/client-core-service/src/session_store.rs`
-- Control transport worker: `client_v2/rust/crates/client-core-service/src/control_transport_worker.rs`
-- Embedded mobile entrypoint: `client_v2/rust/crates/client-core-service/src/embedded.rs`
+- HTTP control-plane client: `client/rust/crates/client-core-service/src/control_plane.rs`
+- Session persistence and renewal: `client/rust/crates/client-core-service/src/session_store.rs`
+- Control transport worker: `client/rust/crates/client-core-service/src/control_transport_worker.rs`
+- Embedded mobile entrypoint: `client/rust/crates/client-core-service/src/embedded.rs`
 
 ## Contract Groups
 
@@ -130,7 +123,6 @@ Status:
 
 Backend:
 
-- `RegisterDeviceRequest`
 - `Device`
 - `RegisterNodeRequest`
 - `Node`
@@ -141,7 +133,7 @@ Web:
 
 Flutter:
 
-- request contracts: `RegisterDeviceRequest`, `RegisterNodeRequest`
+- request contracts: `RegisterNodeRequest`
 - response DTOs: `DeviceResponseDto`, `NodeResponseDto`
 - local models: `DeviceModel`, `NodeModel`
 

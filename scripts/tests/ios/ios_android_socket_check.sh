@@ -8,11 +8,13 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_activation_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
+APP_DIR="$ROOT_DIR/client/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 if [[ -n "${SLAN_ANDROID_BIZ_URL:-}" ]]; then
   ANDROID_BIZ_URL="$SLAN_ANDROID_BIZ_URL"
 elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhost:28080" ]]; then
@@ -34,15 +36,8 @@ if [[ -n "$ANDROID_DEVICE" ]]; then
   ADB_ARGS+=(-s "$ANDROID_DEVICE")
 fi
 IOS_DEVICE="${SLAN_IOS_FLUTTER_DEVICE:-$(xcrun simctl list devices booted | awk -F'[()]' '/Booted/ && /iPhone|iPad/ { print $2; exit }')}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-GENERATED_TEST_EMAIL=0
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-else
-  EMAIL="ios-android-socket-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
+IOS_TEST_DEVICE_ID="${SLAN_IOS_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')}"
+ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')}"
 UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT:-19090}"
 UDP_BODY="${SLAN_TEST_UDP_SEND_BODY:-hello-ios-to-android-socket-$(date +%s%N)}"
 TCP_PORT="${SLAN_TEST_TCP_ECHO_PORT:-19091}"
@@ -61,6 +56,39 @@ POSTGRES_USER="${SLAN_POSTGRES_USER:-postgres}"
 POSTGRES_DB="${SLAN_POSTGRES_DB:-slan}"
 
 PIDS=()
+OPS_TOKEN=""
+NETWORK_ID=""
+IOS_CREDENTIAL_ID=""
+IOS_AUTHORIZATION_KEY=""
+ANDROID_CREDENTIAL_ID=""
+ANDROID_AUTHORIZATION_KEY=""
+
+read_lines_into_array() {
+  local target_var="$1"
+  local line
+  local -a values=()
+  while IFS= read -r line; do
+    values+=("$line")
+  done
+  eval "$target_var=()"
+  local value
+  for value in "${values[@]}"; do
+    eval "$target_var+=(\"\$value\")"
+  done
+}
+
+provision_ops_resources() {
+  local credential network
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
+  credential="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "iOS Android Socket iOS")"
+  IOS_CREDENTIAL_ID="$(printf '%s' "$credential" | jq -er '.credentialId')"
+  IOS_AUTHORIZATION_KEY="$(printf '%s' "$credential" | jq -er '.key')"
+  credential="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "iOS Android Socket Android")"
+  ANDROID_CREDENTIAL_ID="$(printf '%s' "$credential" | jq -er '.credentialId')"
+  ANDROID_AUTHORIZATION_KEY="$(printf '%s' "$credential" | jq -er '.key')"
+  network="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "ios-android-socket-$(date +%s%N)")"
+  NETWORK_ID="$(printf '%s' "$network" | jq -er '.networkId')"
+}
 
 resolve_postgres_container() {
   if [[ -n "$POSTGRES_CONTAINER" ]]; then
@@ -94,14 +122,11 @@ wait_fresh_control_session() {
     return 1
   fi
   resolve_postgres_container
-  local escaped_email="${EMAIL//\'/\'\'}"
   local escaped_device_id="${device_id//\'/\'\'}"
   local sql="
 select count(*)
 from control_sessions cs
-join users u on u.active_network_id = cs.network_id
-where u.email = '$escaped_email'
-  and cs.device_id = '$escaped_device_id'
+where cs.device_id = '$escaped_device_id'
   and cs.last_seen_at >= extract(epoch from now())::bigint - 45;
 "
   for _ in $(seq 1 "${SLAN_CONTROL_SESSION_WAIT_SECONDS:-45}"); do
@@ -129,14 +154,11 @@ wait_online_network_state() {
     return 1
   fi
   resolve_postgres_container
-  local escaped_email="${EMAIL//\'/\'\'}"
   local escaped_device_id="${device_id//\'/\'\'}"
   local sql="
 select count(*)
 from device_network_states dns
-join users u on u.active_network_id = dns.network_id
-where u.email = '$escaped_email'
-  and dns.device_id = '$escaped_device_id'
+where dns.device_id = '$escaped_device_id'
   and dns.control_reachable = true
   and dns.network_online = true
   and dns.tunnel_up = true
@@ -168,7 +190,9 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
+  slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$IOS_CREDENTIAL_ID" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$ANDROID_CREDENTIAL_ID" >/dev/null 2>&1 || true
   if [[ "${SLAN_KEEP_IOS_ANDROID_SOCKET_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
@@ -200,20 +224,58 @@ echo "+ build and pre-authorize Android VPN"
 "${ADB_ARGS[@]}" shell cmd appops get dev.slan.slan_client_v2 ACTIVATE_VPN
 
 xcrun simctl uninstall "$IOS_DEVICE" dev.slan.client.v2 >/dev/null 2>&1 || true
+provision_ops_resources
 
-ANDROID_REGISTER_USER=false
-if [[ "$IOS_SEND_UDP" == "1" ]]; then
-  ANDROID_REGISTER_USER=true
-else
+echo "+ activate iOS device before network assignment"
+read_lines_into_array IOS_ACTIVATION_DART_DEFINES < <(
+  slan_mobile_activation_common_defines "$BIZ_URL" "$IOS_AUTHORIZATION_KEY" true
+)
+(
+  cd "$APP_DIR"
+  flutter test integration_test/device_activation_harness_test.dart \
+    -d "$IOS_DEVICE" \
+    "${IOS_ACTIVATION_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$IOS_TEST_DEVICE_ID"
+) >"$WORK_DIR/ios-prelogin.log" 2>&1
+IOS_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$WORK_DIR/ios-prelogin.log" | tail -n 1)"
+[[ "$IOS_DEVICE_ID" == "$IOS_TEST_DEVICE_ID" ]] || {
+  cat "$WORK_DIR/ios-prelogin.log"
+  echo "iOS activation device id mismatch: expected=$IOS_TEST_DEVICE_ID actual=$IOS_DEVICE_ID" >&2
+  exit 1
+}
+
+echo "+ activate Android device before network assignment"
+read_lines_into_array ANDROID_ACTIVATION_DART_DEFINES < <(
+  slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true
+)
+(
+  cd "$APP_DIR"
+  flutter test integration_test/device_activation_harness_test.dart \
+    -d "$ANDROID_DEVICE" \
+    "${ANDROID_ACTIVATION_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID"
+) >"$WORK_DIR/android-prelogin.log" 2>&1
+ANDROID_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$WORK_DIR/android-prelogin.log" | tail -n 1)"
+[[ "$ANDROID_DEVICE_ID" == "$ANDROID_TEST_DEVICE_ID" ]] || {
+  cat "$WORK_DIR/android-prelogin.log"
+  echo "Android activation device id mismatch: expected=$ANDROID_TEST_DEVICE_ID actual=$ANDROID_DEVICE_ID" >&2
+  exit 1
+}
+
+slan_ops_add_network_device "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$IOS_DEVICE_ID"
+slan_ops_add_network_device "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$ANDROID_DEVICE_ID"
+
+if [[ "$IOS_SEND_UDP" != "1" ]]; then
   echo "+ warm-enable iOS network and keep control session fresh"
-  mapfile -t IOS_WARM_COMMON_DART_DEFINES < <(
-    slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" true true
+  read_lines_into_array IOS_WARM_COMMON_DART_DEFINES < <(
+    slan_mobile_activation_common_defines "$BIZ_URL" "$IOS_AUTHORIZATION_KEY" true
   )
   (
     cd "$APP_DIR"
-    flutter test integration_test/mobile_login_test.dart \
+    flutter test integration_test/device_activation_harness_test.dart \
       -d "$IOS_DEVICE" \
       "${IOS_WARM_COMMON_DART_DEFINES[@]}" \
+      --dart-define="SLAN_TEST_DEVICE_ID=$IOS_TEST_DEVICE_ID" \
       --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
       --dart-define="SLAN_TEST_HOLD_SECONDS=$IOS_PEER_HOLD_SECONDS"
   ) >"$WORK_DIR/ios-warm-network.log" 2>&1 &
@@ -238,20 +300,26 @@ else
   fi
   echo "iOS network IP: $IOS_IP"
   IOS_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$WORK_DIR/ios-warm-network.log" | tail -n 1)"
+  [[ "$IOS_DEVICE_ID" == "$IOS_TEST_DEVICE_ID" ]] || {
+    cat "$WORK_DIR/ios-warm-network.log"
+    echo "iOS device id mismatch: expected=$IOS_TEST_DEVICE_ID actual=$IOS_DEVICE_ID" >&2
+    exit 1
+  }
   wait_fresh_control_session "$IOS_DEVICE_ID" "iOS"
   wait_online_network_state "$IOS_DEVICE_ID" "iOS"
 fi
 
 echo "+ start Android UDP echo integration test"
 start_android_vpn_appops_guard
-mapfile -t ANDROID_ECHO_COMMON_DART_DEFINES < <(
-  slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" "$ANDROID_REGISTER_USER" true
+read_lines_into_array ANDROID_ECHO_COMMON_DART_DEFINES < <(
+  slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true
 )
 (
   cd "$APP_DIR"
-  flutter test integration_test/mobile_login_test.dart \
+  flutter test integration_test/device_activation_harness_test.dart \
     -d "$ANDROID_DEVICE" \
     "${ANDROID_ECHO_COMMON_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
     --dart-define="SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
@@ -279,6 +347,12 @@ if [[ -z "$ANDROID_IP" ]]; then
   exit 1
 fi
 echo "Android network IP: $ANDROID_IP"
+ANDROID_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$ANDROID_LOG" | tail -n 1)"
+[[ "$ANDROID_DEVICE_ID" == "$ANDROID_TEST_DEVICE_ID" ]] || {
+  cat "$ANDROID_LOG"
+  echo "Android device id mismatch: expected=$ANDROID_TEST_DEVICE_ID actual=$ANDROID_DEVICE_ID" >&2
+  exit 1
+}
 
 for _ in $(seq 1 "${SLAN_ANDROID_STATE_WAIT_SECONDS:-30}"); do
   if grep -q "SLAN_TEST_TUNNEL_STATE=" "$ANDROID_LOG"; then
@@ -302,14 +376,15 @@ if [[ "$IOS_SEND_UDP" != "1" ]]; then
 fi
 
 echo "+ run iOS UDP/TCP echo client integration test target=$ANDROID_IP udp=$UDP_PORT tcp=$TCP_PORT"
-mapfile -t IOS_SEND_COMMON_DART_DEFINES < <(
-  slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
+read_lines_into_array IOS_SEND_COMMON_DART_DEFINES < <(
+  slan_mobile_activation_common_defines "$BIZ_URL" "$IOS_AUTHORIZATION_KEY" true
 )
 (
   cd "$APP_DIR"
-  flutter test integration_test/mobile_login_test.dart \
+  flutter test integration_test/device_activation_harness_test.dart \
     -d "$IOS_DEVICE" \
     "${IOS_SEND_COMMON_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$IOS_TEST_DEVICE_ID" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_IOS_SEND_POST_ENABLE_WAIT_SECONDS:-8}" \
     --dart-define="SLAN_TEST_UDP_SEND_TARGET=$ANDROID_IP:$UDP_PORT" \
@@ -318,9 +393,14 @@ mapfile -t IOS_SEND_COMMON_DART_DEFINES < <(
     --dart-define="SLAN_TEST_TCP_SEND_BODY=$TCP_BODY"
 ) >"$IOS_LOG" 2>&1
 cat "$IOS_LOG"
+IOS_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$IOS_LOG" | tail -n 1)"
+[[ "$IOS_DEVICE_ID" == "$IOS_TEST_DEVICE_ID" ]] || {
+  echo "iOS device id mismatch: expected=$IOS_TEST_DEVICE_ID actual=$IOS_DEVICE_ID" >&2
+  exit 1
+}
 
 echo "+ wait Android echo test"
 wait "$ANDROID_PID"
 cat "$ANDROID_LOG"
 
-echo "iosAndroidSocketCheck: ok email=$EMAIL androidIp=$ANDROID_IP udp=$UDP_PORT tcp=$TCP_PORT"
+echo "iosAndroidSocketCheck: ok androidIp=$ANDROID_IP udp=$UDP_PORT tcp=$TCP_PORT"

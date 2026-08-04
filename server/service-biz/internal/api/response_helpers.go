@@ -50,6 +50,8 @@ func WriteError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, servicepkg.ErrConflict):
 		status = http.StatusConflict
+	case errors.Is(err, servicepkg.ErrRateLimited):
+		status = http.StatusTooManyRequests
 	case errors.Is(err, servicepkg.ErrNotImplemented):
 		status = http.StatusNotImplemented
 	}

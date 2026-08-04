@@ -18,7 +18,7 @@ elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhos
 else
   WEB_BASE_URL="$SLAN_DEFAULT_WEB_BASE_URL"
 fi
-SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-client_v2/rust/target/release/client-core-service}"
+SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-client/rust/target/release/client-core-service}"
 TIMEOUT="${SLAN_APP_DNS_ACL_TIMEOUT:-90s}"
 EXPECT_MQTT_HOST="${SLAN_EXPECT_MQTT_HOST:-$SLAN_DEFAULT_MQTT_HOST}"
 CHECK_MESSAGES="${SLAN_APP_DNS_ACL_CHECK_MESSAGES:-1}"

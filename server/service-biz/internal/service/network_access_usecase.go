@@ -7,7 +7,11 @@ import (
 )
 
 func (s NetworkAccessService) ListSecurityGroups(ctx context.Context, networkID string) ([]SecurityGroupView, error) {
-	items, err := s.Networks.ListSecurityGroups(ctx, normalizeNetworkID(networkID))
+	networkID = normalizeNetworkID(networkID)
+	if _, err := requireManagedNetwork(ctx, s.Networks, networkID); err != nil {
+		return nil, err
+	}
+	items, err := s.Networks.ListSecurityGroups(ctx, networkID)
 	if err != nil {
 		return nil, err
 	}
@@ -19,7 +23,7 @@ func (s NetworkAccessService) CreateSecurityGroup(ctx context.Context, input Cre
 	if input.NetworkID == "" {
 		return SecurityGroupView{}, ErrInvalidArgument
 	}
-	if _, err := requireOwnedManagedNetwork(ctx, s.Users, s.Networks, input.ActorUserID, input.NetworkID); err != nil {
+	if _, err := requireManagedNetwork(ctx, s.Networks, input.NetworkID); err != nil {
 		return SecurityGroupView{}, err
 	}
 	now := networkNow(s.Now).Unix()
@@ -34,7 +38,7 @@ func (s NetworkAccessService) CreateSecurityGroup(ctx context.Context, input Cre
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
 	return securityGroupView(item), nil
@@ -45,7 +49,7 @@ func (s NetworkAccessService) UpdateSecurityGroup(ctx context.Context, input Upd
 	if input.SecurityGroupID == "" {
 		return SecurityGroupView{}, ErrInvalidArgument
 	}
-	item, err := requireOwnedManagedSecurityGroup(ctx, s.Users, s.Networks, input.ActorUserID, input.SecurityGroupID)
+	item, err := requireManagedSecurityGroupWithNetwork(ctx, s.Networks, input.SecurityGroupID)
 	if err != nil {
 		return SecurityGroupView{}, err
 	}
@@ -60,7 +64,7 @@ func (s NetworkAccessService) UpdateSecurityGroup(ctx context.Context, input Upd
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
 	return securityGroupView(item), nil
@@ -71,7 +75,7 @@ func (s NetworkAccessService) DeleteSecurityGroup(ctx context.Context, input Del
 	if input.SecurityGroupID == "" {
 		return ErrInvalidArgument
 	}
-	group, err := requireOwnedManagedSecurityGroup(ctx, s.Users, s.Networks, input.ActorUserID, input.SecurityGroupID)
+	group, err := requireManagedSecurityGroupWithNetwork(ctx, s.Networks, input.SecurityGroupID)
 	if err != nil {
 		return err
 	}
@@ -85,11 +89,15 @@ func (s NetworkAccessService) DeleteSecurityGroup(ctx context.Context, input Del
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return err
 	}
-	return publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
+	return publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
 }
 
 func (s NetworkAccessService) ListSecurityRules(ctx context.Context, securityGroupID string) ([]SecurityRuleView, error) {
-	items, err := s.Networks.ListSecurityRules(ctx, normalizeSecurityGroupID(securityGroupID))
+	securityGroupID = normalizeSecurityGroupID(securityGroupID)
+	if _, err := requireManagedSecurityGroupWithNetwork(ctx, s.Networks, securityGroupID); err != nil {
+		return nil, err
+	}
+	items, err := s.Networks.ListSecurityRules(ctx, securityGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,10 +119,10 @@ func (s NetworkAccessService) AddSecurityRule(ctx context.Context, input CreateS
 	if err != nil {
 		return SecurityRuleView{}, err
 	}
-	if _, err := requireOwnedManagedNetwork(ctx, s.Users, s.Networks, input.ActorUserID, group.NetworkID); err != nil {
+	if _, err := requireManagedNetwork(ctx, s.Networks, group.NetworkID); err != nil {
 		return SecurityRuleView{}, err
 	}
-	if err := validateSecurityRulePeer(ctx, s.Devices, s.Networks, input.ActorUserID, group.NetworkID, input.PeerType, input.PeerValue); err != nil {
+	if err := validateSecurityRulePeer(ctx, s.Devices, s.Networks, group.NetworkID, input.PeerType, input.PeerValue); err != nil {
 		return SecurityRuleView{}, err
 	}
 	now := networkNow(s.Now).Unix()
@@ -129,7 +137,7 @@ func (s NetworkAccessService) AddSecurityRule(ctx context.Context, input CreateS
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
 	return securityRuleView(item), nil
@@ -140,11 +148,11 @@ func (s NetworkAccessService) UpdateSecurityRule(ctx context.Context, input Upda
 	if input.RuleID == "" {
 		return SecurityRuleView{}, ErrInvalidArgument
 	}
-	item, group, err := requireOwnedManagedSecurityRule(ctx, s.Users, s.Networks, input.ActorUserID, input.RuleID)
+	item, group, err := requireManagedSecurityRuleWithNetwork(ctx, s.Networks, input.RuleID)
 	if err != nil {
 		return SecurityRuleView{}, err
 	}
-	if err := validateSecurityRulePeer(ctx, s.Devices, s.Networks, input.ActorUserID, group.NetworkID, input.PeerType, input.PeerValue); err != nil {
+	if err := validateSecurityRulePeer(ctx, s.Devices, s.Networks, group.NetworkID, input.PeerType, input.PeerValue); err != nil {
 		return SecurityRuleView{}, err
 	}
 	item = applyUpdateSecurityRuleInput(item, input, networkNow(s.Now).Unix())
@@ -158,7 +166,7 @@ func (s NetworkAccessService) UpdateSecurityRule(ctx context.Context, input Upda
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
 	return securityRuleView(item), nil
@@ -169,7 +177,7 @@ func (s NetworkAccessService) DeleteSecurityRule(ctx context.Context, input Dele
 	if input.RuleID == "" {
 		return ErrInvalidArgument
 	}
-	_, group, err := requireOwnedManagedSecurityRule(ctx, s.Users, s.Networks, input.ActorUserID, input.RuleID)
+	_, group, err := requireManagedSecurityRuleWithNetwork(ctx, s.Networks, input.RuleID)
 	if err != nil {
 		return err
 	}
@@ -183,5 +191,5 @@ func (s NetworkAccessService) DeleteSecurityRule(ctx context.Context, input Dele
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return err
 	}
-	return publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
+	return publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
 }

@@ -8,32 +8,17 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 )
 
-type loginAuthResponse struct {
-	AccessToken string `json:"accessToken,omitempty"`
-	Auth        struct {
-		Session struct {
-			Token string `json:"token"`
-		} `json:"session"`
-	} `json:"auth,omitempty"`
-}
-
-var httpClient = &http.Client{Timeout: 30 * time.Second}
-
 func main() {
 	var bizURL string
 	var address string
-	var email string
-	var password string
-	var registerUser bool
-	var loginUser bool
+	var authorizationKey string
+	var activateDevice bool
 	var healthOnly bool
 	var enableNetwork bool
 	var sendTarget string
@@ -43,23 +28,21 @@ func main() {
 	var timeout time.Duration
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
 	flag.StringVar(&address, "address", envDefault("SLAN_CLIENT_CORE_SERVICE_HOST", "127.0.0.1:46392"), "client-core-service local API address")
-	flag.StringVar(&email, "email", envDefault("SLAN_TEST_EMAIL", ""), "login email")
-	flag.StringVar(&password, "password", envDefault("SLAN_TEST_PASSWORD", "Password123!"), "login password")
-	flag.BoolVar(&registerUser, "register", envBoolDefault("SLAN_TEST_REGISTER_USER", false), "register user before login")
-	flag.BoolVar(&loginUser, "login", envBoolDefault("SLAN_TEST_LOGIN_USER", true), "login with password before checks")
+	flag.StringVar(&authorizationKey, "authorization-key", envDefault("SLAN_DEVICE_AUTHORIZATION_KEY", ""), "Opt-issued device authorization key")
+	flag.BoolVar(&activateDevice, "activate", envBoolDefault("SLAN_TEST_ACTIVATE_DEVICE", true), "activate device before checks")
 	flag.BoolVar(&healthOnly, "health-only", envBoolDefault("SLAN_TEST_HEALTH_ONLY", false), "only verify client-core-service local API health")
-	flag.BoolVar(&enableNetwork, "enable-network", envBoolDefault("SLAN_TEST_ENABLE_NETWORK", false), "enable local network after login")
-	flag.StringVar(&sendTarget, "send-target", envDefault("SLAN_TEST_SEND_TARGET_DEVICE_ID", ""), "target device ID to send a client message to after login")
-	flag.StringVar(&sendBody, "send-body", envDefault("SLAN_TEST_SEND_BODY", ""), "client message body to send after login")
+	flag.BoolVar(&enableNetwork, "enable-network", envBoolDefault("SLAN_TEST_ENABLE_NETWORK", false), "enable local network after activation")
+	flag.StringVar(&sendTarget, "send-target", envDefault("SLAN_TEST_SEND_TARGET_DEVICE_ID", ""), "target device ID to send a client message to after activation")
+	flag.StringVar(&sendBody, "send-body", envDefault("SLAN_TEST_SEND_BODY", ""), "client message body to send after activation")
 	flag.StringVar(&expectFrom, "expect-from", envDefault("SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID", ""), "source device ID expected in an inbound client message")
 	flag.StringVar(&expectBody, "expect-body", envDefault("SLAN_TEST_EXPECT_MESSAGE_BODY", ""), "expected inbound client message body")
 	flag.DurationVar(&timeout, "timeout", 25*time.Second, "check timeout")
 	flag.Parse()
 
 	bizURL = strings.TrimRight(strings.TrimSpace(bizURL), "/")
-	email = strings.TrimSpace(email)
-	if !healthOnly && email == "" {
-		fail("email is required; pass -email or SLAN_TEST_EMAIL")
+	authorizationKey = strings.TrimSpace(authorizationKey)
+	if !healthOnly && activateDevice && authorizationKey == "" {
+		fail("authorization key is required; pass -authorization-key or SLAN_DEVICE_AUTHORIZATION_KEY")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -70,26 +53,23 @@ func main() {
 		return
 	}
 
-	if registerUser {
-		register(ctx, bizURL, email, password)
-	}
 	waitServiceReady(ctx, address)
 	var state map[string]any
-	if loginUser {
-		state = login(ctx, address, email, password)
+	if activateDevice {
+		state = activate(ctx, address, authorizationKey)
 	} else {
 		var err error
 		state, err = localRequest(address, "localStatus", map[string]any{}, 2*time.Second)
 		if err != nil {
 			fail("local status request failed: %v", err)
 		}
-		if state["signedIn"] != true {
-			fail("local status is not signed in: %#v", state)
+		if state["activated"] != true {
+			fail("local status is not activated: %#v", state)
 		}
 	}
 	deviceID := strings.TrimSpace(stringField(state, "deviceId"))
 	if deviceID == "" {
-		fail("login response returned empty deviceId: %#v", state)
+		fail("activation response returned empty deviceId: %#v", state)
 	}
 	waitControlReady(ctx, address)
 	if enableNetwork {
@@ -112,7 +92,7 @@ func main() {
 		}
 		waitClientMessage(ctx, address, strings.TrimSpace(expectFrom), strings.TrimSpace(expectBody))
 	}
-	fmt.Printf("clientCoreServiceLoginCheck: ok email=%s deviceId=%s address=%s\n", email, deviceID, address)
+	fmt.Printf("clientCoreServiceActivationCheck: ok deviceId=%s address=%s\n", deviceID, address)
 }
 
 func enableLocalNetwork(ctx context.Context, address string) map[string]any {
@@ -190,23 +170,17 @@ func waitServiceReady(ctx context.Context, address string) {
 	fail("client-core-service did not become ready at %s: lastErr=%v", address, lastErr)
 }
 
-func login(ctx context.Context, address, email, password string) map[string]any {
-	response, err := localRequest(address, "dispatch", map[string]any{
-		"type": "loginWithPassword",
-		"payload": map[string]any{
-			"email":    email,
-			"password": password,
-		},
-	}, 45*time.Second)
+func activate(ctx context.Context, address, authorizationKey string) map[string]any {
+	response, err := localRequest(address, "localActivateDevice", map[string]any{"key": authorizationKey}, 45*time.Second)
 	if err != nil {
-		fail("login request failed: %v", err)
+		fail("device activation request failed: %v", err)
 	}
-	if response["signedIn"] != true {
-		fail("login did not sign in: %#v", response)
+	if response["activated"] != true {
+		fail("device activation failed: %#v", response)
 	}
 	select {
 	case <-ctx.Done():
-		fail("login timeout: %v", ctx.Err())
+		fail("device activation timeout: %v", ctx.Err())
 	default:
 	}
 	return response
@@ -254,7 +228,7 @@ func sendClientMessage(ctx context.Context, address, targetDeviceID, body string
 		"targetDeviceId": targetDeviceID,
 		"body":           body,
 		"metadata": map[string]any{
-			"smoke": "macos-shared-login-check",
+			"smoke": "macos-shared-activation-check",
 		},
 	}, 8*time.Second)
 	if err != nil {
@@ -339,44 +313,6 @@ func localRequest(address, method string, args map[string]any, timeout time.Dura
 		return response, errors.New(errorValue)
 	}
 	return response, nil
-}
-
-func register(ctx context.Context, bizURL, email, password string) {
-	var out loginAuthResponse
-	postJSON(ctx, bizURL+"/api/app/auth/register", map[string]any{
-		"email":    email,
-		"password": password,
-	}, &out)
-	if strings.TrimSpace(out.AccessToken) == "" {
-		out.AccessToken = out.Auth.Session.Token
-	}
-	if strings.TrimSpace(out.AccessToken) == "" {
-		fail("register returned empty session token")
-	}
-}
-
-func postJSON(ctx context.Context, url string, body any, out any) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		fail("encode request %s: %v", url, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		fail("build request %s: %v", url, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		fail("%s %s: %v", req.Method, req.URL, err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fail("%s %s: HTTP %d: %s", req.Method, req.URL, resp.StatusCode, string(respBody))
-	}
-	if err := json.Unmarshal(respBody, out); err != nil {
-		fail("decode %s: %v body=%s", req.URL, err, string(respBody))
-	}
 }
 
 func stringField(values map[string]any, key string) string {

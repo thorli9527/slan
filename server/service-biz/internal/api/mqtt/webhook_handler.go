@@ -1,16 +1,22 @@
 package mqtt
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	serviceapi "github.com/slan/service-biz/internal/api"
 	servicepkg "github.com/slan/service-biz/internal/service"
 )
 
 type WebhookHandler struct {
-	MQTT servicepkg.MQTTUseCase
+	MQTT        servicepkg.MQTTUseCase
+	AuthLimiter *mqttAuthLimiter
+	Token       string
 }
 
 func (h WebhookHandler) Routes() []serviceapi.Route {
@@ -26,40 +32,60 @@ func (h WebhookHandler) Routes() []serviceapi.Route {
 
 func Routes(useCase servicepkg.MQTTUseCase) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
-		WebhookHandler{MQTT: useCase}.Routes(),
+		WebhookHandler{
+			MQTT: useCase, AuthLimiter: newMQTTAuthLimiter(), Token: strings.TrimSpace(os.Getenv("SLAN_MQTT_WEBHOOK_TOKEN")),
+		}.Routes(),
 	)
 }
 
 func (h WebhookHandler) Auth(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeWebhook(w, r) {
+		return
+	}
 	req, err := decodeAuthRequest(r)
 	if err != nil {
 		serviceapi.WriteError(w, servicepkg.ErrInvalidArgument)
 		return
 	}
 	input := req.input()
+	source := mqttAuthSource(r)
+	identity := mqttAuthIdentity(input.ClientID, input.Username)
+	if h.AuthLimiter != nil && !h.AuthLimiter.Allow(source, identity, time.Now()) {
+		serviceapi.WriteError(w, servicepkg.ErrRateLimited)
+		return
+	}
 	view, err := h.MQTT.Authenticate(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
 	}
 	log.Printf(
-		"mqtt webhook auth clientId=%s username=%s allowed=%t principal=%s deviceId=%s userId=%s mqtt5=%t",
+		"mqtt webhook auth clientId=%s username=%s allowed=%t principal=%s deviceId=%s identityId=%s mqtt5=%t",
 		input.ClientID,
 		input.Username,
 		view.Allowed,
 		view.Principal,
 		view.DeviceID,
-		view.UserID,
+		view.IdentityID,
 		input.IsV5,
 	)
 	if !view.Allowed {
+		if h.AuthLimiter != nil {
+			h.AuthLimiter.RecordFailure(source, identity, time.Now())
+		}
 		serviceapi.WriteJSON(w, http.StatusForbidden, authRejectedPayload(input.IsV5))
 		return
+	}
+	if h.AuthLimiter != nil {
+		h.AuthLimiter.RecordSuccess(identity)
 	}
 	serviceapi.WriteJSON(w, http.StatusOK, authAcceptedPayload(input.IsV5, authAllowedPayload(view)))
 }
 
 func (h WebhookHandler) Check(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeWebhook(w, r) {
+		return
+	}
 	req, err := decodeCheckRequest(r)
 	if err != nil {
 		serviceapi.WriteError(w, servicepkg.ErrInvalidArgument)
@@ -68,9 +94,10 @@ func (h WebhookHandler) Check(w http.ResponseWriter, r *http.Request) {
 	input := req.input(r)
 	if input.ClientID == "" && input.Username == "" && !input.Connect {
 		log.Printf(
-			"mqtt webhook check unresolved fields raw=%#v headers=%#v",
-			req.Values,
-			r.Header,
+			"mqtt webhook check unresolved fields remoteAddr=%s contentLength=%d valueCount=%d",
+			r.RemoteAddr,
+			r.ContentLength,
+			len(req.Values),
 		)
 	}
 	allowed, err := h.MQTT.CheckACL(r.Context(), input)
@@ -79,10 +106,10 @@ func (h WebhookHandler) Check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf(
-		"mqtt webhook check principal=%s deviceId=%s userId=%s clientId=%s username=%s topic=%s subscribe=%t connect=%t allowed=%t",
+		"mqtt webhook check principal=%s deviceId=%s identityId=%s clientId=%s username=%s topic=%s subscribe=%t connect=%t allowed=%t",
 		input.Principal,
 		input.DeviceID,
-		input.UserID,
+		input.IdentityID,
 		input.ClientID,
 		input.Username,
 		input.Topic,
@@ -95,6 +122,9 @@ func (h WebhookHandler) Check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h WebhookHandler) EndpointReport(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeWebhook(w, r) {
+		return
+	}
 	req, err := decodeEndpointReportRequest(r)
 	if err != nil {
 		serviceapi.WriteError(w, servicepkg.ErrInvalidArgument)
@@ -132,6 +162,9 @@ func (h WebhookHandler) EndpointReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h WebhookHandler) PathHealthReport(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeWebhook(w, r) {
+		return
+	}
 	req, err := decodePathHealthReportRequest(r)
 	if err != nil {
 		serviceapi.WriteError(w, servicepkg.ErrInvalidArgument)
@@ -142,4 +175,17 @@ func (h WebhookHandler) PathHealthReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	serviceapi.WriteJSON(w, http.StatusAccepted, acceptedPayload())
+}
+
+func (h WebhookHandler) authorizeWebhook(w http.ResponseWriter, r *http.Request) bool {
+	expected := strings.TrimSpace(h.Token)
+	if expected == "" {
+		return true
+	}
+	provided := strings.TrimSpace(r.Header.Get("X-Slan-MQTT-Webhook-Token"))
+	if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+		serviceapi.WriteError(w, servicepkg.ErrUnauthorized)
+		return false
+	}
+	return true
 }

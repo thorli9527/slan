@@ -12,6 +12,7 @@ if [ ! -e "$ROOT_DIR/.git" ]; then
   ROOT_DIR="$FALLBACK_ROOT"
 fi
 . "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+. "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 IMAGE="${SLAN_LINUX_DOCKER_IMAGE:-ubuntu:24.04}"
 CONTAINER_NAME="${SLAN_LINUX_DOCKER_NAME:-slan-linux-runtime-check}"
 WORK_DIR="${SLAN_LINUX_DOCKER_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-linux-runtime.XXXXXX")}"
@@ -19,24 +20,19 @@ LOCAL_PACKAGE_PATH="${SLAN_LINUX_CLIENT_PACKAGE:-}"
 KEEP_CONTAINER="${SLAN_LINUX_DOCKER_KEEP_CONTAINER:-0}"
 CONTAINER_PRIVILEGED="${SLAN_LINUX_DOCKER_CONTAINER_PRIVILEGED:-0}"
 RESULT_JSON_PATH="${SLAN_LINUX_DOCKER_RESULT_JSON_PATH:-}"
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
-WEB_API_BASE_URL="${SLAN_WEB_API_BASE_URL:-${SLAN_BIZ_WEB_BASE_URL:-http://47.245.40.231:28081}}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 CONTAINER_BIZ_URL="${SLAN_LINUX_DOCKER_CONTAINER_BIZ_URL:-$BIZ_URL}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_LINUX_DOCKER_EMAIL:-linux-runtime-$(date +%s%N)@example.test}"
 DEVICE_ALIAS="${SLAN_LINUX_DOCKER_DEVICE_ALIAS:-Docker Linux Runtime}"
 TTL_SECONDS="${SLAN_LINUX_DOCKER_TTL_SECONDS:-1800}"
 SERVICE_HOST="${SLAN_LINUX_SERVICE_HOST:-127.0.0.1:46392}"
-LOGIN_TIMEOUT_SECONDS="${SLAN_LINUX_RUNTIME_TIMEOUT_SECONDS:-90}"
+ACTIVATION_TIMEOUT_SECONDS="${SLAN_LINUX_RUNTIME_TIMEOUT_SECONDS:-90}"
 LINUX_NETWORK_MOCK="${SLAN_LINUX_NETWORK_MOCK:-1}"
 BIZ_READY_TIMEOUT_SECONDS="${SLAN_LINUX_DOCKER_BIZ_READY_TIMEOUT_SECONDS:-60}"
 
 BOOTSTRAP_ID=""
 BOOTSTRAP_KEY=""
-USER_ID=""
-NETWORK_ID=""
-USER_TOKEN=""
+OPS_TOKEN=""
 
 log() {
   printf '==> %s\n' "$*"
@@ -74,11 +70,7 @@ wait_for_biz_ready() {
   log "wait for biz api ready"
   local deadline=$((SECONDS + BIZ_READY_TIMEOUT_SECONDS))
   while (( SECONDS < deadline )); do
-    if curl --silent --show-error --max-time 5 \
-      -o /dev/null \
-      -X POST "${BIZ_URL}/api/app/auth/register" \
-      -H 'Content-Type: application/json' \
-      -d '{"email":"biz-ready-probe@example.test","password":"Password123!"}'; then
+    if curl --silent --show-error --max-time 5 -o /dev/null "${BIZ_URL}/healthz"; then
       return 0
     fi
     sleep 2
@@ -90,12 +82,8 @@ cleanup() {
   if [[ "$KEEP_CONTAINER" != "1" ]]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$BOOTSTRAP_ID" && -n "$USER_TOKEN" && -n "$USER_ID" ]]; then
-    curl --silent --show-error --fail \
-      -X POST "${WEB_API_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
-      -H "Authorization: Bearer ${USER_TOKEN}" \
-      -H 'Content-Type: application/json' \
-      -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
+  if [[ -n "$BOOTSTRAP_ID" && -n "$OPS_TOKEN" ]]; then
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$BOOTSTRAP_ID" >/dev/null 2>&1 || true
   fi
   if [[ "$KEEP_CONTAINER" != "1" ]]; then
     rm -rf "$WORK_DIR"
@@ -132,36 +120,12 @@ need jq
 need docker
 
 wait_for_biz_ready
-log "register/login Linux Docker runtime test user"
-curl_retry --silent --show-error --fail \
-  -X POST "${BIZ_URL}/api/app/auth/register" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
 
-auth_json="$(curl_retry --silent --show-error --fail \
-  -X POST "${BIZ_URL}/api/app/auth/login" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+log "create Ops device authorization key"
+OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
+bootstrap_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$DEVICE_ALIAS")"
 
-USER_ID="$(printf '%s' "$auth_json" | jq -r '.userId // .auth.userId // .auth.session.userId // empty')"
-USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-[[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
-
-log "resolve default network"
-networks_json="$(curl_retry --silent --show-error --fail \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${WEB_API_BASE_URL}/api/web/networks?userId=${USER_ID}")"
-NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
-[[ -n "$NETWORK_ID" ]] || fail "failed to resolve test network"
-
-log "create bootstrap key"
-bootstrap_json="$(curl_retry --silent --show-error --fail \
-  -X POST "${WEB_API_BASE_URL}/api/web/device-bootstrap-keys" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${DEVICE_ALIAS}\",\"ttlSeconds\":${TTL_SECONDS}}")"
-
-BOOTSTRAP_ID="$(printf '%s' "$bootstrap_json" | json_value id)"
+BOOTSTRAP_ID="$(printf '%s' "$bootstrap_json" | json_value credentialId)"
 BOOTSTRAP_KEY="$(printf '%s' "$bootstrap_json" | json_value key)"
 [[ -n "$BOOTSTRAP_ID" && -n "$BOOTSTRAP_KEY" ]] || fail "failed to create bootstrap key"
 
@@ -212,20 +176,14 @@ if [[ -n "$LOCAL_PACKAGE_PATH" ]]; then
   local_package_in_container="/workspace/slan/${LOCAL_PACKAGE_PATH#$ROOT_DIR/}"
   docker_exec "
 set -euo pipefail
-curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh \
+bash /workspace/slan/client/install/linux/install.sh \
   --server='${CONTAINER_BIZ_URL}' \
-  --installation-key='${BOOTSTRAP_KEY}' \
+  --authorization-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${local_package_in_container}'
 "
 else
-  log "download and execute install command inside container"
-  docker_exec "
-set -euo pipefail
-curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh --server='${CONTAINER_BIZ_URL}' --installation-key='${BOOTSTRAP_KEY}' --tray=disabled
-"
+  fail "SLAN_LINUX_LOCAL_PACKAGE_PATH is required"
 fi
 
 log "start client-core-service in foreground via console bootstrap"
@@ -236,14 +194,12 @@ export SLAN_CLIENT_CORE_SERVICE_HOST='${SERVICE_HOST}'
 export SLAN_LINUX_NETWORK_MOCK='${LINUX_NETWORK_MOCK}'
 exec /usr/bin/slan-client-v2-console \
   --server-url '${CONTAINER_BIZ_URL}' \
-  --email '${EMAIL}' \
-  --password '${PASSWORD}' \
-  --device-name '${DEVICE_ALIAS}' \
+  --authorization-key '${BOOTSTRAP_KEY}' \
   --foreground >/tmp/slan-console.out 2>/tmp/slan-console.err
 " >/dev/null
 
 log "wait for local API to become ready"
-deadline=$(( $(date +%s) + LOGIN_TIMEOUT_SECONDS ))
+deadline=$(( $(date +%s) + ACTIVATION_TIMEOUT_SECONDS ))
 while (( $(date +%s) < deadline )); do
   if request_json localStatus >/dev/null 2>&1; then
     break
@@ -255,34 +211,34 @@ if ! request_json localStatus >/dev/null 2>&1; then
   fail "client-core-service local API did not become ready"
 fi
 
-log "wait for signed-in local status"
-signed_in_json=''
+log "wait for activated local status"
+activated_json=''
 while (( $(date +%s) < deadline )); do
-  signed_in_json="$(request_json localSession || true)"
-  if [[ -n "$signed_in_json" ]] && jq -e '.signedIn == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$signed_in_json"; then
+  activated_json="$(request_json localSession || true)"
+  if [[ -n "$activated_json" ]] && jq -e '.activated == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$activated_json"; then
     break
   fi
   sleep 1
 done
-if [[ -z "$signed_in_json" ]] || ! jq -e '.signedIn == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$signed_in_json"; then
-  printf '%s\n' "$signed_in_json"
+if [[ -z "$activated_json" ]] || ! jq -e '.activated == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$activated_json"; then
+  printf '%s\n' "$activated_json"
   dump_container_debug
-  fail "local status did not reach signed-in state"
+  fail "local status did not reach activated state"
 fi
-device_id="$(jq -r '.deviceId // empty' <<<"$signed_in_json")"
+device_id="$(jq -r '.deviceId // empty' <<<"$activated_json")"
 
 log "observe client runtime state"
 runtime_state_json=''
 runtime_state_deadline=$(( $(date +%s) + 30 ))
 while (( $(date +%s) < runtime_state_deadline )); do
   runtime_state_json="$(request_json localState || true)"
-  if [[ -n "$runtime_state_json" ]] && jq -e '.signedIn == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$runtime_state_json"; then
+  if [[ -n "$runtime_state_json" ]] && jq -e '.activated == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$runtime_state_json"; then
     break
   fi
   sleep 1
 done
-if [[ -n "$runtime_state_json" ]] && jq -e '.signedIn == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$runtime_state_json"; then
-  log "client runtime state reflected signed-in session"
+if [[ -n "$runtime_state_json" ]] && jq -e '.activated == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$runtime_state_json"; then
+  log "client runtime state reflected activated session"
 else
   log "client runtime state still converging; continue with persisted session + control-ready checks"
 fi
@@ -306,29 +262,24 @@ log "inspect runtime files"
 docker_exec '
 set -euo pipefail
 test -x /opt/slan-client-v2/bin/client-core-service
-test -f /etc/slan/bootstrap.env
 if [ -f /etc/slan/client-v2-console.env ]; then
   echo "console bootstrap env preserved"
 else
   echo "console bootstrap env consumed"
 fi
-jq -e '.deviceId != "" and .encrypted.algorithm == "AES-256-GCM" and (.encrypted.ciphertext | length) > 0' /var/lib/SLAN/config.json >/dev/null
+jq -e ".deviceId != \"\" and .encrypted.algorithm == \"AES-256-GCM\" and (.encrypted.ciphertext | length) > 0" /var/lib/SLAN/config.json >/dev/null
 find /opt/slan-client-v2 -maxdepth 3 -type f | sort | head -50
 '
 
-echo "linuxDockerRuntimeLoginCheck: ok email=${EMAIL} networkId=${NETWORK_ID} bootstrapId=${BOOTSTRAP_ID} deviceId=${device_id} image=${IMAGE}"
+echo "linuxDockerRuntimeActivationCheck: ok credentialId=${BOOTSTRAP_ID} deviceId=${device_id} image=${IMAGE}"
 if [[ -n "$RESULT_JSON_PATH" ]]; then
   mkdir -p "$(dirname "$RESULT_JSON_PATH")"
   jq -cn \
-    --arg email "$EMAIL" \
-    --arg networkId "$NETWORK_ID" \
     --arg bootstrapId "$BOOTSTRAP_ID" \
     --arg deviceId "$device_id" \
     --arg image "$IMAGE" \
     --arg containerName "$CONTAINER_NAME" \
     --arg serviceHost "$SERVICE_HOST" \
-    --arg userId "$USER_ID" \
-    --arg userToken "$USER_TOKEN" \
-    '{email:$email,networkId:$networkId,bootstrapId:$bootstrapId,deviceId:$deviceId,image:$image,containerName:$containerName,serviceHost:$serviceHost,userId:$userId,userToken:$userToken}' \
+    '{bootstrapId:$bootstrapId,deviceId:$deviceId,image:$image,containerName:$containerName,serviceHost:$serviceHost}' \
     >"$RESULT_JSON_PATH"
 fi

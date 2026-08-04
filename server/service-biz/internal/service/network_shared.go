@@ -9,32 +9,19 @@ import (
 )
 
 type NetworkCoreService struct {
-	Users              repository.UserRepository
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
-	Ops                repository.OpsRepository
+	Ops                repository.OpsNodeRepository
 	EventPublisher     NetworkEventPublisher
 	VersionPushTracker *NetworkVersionPushTracker
 	NewNetworkID       func() string
 	Now                func() time.Time
 }
 
-type NetworkInviteService struct {
-	Users           repository.UserRepository
-	Devices         repository.DeviceRepository
-	Relations       repository.DeviceRelationRepository
-	Networks        repository.NetworkRepository
-	EventPublisher  NetworkEventPublisher
-	DevicePublisher DeviceControlPublisher
-	NewInviteID     func() string
-	Now             func() time.Time
-}
-
 type NetworkDNSService struct {
-	Users          repository.UserRepository
 	Devices        repository.DeviceRepository
 	Networks       repository.NetworkRepository
-	Ops            repository.OpsRepository
+	Ops            repository.OpsNodeRepository
 	EventPublisher NetworkEventPublisher
 	NewDNSZoneID   func() string
 	NewDNSRecordID func() string
@@ -42,10 +29,9 @@ type NetworkDNSService struct {
 }
 
 type NetworkAccessService struct {
-	Users              repository.UserRepository
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
-	Ops                repository.OpsRepository
+	Ops                repository.OpsNodeRepository
 	EventPublisher     NetworkEventPublisher
 	NewSecurityGroupID func() string
 	NewSecurityRuleID  func() string
@@ -55,7 +41,7 @@ type NetworkAccessService struct {
 type NetworkRuntimeService struct {
 	Devices   repository.DeviceRepository
 	Networks  repository.NetworkRepository
-	Ops       repository.OpsRepository
+	Ops       repository.OpsNodeRepository
 	NewSessID func(string) string
 	Now       func() time.Time
 }
@@ -70,10 +56,6 @@ func newNetworkSessionID(next func(string) string, prefix string) string {
 
 func newManagedNetworkID(next func() string) string {
 	return generatedID(next, "net")
-}
-
-func newManagedInviteID(next func() string) string {
-	return generatedID(next, "invite")
 }
 
 func newManagedDNSZoneID(networks repository.NetworkRepository, next func() string) string {
@@ -112,17 +94,6 @@ func newManagedSecurityRuleID(networks repository.NetworkRepository, next func()
 	})
 }
 
-func requireNetworkUser(ctx context.Context, users repository.UserRepository, userID string) (model.User, error) {
-	user, ok, err := users.GetUser(ctx, userID)
-	if err != nil {
-		return model.User{}, err
-	}
-	if !ok {
-		return model.User{}, ErrNotFound
-	}
-	return user, nil
-}
-
 func requireManagedNetwork(ctx context.Context, networks repository.NetworkRepository, networkID string) (model.Network, error) {
 	network, ok, err := networks.GetNetwork(ctx, networkID)
 	if err != nil {
@@ -143,40 +114,6 @@ func requireManagedDevice(ctx context.Context, devices repository.DeviceReposito
 		return model.Device{}, ErrNotFound
 	}
 	return device, nil
-}
-
-func requireOwnedManagedDevice(ctx context.Context, users repository.UserRepository, devices repository.DeviceRepository, actorUserID, deviceID string) (model.Device, error) {
-	device, err := requireManagedDevice(ctx, devices, deviceID)
-	if err != nil {
-		return model.Device{}, err
-	}
-	if actorUserID == "" {
-		return device, nil
-	}
-	if _, err := requireNetworkUser(ctx, users, actorUserID); err != nil {
-		return model.Device{}, err
-	}
-	if device.OwnerID != actorUserID {
-		return model.Device{}, ErrForbidden
-	}
-	return device, nil
-}
-
-func requireOwnedManagedNetwork(ctx context.Context, users repository.UserRepository, networks repository.NetworkRepository, actorUserID, networkID string) (model.Network, error) {
-	network, err := requireManagedNetwork(ctx, networks, networkID)
-	if err != nil {
-		return model.Network{}, err
-	}
-	if actorUserID == "" {
-		return network, nil
-	}
-	if _, err := requireNetworkUser(ctx, users, actorUserID); err != nil {
-		return model.Network{}, err
-	}
-	if network.OwnerID != actorUserID {
-		return model.Network{}, ErrForbidden
-	}
-	return network, nil
 }
 
 func requireManagedDNSRecord(ctx context.Context, networks repository.NetworkRepository, recordID string) (model.DNSRecord, error) {

@@ -12,7 +12,6 @@ It is intentionally execution-oriented:
 ## Environment
 
 - Control API: `http://47.245.40.231:28080`
-- Web UI: `http://47.245.40.231:24200`
 - MQTT host observed in tests: `47.245.40.231`
 - Local macOS privileged service: verified healthy at `127.0.0.1:46392`
 - Android test devices:
@@ -185,7 +184,7 @@ It is intentionally execution-oriented:
 ### Tri-Device Control Message Chain
 
 - Script:
-  - `env SLAN_CLIENT_CORE_SERVICE_BIN=client_v2/rust/target/debug/client-core-service bash scripts/tests/matrix/mac_android_ios_message_check.sh`
+  - `env SLAN_CLIENT_CORE_SERVICE_BIN=client/rust/target/debug/client-core-service bash scripts/tests/matrix/mac_android_ios_message_check.sh`
 - Status: `Passed`
 - Coverage:
   - control-plane `client_message` across three clients

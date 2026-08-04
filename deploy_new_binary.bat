@@ -13,7 +13,7 @@ taskkill /f /im slan_client_v2.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 echo [3/5] Copying new binary...
-copy /y "d:\workspace\slan\client_v2\rust\target\release\client-core-service.exe" "C:\Users\admin\AppData\Local\Programs\SLAN Client V2\client-core-service.exe"
+copy /y "d:\workspace\slan\client\rust\target\release\client-core-service.exe" "C:\Users\admin\AppData\Local\Programs\SLAN Client V2\client-core-service.exe"
 if %errorlevel% neq 0 (
     echo ERROR: Copy failed!
     pause
@@ -32,7 +32,7 @@ echo ==========================================
 echo   Deploy complete!
 echo ==========================================
 echo.
-echo New binary: d:\workspace\slan\client_v2\rust\target\release\client-core-service.exe
+echo New binary: d:\workspace\slan\client\rust\target\release\client-core-service.exe
 echo Service binary: C:\Users\admin\AppData\Local\Programs\SLAN Client V2\client-core-service.exe
 echo.
 pause

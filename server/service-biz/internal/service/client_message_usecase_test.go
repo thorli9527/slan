@@ -1,17 +1,23 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
-
-	"github.com/slan/service-biz/internal/pkg/mqttkit"
 )
 
-func TestTargetDeviceDownstreamTopic(t *testing.T) {
-	topic := targetDeviceDownstreamTopic(
-		mqttkit.Config{TopicPrefix: "slan"},
-		" device-002 ",
-	)
-	if topic != "slan/devices/device-002/control/down" {
-		t.Fatalf("unexpected target device downstream topic: %s", topic)
+func TestSendClientMessageRejectsOversizedBodyBeforeRepositoryAccess(t *testing.T) {
+	t.Parallel()
+
+	service := ClientMessageService{}
+	_, err := service.SendClientMessage(context.Background(), SendClientMessageInput{
+		NetworkID:      "network-a",
+		FromDeviceID:   "device-a",
+		TargetDeviceID: "device-b",
+		Body:           strings.Repeat("x", maxClientMessageBodyBytes+1),
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected invalid argument, got %v", err)
 	}
 }

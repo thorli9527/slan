@@ -2,12 +2,6 @@ package service
 
 import "github.com/slan/service-biz/internal/model"
 
-func applyUpdateDeviceAlias(device model.Device, alias string, now int64) model.Device {
-	device.Alias = alias
-	device.UpdatedAt = now
-	return device
-}
-
 func applyUpdateDeviceRuntime(device model.Device, input UpdateDeviceRuntimeInput, now int64) model.Device {
 	if input.Platform != "" {
 		device.Platform = input.Platform
@@ -25,9 +19,9 @@ func applyUpdateDeviceRuntime(device model.Device, input UpdateDeviceRuntimeInpu
 	} else {
 		device.LastSeenAt = now
 	}
-	if input.Status != "" {
-		device.Status = input.Status
-	} else if device.Status == "" {
+	// Runtime connectivity is tracked on network memberships. Device.Status is
+	// an administrative switch and must only be changed by management actions.
+	if device.Status == "" {
 		device.Status = "active"
 	}
 	if input.DeviceVersion != "" {

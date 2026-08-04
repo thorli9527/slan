@@ -11,6 +11,8 @@ func opsAuditEventView(item model.AuditEvent) OpsAuditEventView {
 		ResourceType: item.ResourceType,
 		ResourceID:   item.ResourceID,
 		Status:       item.Status,
+		RemoteIP:     item.RemoteIP,
+		Detail:       item.Detail,
 		CreatedAt:    item.CreatedAt,
 	}
 }

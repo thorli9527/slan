@@ -4,6 +4,8 @@ import "context"
 
 type OpsAuthSessionUseCase interface {
 	Login(ctx context.Context, input OpsLoginInput) (OpsSessionView, error)
+	Authenticate(ctx context.Context, accessToken string) (OperatorView, error)
+	Logout(ctx context.Context, accessToken string) error
 }
 
 type OpsOperatorUseCase interface {

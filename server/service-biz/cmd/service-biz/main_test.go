@@ -14,7 +14,6 @@ func TestRouteSetConsumesMQTTUpstream(t *testing.T) {
 		{routeSet: serviceapp.RouteSetAll, want: true},
 		{routeSet: serviceapp.RouteSetApp, want: true},
 		{routeSet: serviceapp.RouteSetMQTT, want: true},
-		{routeSet: serviceapp.RouteSetWeb, want: false},
 		{routeSet: serviceapp.RouteSetOps, want: false},
 	}
 	for _, test := range tests {

@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
-APP_PATH="${SLAN_MACOS_APP_PATH:-$ROOT_DIR/client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
-OUTPUT_DIR="${SLAN_MACOS_PACKAGE_OUTPUT_DIR:-$ROOT_DIR/client_v2/.tmp/installer/macos}"
+APP_PATH="${SLAN_MACOS_APP_PATH:-$ROOT_DIR/client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
+OUTPUT_DIR="${SLAN_MACOS_PACKAGE_OUTPUT_DIR:-$ROOT_DIR/client/.tmp/installer/macos}"
 PKG_PATH="$OUTPUT_DIR/SLAN-Client-V2-macos.pkg"
 STAGE_DIR="$OUTPUT_DIR/stage"
 ROOT_STAGE="$STAGE_DIR/root"
@@ -66,10 +66,10 @@ if [[ ! -x "$SERVICE_IN_APP" ]]; then
 fi
 
 STALE_SOURCE="$(find \
-  "$ROOT_DIR/client_v2/rust/crates" \
-  "$ROOT_DIR/client_v2/app_flutter/lib" \
-  "$ROOT_DIR/client_v2/plugins/client_core_plugin" \
-  "$ROOT_DIR/client_v2/app_flutter/macos" \
+  "$ROOT_DIR/client/rust/crates" \
+  "$ROOT_DIR/client/app_flutter/lib" \
+  "$ROOT_DIR/client/plugins/client_core_plugin" \
+  "$ROOT_DIR/client/app_flutter/macos" \
   -type f \
   \( -name '*.rs' -o -name '*.dart' -o -name '*.swift' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.yaml' -o -name '*.plist' \) \
   -newer "$SERVICE_IN_APP" \
@@ -93,8 +93,8 @@ if command -v xattr >/dev/null 2>&1; then
   find "$ROOT_STAGE" -exec xattr -d com.apple.provenance {} \; >/dev/null 2>&1 || true
 fi
 
-cp "$ROOT_DIR/client_v2/install/macos/scripts/preinstall" "$SCRIPT_STAGE/preinstall"
-cp "$ROOT_DIR/client_v2/install/macos/scripts/postinstall" "$SCRIPT_STAGE/postinstall"
+cp "$ROOT_DIR/client/install/macos/scripts/preinstall" "$SCRIPT_STAGE/preinstall"
+cp "$ROOT_DIR/client/install/macos/scripts/postinstall" "$SCRIPT_STAGE/postinstall"
 chmod 755 "$SCRIPT_STAGE/preinstall" "$SCRIPT_STAGE/postinstall"
 find "$SCRIPT_STAGE" \( -name '._*' -o -name '.DS_Store' \) -delete
 if command -v xattr >/dev/null 2>&1; then

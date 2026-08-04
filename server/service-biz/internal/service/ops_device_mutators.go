@@ -9,6 +9,9 @@ func applyUpdateDeviceInput(device model.Device, input UpdateDeviceInput, now in
 	if input.Alias != "" {
 		device.Alias = input.Alias
 	}
+	if input.VirtualIP != "" {
+		device.VirtualIP = input.VirtualIP
+	}
 	if input.Status != "" {
 		device.Status = input.Status
 	}

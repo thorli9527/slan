@@ -18,16 +18,16 @@ client-core-service --ensure-device-id
 
 该命令只在本地 `config.json` 不存在，或其中 `deviceId` 不是 UUID v4 时生成新的 UUID v4。正常安装、升级、覆盖安装都不会重置已有 `device_id`。
 
-服务启动和客户端登录流程只读取这个统一配置文件。如果文件不存在，或 `deviceId` 不是 UUID v4，服务会补生成一个 UUID v4 并持久化。
+服务启动和设备激活流程只读取这个统一配置文件。如果文件不存在，或 `deviceId` 不是 UUID v4，服务会补生成一个 UUID v4 并持久化。
 
-客户端还会生成独立的安装级设备凭证。该值是随机生成的 `pk_` 前缀 32 字节十六进制字符串，用于设备注册、浏览器登录 prepare 和已绑定设备的身份匹配。它与会话凭据一起存入 `config.json` 的 AES-256-GCM 密文，不能使用 `client-v2-<deviceId>` 这类可猜值。
+客户端通过 Ops 签发的授权 key 激活设备。授权 key、Device token、refresh token 和 MQTT 凭据与设备状态一起加密保存，不得使用 `deviceId` 派生或替代任何授权凭据。
 
 移动端 iOS / Android 在插件首次初始化时生成 UUID v4，并写入平台持久化存储：
 
 - iOS：`UserDefaults` key `dev.slan.client.v2.ios.deviceId`
 - Android：`SharedPreferences` key `dev.slan.client.v2.android.deviceId`
 
-移动端后续启动和登录只读取该持久化值。如果 App 数据被清除、卸载重装，或旧值不是 UUID v4，则会生成新的 UUID。
+移动端后续启动和激活只读取该持久化值。如果 App 数据被清除、卸载重装，或旧值不是 UUID v4，则会生成新的 UUID。
 
 ## 重装语义
 
@@ -41,7 +41,7 @@ client-core-service --ensure-device-id
 ## 安全边界
 
 - `device_id` 只用于控制面识别“同一客户端安装实例”。
-- `config.json` 只明文保存 `deviceId` 和加密格式元数据；设备公钥、用户/设备 token、refresh token、MQTT 凭据和网络会话均位于 AES-256-GCM 密文中。加密密钥由 `deviceId` 前 20 位经 SHA-256 派生，因此主要防止配置内容被直接读取，不等同于操作系统密钥链提供的本机强隔离。
+- `config.json` 只明文保存 `deviceId` 和加密格式元数据；设备公钥、Device token、refresh token、MQTT 凭据和网络会话均位于 AES-256-GCM 密文中。加密密钥由 `deviceId` 前 20 位经 SHA-256 派生，因此主要防止配置内容被直接读取，不等同于操作系统密钥链提供的本机强隔离。
 - 设备身份认证应依赖设备密钥对、公钥注册和服务端授权。
-- 浏览器登录 prepare 必须提交安装级设备凭证。服务端不得接受 `client-v2-<deviceId>` 作为新设备 prepare 凭证。
-- 服务端只校验 `device_id` 可用性和归属，不应从格式推断平台或环境。
+- 服务端必须通过授权 key 摘要、绑定状态和 Device session 验证设备身份，不能接受 `deviceId` 本身作为凭据。
+- 服务端只校验 `device_id` 可用性，不应从格式推断平台、客户或环境。

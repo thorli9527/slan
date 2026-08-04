@@ -6,20 +6,20 @@
 
 ### 账号密码安全
 
-- [ ] 密码使用强哈希（bcrypt/argon2）+ 每用户随机盐；禁止等值/弱 hash
-- [ ] 登录校验使用恒定时间比较
-- [ ] 密码策略与校验：长度、复杂度、常见弱口令拦截（至少可配置）
+- [x] 运营账号密码使用 bcrypt 与随机盐；登录不再兼容明文、裸字符串或 SHA-256 密码
+- [x] 登录校验使用 bcrypt 比较；不存在账号和非 bcrypt 旧记录使用同成本虚拟哈希校验
+- [x] 密码策略与校验：限制 12-72 字节，并拦截常见弱口令片段
 - [ ] 登录失败次数限制与风控（按 IP/账号维度），必要时接入验证码/二次验证
-- [ ] 敏感信息禁止出现在日志（password、token、密钥）
+- [x] 敏感信息禁止出现在日志；MQTT payload 与 Relay 原始报文不落日志，并由协议守卫阻止回归
 
 落点参考：
 - Auth 实现：[access.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/service/impl/access.go)
 
 ### Token / 会话体系可控
 
-- [ ] access/refresh TTL 明确且可配置
-- [ ] refresh token 轮换（rotation）与复用检测（reuse detection）
-- [ ] 支持吊销：单用户/单设备/单会话强制下线立即生效
+- [x] 设备 access/refresh 与运营会话 TTL 明确且可配置，并设置安全上下限；配置只影响新签发会话
+- [x] refresh token 使用原子轮换；旧 token 仅允许 120 秒幂等重试，超期复用会原子删除当前会话并记录安全告警
+- [x] 支持授权 Key 吊销、设备禁用、运营账号禁用与单会话退出；关联会话立即删除（客户端用户概念已移除）
 - [ ] token 与设备/客户端信息绑定（至少用于风控与审计）
 - [ ] Redis 故障策略明确（拒绝/降级）并设置超时与重试上限
 
@@ -31,7 +31,7 @@
 ### 传输安全与配置安全
 
 - [ ] HTTP/MQTT 必须在 TLS 下运行（或由反向代理终止 TLS），MQTT broker 需启用鉴权
-- [ ] 正确处理反向代理场景的真实 IP（X-Forwarded-For / X-Real-IP）与信任边界
+- [x] 正确处理反向代理场景的真实 IP（X-Forwarded-For / X-Real-IP）与信任边界；仅当 TCP 对端命中 `SLAN_TRUSTED_PROXY_CIDRS` 时解析转发链
 - [ ] 默认配置仅用于开发环境；生产环境禁止默认弱口令与默认连接串
 - [ ] 所有密钥/凭证从环境或密钥系统注入（而不是写在配置样例里）
 
@@ -54,15 +54,16 @@
 
 - [ ] MQTT 控制握手严格鉴权（control session token）且可吊销
 - [ ] 心跳/超时与断线收敛策略明确
-- [ ] 最大消息大小限制、反序列化防护、输入校验
+- [x] 最大消息大小限制、反序列化防护、输入校验（HTTP JSON 1 MiB、MQTT webhook/上行 256 KiB、客户端消息正文 16 KiB/封包 64 KiB）
 - [ ] 写入背压/发送队列：广播不阻塞业务线程；必要时丢弃或降级
 - [ ] 连接数/速率限制（按 IP/用户/网络）
 
 落点参考：
 - 服务端 MQTT 接入与扇出：`server/service-biz/internal/biz/server_mqtt.go`
 - 服务端 MQTT 订阅处理：`server/service-biz/internal/biz/mqtt_subscriber.go`
-- 客户端控制任务与 ACK：`client_v2/rust/crates/client-core-service/src/control_tasks.rs`
-- 客户端控制 MQTT worker：`client_v2/rust/crates/client-core-service/src/control_transport_worker.rs`
+- 客户端控制任务与 ACK：`client/rust/crates/client-core-service/src/control_tasks.rs`
+- 客户端控制 MQTT worker：`client/rust/crates/client-core-service/src/control_transport_worker.rs`
+- HTTP/MQTT 输入限制：`server/service-biz/internal/api/request_helpers.go`、`server/service-biz/internal/api/mqtt/json_helpers.go`、`server/service-biz/internal/service/mqtt_control_up_consumer.go`
 
 ## P1 上线前必备（稳定上线）
 
@@ -75,7 +76,7 @@
 ### 权限模型与审计
 
 - [ ] 明确并实现 RBAC/ACL：谁能创建网络/拉成员/发票据/创建 session
-- [ ] 所有关键写操作记录审计日志（userId/ip/ua/对象/结果/时间）
+- [ ] 所有关键写操作记录审计日志（actorType/actorId/deviceId/ip/ua/对象/结果/时间）
 - [ ] 安全事件（异常登录/暴力尝试/异常流量）可追溯
 
 ### 错误码与协议兼容
@@ -105,7 +106,7 @@
 
 ### 日志与追踪
 
-- [ ] 结构化日志：requestId、userId、nodeId、networkId、remoteIP
+- [ ] 结构化日志：requestId、actorType、actorId、deviceId、nodeId、networkId、remoteIP
 - [ ] 分布式追踪：login → register device/node → join-by-owner-email/join-by-key → alias remark → switch → activate/bootstrap → mqtt node_hello → fanout
 
 ### 告警
@@ -123,7 +124,7 @@
 
 ### 限流与防刷
 
-- [ ] /auth、/devices/register、/nodes/register、/networks join/switch/activate、/bootstrap、/control/sessions、MQTT node_hello 全部限流
+- [ ] `/api/device-auth/token`、Ops 登录、设备 session 续期、运行态上报和 MQTT 鉴权已有单进程限流；待补集群级网关/共享存储限流
 - [ ] 防枚举（网络 ID、设备 ID）与异常访问封禁
 
 ## 最小验收标准（建议）

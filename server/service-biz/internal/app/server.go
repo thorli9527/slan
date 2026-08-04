@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	serviceapi "github.com/slan/service-biz/internal/api"
+	opsapi "github.com/slan/service-biz/internal/api/ops"
 )
 
 type Server struct {
@@ -30,7 +31,7 @@ func (s *Server) RoutesFor(routeSet string) http.Handler {
 	mux := http.NewServeMux()
 	serviceapi.RegisterRoutes(mux, s.baseRoutes())
 	serviceapi.RegisterRoutes(mux, s.routesFor(routeSet))
-	return serviceapi.WithCORS(mux)
+	return serviceapi.WithCORS(opsapi.WithOperatorAuth(mux, s.container.RouteUseCases.Ops.SessionAuth))
 }
 
 func (s *Server) baseRoutes() []serviceapi.Route {

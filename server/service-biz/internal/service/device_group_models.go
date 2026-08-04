@@ -8,7 +8,6 @@ type DeviceGroupMemberView struct {
 
 type DeviceGroupView struct {
 	GroupID     string `json:"groupId"`
-	UserID      string `json:"userId"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	CreatedAt   int64  `json:"createdAt"`

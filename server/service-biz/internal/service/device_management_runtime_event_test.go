@@ -26,7 +26,6 @@ func TestUpdateDeviceRuntimePublishesNetworkMemberEvent(t *testing.T) {
 			devices: map[string]model.Device{
 				"device-a": {
 					DeviceID:   "device-a",
-					OwnerID:    "user-1",
 					VirtualIP:  "10.0.0.1",
 					Platform:   "linux",
 					Status:     "active",
@@ -40,7 +39,6 @@ func TestUpdateDeviceRuntimePublishesNetworkMemberEvent(t *testing.T) {
 			networks: map[string]model.Network{
 				"net-1": {
 					NetworkID: "net-1",
-					OwnerID:   "user-1",
 					Name:      "Default",
 					CIDR:      "10.0.0.0/24",
 					Default:   true,
@@ -60,7 +58,6 @@ func TestUpdateDeviceRuntimePublishesNetworkMemberEvent(t *testing.T) {
 	}
 	service := DeviceRuntimeAccessService{
 		deviceCoreDependencies: deviceCoreDependencies{
-			Users:          &deviceRegistrationTestUsers{users: map[string]model.User{"user-1": {UserID: "user-1", Email: "user-1@example.test", Status: "active"}}},
 			Devices:        devices,
 			Networks:       networks,
 			MQTT:           mqttkit.DefaultConfig(),
@@ -92,7 +89,7 @@ func TestUpdateDeviceRuntimeAppliesPresenceToEveryActiveNetwork(t *testing.T) {
 	devices := &deviceRegistrationTestDevices{
 		networkRuntimeTestDevices: networkRuntimeTestDevices{
 			devices: map[string]model.Device{
-				"device-a": {DeviceID: "device-a", OwnerID: "user-1", Status: "active"},
+				"device-a": {DeviceID: "device-a", Status: "active"},
 			},
 		},
 	}
@@ -110,7 +107,6 @@ func TestUpdateDeviceRuntimeAppliesPresenceToEveryActiveNetwork(t *testing.T) {
 	}
 	service := DeviceRuntimeAccessService{
 		deviceCoreDependencies: deviceCoreDependencies{
-			Users:          &deviceRegistrationTestUsers{users: map[string]model.User{"user-1": {UserID: "user-1", Status: "active"}}},
 			Devices:        devices,
 			Networks:       networks,
 			MQTT:           mqttkit.DefaultConfig(),
@@ -144,7 +140,6 @@ func TestUpdateDeviceRuntimeDoesNotRepublishPresenceHeartbeatWithoutStateChange(
 			devices: map[string]model.Device{
 				"device-a": {
 					DeviceID:   "device-a",
-					OwnerID:    "user-1",
 					VirtualIP:  "10.0.0.1",
 					Platform:   "linux",
 					Status:     "active",
@@ -158,7 +153,6 @@ func TestUpdateDeviceRuntimeDoesNotRepublishPresenceHeartbeatWithoutStateChange(
 			networks: map[string]model.Network{
 				"net-1": {
 					NetworkID: "net-1",
-					OwnerID:   "user-1",
 					Name:      "Default",
 					CIDR:      "10.0.0.0/24",
 					Default:   true,
@@ -181,7 +175,6 @@ func TestUpdateDeviceRuntimeDoesNotRepublishPresenceHeartbeatWithoutStateChange(
 	}
 	service := DeviceRuntimeAccessService{
 		deviceCoreDependencies: deviceCoreDependencies{
-			Users:          &deviceRegistrationTestUsers{users: map[string]model.User{"user-1": {UserID: "user-1", Email: "user-1@example.test", Status: "active"}}},
 			Devices:        devices,
 			Networks:       networks,
 			MQTT:           mqttkit.DefaultConfig(),
@@ -213,7 +206,6 @@ func TestUpdateDeviceRuntimePublishesPresenceWhenPathChanges(t *testing.T) {
 			devices: map[string]model.Device{
 				"device-a": {
 					DeviceID:   "device-a",
-					OwnerID:    "user-1",
 					VirtualIP:  "10.0.0.1",
 					Platform:   "linux",
 					Status:     "active",
@@ -227,7 +219,6 @@ func TestUpdateDeviceRuntimePublishesPresenceWhenPathChanges(t *testing.T) {
 			networks: map[string]model.Network{
 				"net-1": {
 					NetworkID: "net-1",
-					OwnerID:   "user-1",
 					Name:      "Default",
 					CIDR:      "10.0.0.0/24",
 					Default:   true,
@@ -250,7 +241,6 @@ func TestUpdateDeviceRuntimePublishesPresenceWhenPathChanges(t *testing.T) {
 	}
 	service := DeviceRuntimeAccessService{
 		deviceCoreDependencies: deviceCoreDependencies{
-			Users:          &deviceRegistrationTestUsers{users: map[string]model.User{"user-1": {UserID: "user-1", Email: "user-1@example.test", Status: "active"}}},
 			Devices:        devices,
 			Networks:       networks,
 			MQTT:           mqttkit.DefaultConfig(),

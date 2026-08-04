@@ -1,25 +1,5 @@
 package service
 
-type RegisterDeviceInput struct {
-	OwnerID       string `json:"ownerId"`
-	ActorUserID   string `json:"actorUserId"`
-	DeviceID      string `json:"deviceId"`
-	Name          string `json:"name"`
-	Platform      string `json:"platform"`
-	Alias         string `json:"alias"`
-	OSName        string `json:"osName"`
-	OSVersion     string `json:"osVersion"`
-	PublicKey     string `json:"publicKey"`
-	DeviceVersion string `json:"deviceVersion"`
-	CountryCode   string `json:"countryCode"`
-}
-
-type UpdateDeviceAliasInput struct {
-	DeviceID    string `json:"deviceId"`
-	ActorUserID string `json:"actorUserId"`
-	Alias       string `json:"alias"`
-}
-
 type UpdateDeviceRuntimeInput struct {
 	DeviceID        string `json:"deviceId"`
 	NetworkID       string `json:"networkId"`
@@ -47,9 +27,4 @@ type UpdateDeviceRuntimeInput struct {
 	PathDowngrades  int64  `json:"pathDowngrades"`
 	PathUpgrades    int64  `json:"pathUpgrades"`
 	LastPathChange  string `json:"lastPathChange"`
-}
-
-type DeleteDeviceInput struct {
-	DeviceID    string `json:"deviceId"`
-	ActorUserID string `json:"actorUserId"`
 }

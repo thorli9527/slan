@@ -6,14 +6,6 @@ import (
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
 )
 
-func (d UseCaseDependencies) authRepositories() AuthRepositories {
-	return d.Repositories.Auth
-}
-
-func (d UseCaseDependencies) authIDs() AuthIDGenerators {
-	return d.IDs.Auth
-}
-
 func (d UseCaseDependencies) deviceRepositories() DeviceRepositories {
 	return d.Repositories.Device
 }
@@ -44,10 +36,6 @@ func (d UseCaseDependencies) wireRepositories() WireRepositories {
 
 func (d UseCaseDependencies) mqttRepositories() MQTTRepositories {
 	return d.Repositories.MQTT
-}
-
-func (d UseCaseDependencies) downloadRepositories() DownloadRepositories {
-	return d.Repositories.Download
 }
 
 func (d UseCaseDependencies) mqttConfig() mqttkit.Config {

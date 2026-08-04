@@ -78,6 +78,13 @@ type updateCustomerRequest struct {
 	Status     string `json:"status"`
 }
 
+func (r updateCustomerRequest) toCreateInput() servicepkg.CreateCustomerInput {
+	return servicepkg.CreateCustomerInput{
+		Email: r.Email, Name: r.Name, Country: r.Country, Province: r.Province,
+		City: r.City, IPRegion: r.IPRegion, Status: r.Status,
+	}
+}
+
 func (r updateCustomerRequest) toInput() servicepkg.UpdateCustomerInput {
 	return servicepkg.UpdateCustomerInput{
 		CustomerID: r.CustomerID,
@@ -91,40 +98,37 @@ func (r updateCustomerRequest) toInput() servicepkg.UpdateCustomerInput {
 	}
 }
 
-type assignCustomerPlanRequest struct {
-	CustomerID string `json:"customerId"`
-	PlanCode   string `json:"planCode"`
-	ExpiresAt  int64  `json:"expiresAt"`
-	Amount     int64  `json:"amount"`
-	Period     string `json:"period"`
-}
-
-func (r assignCustomerPlanRequest) toInput() servicepkg.AssignCustomerPlanInput {
-	return servicepkg.AssignCustomerPlanInput{
-		CustomerID: r.CustomerID,
-		PlanCode:   r.PlanCode,
-		ExpiresAt:  r.ExpiresAt,
-		Amount:     r.Amount,
-		Period:     r.Period,
-	}
-}
-
 func itoa(v int) string {
 	return strconv.Itoa(v)
 }
 
 type updateManagedDeviceRequest struct {
-	DeviceID string `json:"deviceId"`
-	Name     string `json:"name"`
-	Alias    string `json:"alias"`
-	Status   string `json:"status"`
+	DeviceID  string `json:"deviceId"`
+	Name      string `json:"name"`
+	Alias     string `json:"alias"`
+	VirtualIP string `json:"virtualIp"`
+	Status    string `json:"status"`
+}
+
+type createManagedDeviceRequest struct {
+	Name      string `json:"name"`
+	Alias     string `json:"alias"`
+	Platform  string `json:"platform"`
+	OSName    string `json:"osName"`
+	OSVersion string `json:"osVersion"`
+	PublicKey string `json:"publicKey"`
+}
+
+func (r createManagedDeviceRequest) toInput() servicepkg.CreateOpsDeviceInput {
+	return servicepkg.CreateOpsDeviceInput{Name: r.Name, Alias: r.Alias, Platform: r.Platform, OSName: r.OSName, OSVersion: r.OSVersion, PublicKey: r.PublicKey}
 }
 
 func (r updateManagedDeviceRequest) toInput() servicepkg.UpdateDeviceInput {
 	return servicepkg.UpdateDeviceInput{
-		DeviceID: r.DeviceID,
-		Name:     r.Name,
-		Alias:    r.Alias,
-		Status:   r.Status,
+		DeviceID:  r.DeviceID,
+		Name:      r.Name,
+		Alias:     r.Alias,
+		VirtualIP: r.VirtualIP,
+		Status:    r.Status,
 	}
 }

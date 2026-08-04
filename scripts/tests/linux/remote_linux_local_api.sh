@@ -39,50 +39,36 @@ wait_local_api() {
   return 1
 }
 
-password_login() {
-  local email="$1"
-  local password="$2"
+activate_device() {
+  local authorization_key="$1"
   local payload
-  payload="$(jq -cn --arg email "$email" --arg password "$password" '
+  payload="$(jq -cn --arg key "$authorization_key" '
     {
-      type: "loginWithPassword",
-      payload: {
-        email: $email,
-        password: $password
-      }
+      key: $key
     }
   ')"
-  request_json dispatch "$payload"
+  request_json localActivateDevice "$payload"
 }
 
-wait_signed_in_or_login() {
-  local email="$1"
-  local password="$2"
-  local timeout_seconds="${3:-120}"
+wait_activated() {
+  local authorization_key="$1"
+  local timeout_seconds="${2:-120}"
   local deadline=$((SECONDS + timeout_seconds))
   local state_json=''
   while (( SECONDS < deadline )); do
     state_json="$(request_json localState || true)"
-    if [[ -n "$state_json" ]] && jq -e --arg email "$email" '
-      .signedIn == true and
-      (.deviceId // "" | length > 0) and
-      (.userLabel // "" | ascii_downcase) == ($email | ascii_downcase)
+    if [[ -n "$state_json" ]] && jq -e '
+      .activated == true and
+      (.deviceId // "" | length > 0)
     ' >/dev/null <<<"$state_json"; then
       printf '%s\n' "$state_json"
       return 0
     fi
-    if [[ -n "$state_json" ]] && jq -e --arg email "$email" '
-      .signedIn == true and
-      (.userLabel // "" | ascii_downcase) != ($email | ascii_downcase)
-    ' >/dev/null <<<"$state_json"; then
-      request_json localLogout >/dev/null 2>&1 || true
-      sleep 1
-    fi
-    password_login "$email" "$password" >/dev/null 2>&1 || true
+    activate_device "$authorization_key" >/dev/null 2>&1 || true
     sleep 2
   done
   printf '%s\n' "$state_json"
-  echo "remote linux did not reach signed-in state" >&2
+  echo "remote linux did not reach activated state" >&2
   return 1
 }
 
@@ -362,8 +348,8 @@ shift || true
 case "$command" in
   request_json) request_json "$@" ;;
   wait_local_api) wait_local_api "$@" ;;
-  password_login) password_login "$@" ;;
-  wait_signed_in_or_login) wait_signed_in_or_login "$@" ;;
+  activate_device) activate_device "$@" ;;
+  wait_activated) wait_activated "$@" ;;
   wait_control_ready) wait_control_ready "$@" ;;
   ensure_network_ready) ensure_network_ready "$@" ;;
   wait_network_module) wait_network_module "$@" ;;
@@ -374,7 +360,7 @@ case "$command" in
   send_udp_echo) send_udp_echo "$@" ;;
   send_tcp_echo) send_tcp_echo "$@" ;;
   *)
-    echo "usage: $0 <request_json|wait_local_api|password_login|wait_signed_in_or_login|wait_control_ready|ensure_network_ready|wait_network_module|send_client_message|wait_client_message|start_echo_server|wait_echo_ready|send_udp_echo|send_tcp_echo> ..." >&2
+    echo "usage: $0 <request_json|wait_local_api|activate_device|wait_activated|wait_control_ready|ensure_network_ready|wait_network_module|send_client_message|wait_client_message|start_echo_server|wait_echo_ready|send_udp_echo|send_tcp_echo> ..." >&2
     exit 2
     ;;
 esac

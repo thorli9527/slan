@@ -1,6 +1,6 @@
 version: 1
 slice: control-plane
-source_of_truth: server/service-biz/internal/biz
+source_of_truth: server/service-biz/internal/service
 contracts:
   BootstrapRequest:
     fields:
@@ -116,9 +116,6 @@ contracts:
         required: false
   NetworkMap:
     fields:
-      selfUserId:
-        type: string
-        required: true
       selfDeviceId:
         type: string
         required: true

@@ -1,22 +1,30 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/slan/service-biz/internal/model"
+)
 
 func (s OpsDashboardService) Dashboard(ctx context.Context) (OpsDashboardView, error) {
-	users, _ := s.Users.ListUsers(ctx)
+	customers, _ := s.Customers.ListCustomers(ctx)
 	operators, _ := s.Operators.ListOperators(ctx)
-	networks := 0
+	networkCount := 0
 	devices := 0
-	for _, user := range users {
-		userNetworks, _ := s.Networks.ListNetworksByOwner(ctx, user.UserID)
-		networks += len(userNetworks)
-		userDevices, _ := s.Devices.ListDevicesByOwner(ctx, user.UserID)
-		devices += len(userDevices)
+	if items, err := s.Inventory.ListAllDevices(ctx); err == nil {
+		devices = len(items)
+	}
+	if lister, ok := s.Networks.(interface {
+		ListNetworks(context.Context) ([]model.Network, error)
+	}); ok {
+		if networks, err := lister.ListNetworks(ctx); err == nil {
+			networkCount = len(networks)
+		}
 	}
 	return OpsDashboardView{
-		Users:     len(users),
+		Customers: len(customers),
 		Devices:   devices,
-		Networks:  networks,
+		Networks:  networkCount,
 		Operators: len(operators),
 	}, nil
 }

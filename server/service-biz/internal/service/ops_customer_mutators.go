@@ -1,42 +1,21 @@
 package service
 
-import (
-	"strconv"
+import "github.com/slan/service-biz/internal/model"
 
-	"github.com/slan/service-biz/internal/model"
-)
-
-func applyUpdateCustomerInput(user model.User, input UpdateCustomerInput, now int64) model.User {
+func applyUpdateCustomerInput(customer model.Customer, input UpdateCustomerInput, now int64) model.Customer {
 	if input.Email != "" {
-		user.Email = input.Email
+		customer.Email = input.Email
 	}
 	if input.Name != "" {
-		user.Name = input.Name
+		customer.Name = input.Name
 	}
-	user.Country = input.Country
-	user.Province = input.Province
-	user.City = input.City
-	user.IPRegion = input.IPRegion
+	customer.Country = input.Country
+	customer.Province = input.Province
+	customer.City = input.City
+	customer.IPRegion = input.IPRegion
 	if input.Status != "" {
-		user.Status = input.Status
+		customer.Status = input.Status
 	}
-	user.UpdatedAt = now
-	return user
-}
-
-func newManualRenewal(now int64, customerID, customerEmail string, input AssignCustomerPlanInput) model.Renewal {
-	return model.Renewal{
-		RenewalID:     "renewal-" + strconv.FormatInt(now, 10),
-		CustomerID:    customerID,
-		CustomerEmail: customerEmail,
-		PlanCode:      input.PlanCode,
-		Period:        firstNonEmpty(input.Period, "custom"),
-		Amount:        input.Amount,
-		Status:        "paid",
-		RenewAt:       firstNonZero(input.ExpiresAt, now),
-		PaidAt:        now,
-		Source:        "manual",
-		Operator:      "ops",
-		UpdatedAt:     now,
-	}
+	customer.UpdatedAt = now
+	return customer
 }

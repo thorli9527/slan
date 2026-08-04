@@ -66,8 +66,8 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := OpsNodeService{
-				Catalog: tt.repo,
-				Now:     func() time.Time { return now },
+				Nodes: tt.repo,
+				Now:   func() time.Time { return now },
 			}
 			_, err := svc.UpsertRelayNode(context.Background(), tt.input)
 			if !errors.Is(err, tt.wantErr) {
@@ -134,8 +134,8 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := OpsNodeService{
-				Catalog: tt.repo,
-				Now:     func() time.Time { return now },
+				Nodes: tt.repo,
+				Now:   func() time.Time { return now },
 			}
 			_, err := svc.UpsertPunchNode(context.Background(), tt.input)
 			if !errors.Is(err, tt.wantErr) {
@@ -199,58 +199,5 @@ func (r *opsNodeTestRepo) SavePunchNode(_ context.Context, item model.PunchNode)
 
 func (r *opsNodeTestRepo) DeletePunchNode(context.Context, string) error { return nil }
 
-func (r *opsNodeTestRepo) GetCustomerPlan(context.Context, string) (string, bool, error) {
-	return "", false, nil
-}
-
-func (r *opsNodeTestRepo) SaveCustomerPlan(context.Context, string, string) error { return nil }
-
-func (r *opsNodeTestRepo) ListClientDownloads(context.Context) ([]model.ClientDownload, error) {
-	return nil, nil
-}
-
-func (r *opsNodeTestRepo) GetClientDownload(context.Context, string) (model.ClientDownload, bool, error) {
-	return model.ClientDownload{}, false, nil
-}
-
-func (r *opsNodeTestRepo) SaveClientDownload(context.Context, model.ClientDownload) error { return nil }
-
-func (r *opsNodeTestRepo) DeleteClientDownload(context.Context, string) error { return nil }
-
-func (r *opsNodeTestRepo) ListPlans(context.Context) ([]model.Plan, error) { return nil, nil }
-
-func (r *opsNodeTestRepo) GetPlan(context.Context, string) (model.Plan, bool, error) {
-	return model.Plan{}, false, nil
-}
-
-func (r *opsNodeTestRepo) SavePlan(context.Context, model.Plan) error { return nil }
-
-func (r *opsNodeTestRepo) ListProducts(context.Context) ([]model.Product, error) { return nil, nil }
-
-func (r *opsNodeTestRepo) GetProduct(context.Context, string) (model.Product, bool, error) {
-	return model.Product{}, false, nil
-}
-
-func (r *opsNodeTestRepo) SaveProduct(context.Context, model.Product) error { return nil }
-
-func (r *opsNodeTestRepo) ListOrders(context.Context) ([]model.Order, error) { return nil, nil }
-
-func (r *opsNodeTestRepo) GetOrder(context.Context, string) (model.Order, bool, error) {
-	return model.Order{}, false, nil
-}
-
-func (r *opsNodeTestRepo) SaveOrder(context.Context, model.Order) error { return nil }
-
-func (r *opsNodeTestRepo) ListRenewals(context.Context) ([]model.Renewal, error) { return nil, nil }
-
-func (r *opsNodeTestRepo) GetRenewal(context.Context, string) (model.Renewal, bool, error) {
-	return model.Renewal{}, false, nil
-}
-
-func (r *opsNodeTestRepo) SaveRenewal(context.Context, model.Renewal) error { return nil }
-
-func (r *opsNodeTestRepo) DeleteRenewal(context.Context, string) error { return nil }
-
-func (r *opsNodeTestRepo) NewRelayNodeID() string      { return "relay000000000000000000000000000999" }
-func (r *opsNodeTestRepo) NewPunchNodeID() string      { return "punch000000000000000000000000000999" }
-func (r *opsNodeTestRepo) NewClientDownloadID() string { return "download0000000000000000000000000999" }
+func (r *opsNodeTestRepo) NewRelayNodeID() string { return "relay000000000000000000000000000999" }
+func (r *opsNodeTestRepo) NewPunchNodeID() string { return "punch000000000000000000000000000999" }

@@ -1,0 +1,14 @@
+<section class="page"><article class="panel">
+  <div class="panel-title"><div><h2>设备组</h2><p>全局设备分组可被多个网络引用。</p></div><button class="primary" type="button" (click)="vm.openDeviceGroupDialog()">新增设备组</button></div>
+  <table><thead><tr><th>名称</th><th>说明</th><th>成员设备</th><th>操作</th></tr></thead><tbody>
+    <tr *ngFor="let group of pagedGroups"><td><div class="resource-name-cell"><strong>{{ group.name }}</strong><button class="quick-rename-button" type="button" title="修改设备组名称" aria-label="修改设备组名称" (click)="vm.openQuickRename('deviceGroup', group)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button></div><code>{{ group.groupId }}</code></td><td>{{ group.description || '-' }}</td>
+      <td><strong>{{ vm.memberCountForGroup(group.groupId) }}</strong> 台</td>
+      <td><div class="row-actions">
+        <button class="table-icon-button" type="button" title="管理绑定设备" aria-label="管理绑定设备" (click)="vm.openDeviceGroupBindingDialog(group)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0-1a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm5.5 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm0-1a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3ZM1 13c0-2.21 2.239-4 5-4s5 1.79 5 4v1H1v-1Zm1 .02V13h8v-.02C9.984 11.45 8.254 10 6 10s-3.984 1.45-4 3.02ZM12 9c2.21 0 4 1.343 4 3v1h-4v-1h3c0-1.014-1.337-2-3-2V9Z"/></svg></button>
+        <button class="table-icon-button" type="button" title="编辑设备组" aria-label="编辑设备组" (click)="vm.openDeviceGroupDialog(group)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.013 1.427a2 2 0 0 1 2.828 2.828l-7.28 7.28-3.3.472.471-3.3 7.281-7.28Zm1.414 1.414a1 1 0 0 0-1.414 0L4.675 9.18l-.236 1.65 1.65-.236 6.338-6.339a1 1 0 0 0 0-1.414Z"/></svg></button>
+        <button class="danger-icon-button" type="button" title="删除设备组" aria-label="删除设备组" (click)="vm.deleteDeviceGroup(group)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1h3a1 1 0 0 1 1 1V3h3v1h-1v9a2 2 0 0 1-2 2h-5a2 2 0 0 1-2-2V4h-1V3h3V2a1 1 0 0 1 1-1Zm3 2V2h-3v1h3Zm-4 1v9a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V4h-7Z"/></svg></button>
+      </div></td></tr>
+    <tr *ngIf="vm.deviceGroups.length === 0"><td colspan="4" class="empty-cell">暂无设备组</td></tr>
+  </tbody></table>
+  <ops-pagination [total]="vm.deviceGroups.length" [page]="page" [pageSize]="pageSize" (pageChange)="page = $event" (pageSizeChange)="pageSize = $event; resetPage()"></ops-pagination>
+</article></section>

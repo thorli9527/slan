@@ -8,23 +8,15 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_activation_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
+APP_DIR="$ROOT_DIR/client/app_flutter"
 BUNDLE_ID="${SLAN_IOS_BUNDLE_ID:-dev.slan.client.v2}"
 SIM_A_NAME="${SLAN_IOS_SIM_A_NAME:-iPhone 17 Pro}"
 SIM_B_NAME="${SLAN_IOS_SIM_B_NAME:-SLAN iPhone 16 Pro Clean 26.5}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-GENERATED_TEST_EMAIL=0
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-else
-  EMAIL="ios-dual-flutter-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 WORK_DIR="${SLAN_IOS_DUAL_FLUTTER_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-ios-dual-flutter.XXXXXX")}"
 LOG_A_PHASE1="$WORK_DIR/ios-a-phase1.log"
 LOG_B_PHASE1="$WORK_DIR/ios-b-phase1.log"
@@ -40,10 +32,13 @@ REQUESTED_DEVICE_ID_A="${SLAN_IOS_REQUESTED_DEVICE_ID_A:-$(uuidgen | tr '[:upper
 REQUESTED_DEVICE_ID_B="${SLAN_IOS_REQUESTED_DEVICE_ID_B:-$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')}"
 
 PIDS=()
-USER_ID=""
-USER_TOKEN=""
 NETWORK_ID=""
 DEVICE_GROUP_ID=""
+OPS_TOKEN=""
+CREDENTIAL_ID_A=""
+AUTHORIZATION_KEY_A=""
+CREDENTIAL_ID_B=""
+AUTHORIZATION_KEY_B=""
 
 read_lines_into_array() {
   local __target_var="$1"
@@ -76,21 +71,17 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
-  if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
-    local auth
-    auth="$(curl --silent --show-error --connect-timeout 5 --max-time 15 \
-      -X POST "${WEB_BASE_URL}/api/web/auth/login" \
-      -H 'Content-Type: application/json' \
-      -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" 2>/dev/null || true)"
-    USER_TOKEN="$(printf '%s' "$auth" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+  if [[ -n "$DEVICE_GROUP_ID" && -n "$OPS_TOKEN" ]]; then
     curl --silent --show-error --connect-timeout 5 --max-time 20 \
-      -X DELETE "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
-      -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
+      -X DELETE "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}" \
+      -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null 2>&1 || true
     curl --silent --show-error --connect-timeout 5 --max-time 20 \
-      -X DELETE "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
-      -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
+      -X DELETE "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}" \
+      -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null 2>&1 || true
   fi
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
+  slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$CREDENTIAL_ID_A" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$CREDENTIAL_ID_B" >/dev/null 2>&1 || true
   if [[ "${SLAN_KEEP_IOS_DUAL_FLUTTER_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
@@ -136,7 +127,7 @@ run_flutter_test_bg() {
   shift 3
   (
     cd "$APP_DIR"
-    FLUTTER_BUILD_DIR="$build_dir" flutter test integration_test/mobile_login_test.dart \
+    FLUTTER_BUILD_DIR="$build_dir" flutter test integration_test/device_activation_harness_test.dart \
       -d "$device" \
       "$@"
   ) >"$log_file" 2>&1 &
@@ -151,7 +142,7 @@ run_flutter_test_fg() {
   shift 3
   (
     cd "$APP_DIR"
-    FLUTTER_BUILD_DIR="$build_dir" flutter test integration_test/mobile_login_test.dart \
+    FLUTTER_BUILD_DIR="$build_dir" flutter test integration_test/device_activation_harness_test.dart \
       -d "$device" \
       "$@"
   ) >"$log_file" 2>&1
@@ -170,53 +161,63 @@ capture_device_id_or_die() {
   printf '%s\n' "$device_id"
 }
 
-run_ios_login_capture() {
+ios_activation_defines() {
+  local requested_device_id="$1"
+  if [[ "$requested_device_id" == "$REQUESTED_DEVICE_ID_A" ]]; then
+    slan_mobile_activation_common_defines "$BIZ_URL" "$AUTHORIZATION_KEY_A" true
+  else
+    slan_mobile_activation_common_defines "$BIZ_URL" "$AUTHORIZATION_KEY_B" true
+  fi
+}
+
+run_ios_activation_capture() {
   local device="$1"
   local log_file="$2"
   local build_dir="$3"
   local requested_device_id="$4"
-  local register_user="$5"
+  local common_defines=()
+  read_lines_into_array common_defines < <(ios_activation_defines "$requested_device_id")
   run_flutter_test_fg \
     "$device" \
     "$log_file" \
     "$build_dir" \
-    "${COMMON_DART_DEFINES[@]}" \
+    "${common_defines[@]}" \
     --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
-    --dart-define="SLAN_TEST_REGISTER_USER=$register_user" \
     --dart-define="SLAN_TEST_WAIT_MQTT=false"
 }
 
-provision_network_device_group() {
-  local auth networks response device_id
-  auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_ID="$(printf '%s' "$auth" | sed -n 's/.*"userId":"\([^"]*\)".*/\1/p')"
-  USER_TOKEN="$(printf '%s' "$auth" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-  [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || { echo "failed to authenticate iOS test admin" >&2; exit 1; }
-  networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
-  NETWORK_ID="$(printf '%s' "$networks" | sed -n 's/.*"networkId":"\([^"]*\)".*/\1/p' | head -n 1)"
-  [[ -n "$NETWORK_ID" ]] || { echo "failed to resolve iOS test network" >&2; exit 1; }
+provision_ops_resources() {
+  local credential network response device_id
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
+  credential="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Dual iOS A" "$REQUESTED_DEVICE_ID_A")"
+  CREDENTIAL_ID_A="$(printf '%s' "$credential" | jq -er '.credentialId')"
+  AUTHORIZATION_KEY_A="$(printf '%s' "$credential" | jq -er '.key')"
+  credential="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Dual iOS B" "$REQUESTED_DEVICE_ID_B")"
+  CREDENTIAL_ID_B="$(printf '%s' "$credential" | jq -er '.credentialId')"
+  AUTHORIZATION_KEY_B="$(printf '%s' "$credential" | jq -er '.key')"
+  curl --silent --show-error --fail -X POST "$BIZ_URL/api/device-auth/token" -H 'Content-Type: application/json' \
+    -d "{\"key\":\"$AUTHORIZATION_KEY_A\",\"deviceId\":\"$REQUESTED_DEVICE_ID_A\"}" >/dev/null
+  curl --silent --show-error --fail -X POST "$BIZ_URL/api/device-auth/token" -H 'Content-Type: application/json' \
+    -d "{\"key\":\"$AUTHORIZATION_KEY_B\",\"deviceId\":\"$REQUESTED_DEVICE_ID_B\"}" >/dev/null
+  network="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "ios-dual-$(date +%s%N)")"
+  NETWORK_ID="$(printf '%s' "$network" | jq -er '.networkId')"
   response="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -X POST "${OPS_BASE_URL}/api/ops/device-groups" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"name\":\"ios-flutter-$(date +%s%N)\",\"description\":\"Dual iOS Flutter devices\"}")"
   DEVICE_GROUP_ID="$(printf '%s' "$response" | sed -n 's/.*"groupId":"\([^"]*\)".*/\1/p')"
   [[ -n "$DEVICE_GROUP_ID" ]] || { echo "failed to create iOS test device group" >&2; exit 1; }
-  for device_id in "$DEVICE_ID_A" "$DEVICE_ID_B"; do
+  for device_id in "$REQUESTED_DEVICE_ID_A" "$REQUESTED_DEVICE_ID_B"; do
     curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
-      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -X POST "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}/devices" \
+      -H "Authorization: Bearer ${OPS_TOKEN}" \
       -H 'Content-Type: application/json' \
-      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+      -d "{\"deviceId\":\"${device_id}\"}" >/dev/null
   done
   curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -X POST "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
   echo "==> attached iOS device group ${DEVICE_GROUP_ID} to network ${NETWORK_ID}"
@@ -229,15 +230,17 @@ start_ios_message_wait() {
   local requested_device_id="$4"
   local expect_from_device_id="$5"
   local expect_body="$6"
+  local common_defines=()
   local expect_defines=()
+  read_lines_into_array common_defines < <(ios_activation_defines "$requested_device_id")
   read_lines_into_array expect_defines < <(
-    slan_mobile_login_message_expect_defines "$expect_from_device_id" "$expect_body"
+    slan_mobile_message_expect_defines "$expect_from_device_id" "$expect_body"
   )
   run_flutter_test_bg \
     "$device" \
     "$log_file" \
     "$build_dir" \
-    "${COMMON_DART_DEFINES[@]}" \
+    "${common_defines[@]}" \
     --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
     "${expect_defines[@]}"
 }
@@ -249,15 +252,17 @@ run_ios_message_send() {
   local requested_device_id="$4"
   local target_device_id="$5"
   local body="$6"
+  local common_defines=()
   local send_defines=()
+  read_lines_into_array common_defines < <(ios_activation_defines "$requested_device_id")
   read_lines_into_array send_defines < <(
-    slan_mobile_login_message_send_defines "$target_device_id" "$body"
+    slan_mobile_message_send_defines "$target_device_id" "$body"
   )
   run_flutter_test_fg \
     "$device" \
     "$log_file" \
     "$build_dir" \
-    "${COMMON_DART_DEFINES[@]}" \
+    "${common_defines[@]}" \
     --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
     "${send_defines[@]}"
 }
@@ -268,38 +273,39 @@ SIM_B_DEVICE="${SLAN_IOS_SIM_B_DEVICE:-$SIM_B_NAME}"
 echo "==> dual iOS flutter message check"
 echo "==> device A: $SIM_A_DEVICE"
 echo "==> device B: $SIM_B_DEVICE"
-echo "==> email: $EMAIL"
 echo "==> requested ios-a device id: $REQUESTED_DEVICE_ID_A"
 echo "==> requested ios-b device id: $REQUESTED_DEVICE_ID_B"
 
 xcrun simctl uninstall "$SIM_A_DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl uninstall "$SIM_B_DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
-read_lines_into_array COMMON_DART_DEFINES < <(
-  slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
-)
+provision_ops_resources
 
-echo "==> phase 1: login ios-a and capture device id"
-run_ios_login_capture \
+echo "==> phase 1: activate ios-a and capture device id"
+run_ios_activation_capture \
   "$SIM_A_DEVICE" \
   "$LOG_A_PHASE1" \
   "$WORK_DIR/build-a-phase1" \
-  "$REQUESTED_DEVICE_ID_A" \
-  true
+  "$REQUESTED_DEVICE_ID_A"
 DEVICE_ID_A="$(capture_device_id_or_die "$LOG_A_PHASE1" "ios-a")"
+[[ "$DEVICE_ID_A" == "$REQUESTED_DEVICE_ID_A" ]] || {
+  echo "ios-a device id mismatch: expected=$REQUESTED_DEVICE_ID_A actual=$DEVICE_ID_A" >&2
+  exit 1
+}
 echo "ios-a device id: $DEVICE_ID_A"
 
-echo "==> phase 1: login ios-b and capture device id"
-run_ios_login_capture \
+echo "==> phase 1: activate ios-b and capture device id"
+run_ios_activation_capture \
   "$SIM_B_DEVICE" \
   "$LOG_B_PHASE1" \
   "$WORK_DIR/build-b-phase1" \
-  "$REQUESTED_DEVICE_ID_B" \
-  false
+  "$REQUESTED_DEVICE_ID_B"
 DEVICE_ID_B="$(capture_device_id_or_die "$LOG_B_PHASE1" "ios-b")"
+[[ "$DEVICE_ID_B" == "$REQUESTED_DEVICE_ID_B" ]] || {
+  echo "ios-b device id mismatch: expected=$REQUESTED_DEVICE_ID_B actual=$DEVICE_ID_B" >&2
+  exit 1
+}
 echo "ios-b device id: $DEVICE_ID_B"
-
-provision_network_device_group
 
 echo "==> phase 2: ios-b sends message to ios-a"
 start_ios_message_wait \
@@ -339,4 +345,4 @@ run_ios_message_send \
   "$MESSAGE_A_TO_B"
 wait "$WAIT_PID_B"
 
-echo "iosDualFlutterMessageCheck: ok email=$EMAIL ios-a=$DEVICE_ID_A ios-b=$DEVICE_ID_B"
+echo "iosDualFlutterMessageCheck: ok ios-a=$DEVICE_ID_A ios-b=$DEVICE_ID_B"

@@ -2,7 +2,6 @@ package repository
 
 type gormNetworkRecord struct {
 	NetworkID        string `gorm:"primaryKey;size:64"`
-	OwnerID          string `gorm:"size:64;index"`
 	Name             string `gorm:"size:255"`
 	CIDR             string `gorm:"column:cidr;size:128"`
 	IntraGroupPolicy string `gorm:"size:32"`
@@ -40,6 +39,8 @@ type gormNetworkDeviceRecord struct {
 	ID                 uint64              `gorm:"primaryKey;autoIncrement"`
 	NetworkID          string              `gorm:"size:64;uniqueIndex:uidx_gorm_network_device_records_network_device"`
 	DeviceID           string              `gorm:"size:64;uniqueIndex:uidx_gorm_network_device_records_network_device"`
+	Direct             bool                `gorm:"not null"`
+	DeviceGroupIDs     jsonStringSlice     `gorm:"type:json"`
 	Enabled            bool                `gorm:"not null"`
 	MemberStatus       string              `gorm:"size:64;index"`
 	PresenceStatus     string              `gorm:"size:64;index"`
@@ -79,19 +80,6 @@ type gormNetworkDeviceGroupReferenceRecord struct {
 	GroupID   string `gorm:"primaryKey;size:64;index"`
 	CreatedAt int64  `gorm:"not null"`
 	UpdatedAt int64  `gorm:"not null"`
-}
-
-type gormDeviceInviteRecord struct {
-	InviteID      string `gorm:"primaryKey;size:64"`
-	InviteCode    string `gorm:"size:255;index"`
-	InviterUserID string `gorm:"size:64;index"`
-	NetworkID     string `gorm:"size:64;index"`
-	DeviceID      string `gorm:"size:64;index"`
-	UserID        string `gorm:"size:64;index"`
-	Status        string `gorm:"size:64;index"`
-	CreatedAt     int64  `gorm:"not null"`
-	ExpiresAt     int64  `gorm:"not null"`
-	AcceptedAt    int64  `gorm:"not null"`
 }
 
 type gormDNSZoneRecord struct {

@@ -63,7 +63,7 @@
 
 客户端接入 `server-wire-derp` 前必须已经：
 
-1. 完成 `server-biz` 的业务身份与网络授权
+1. 完成 `service-biz` 的设备身份与网络授权
 2. 向 `server-wire` 注册 runtime
 3. 从 `server-wire` 获得 `derp_tcp_tls_443` 作为当前最终兜底路径
 4. 从 `server-wire` 获得 DERP ticket 与目标 node 信息

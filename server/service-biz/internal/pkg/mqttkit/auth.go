@@ -10,8 +10,9 @@ import (
 const ServerID = "service-biz"
 
 type AuthResult struct {
-	Principal string
-	DeviceID  string
+	Principal    string
+	DeviceID     string
+	CredentialID string
 }
 
 func ValidateCredential(cfg Config, clientID, username, givenPassword string, now time.Time) (AuthResult, bool) {
@@ -28,8 +29,8 @@ func ValidateCredential(cfg Config, clientID, username, givenPassword string, no
 }
 
 func validateCredentialOnce(cfg Config, clientID, username, givenPassword string, now time.Time) (AuthResult, bool) {
-	if deviceID, ok := validateDeviceCredential(cfg, clientID, username, givenPassword, now); ok {
-		return AuthResult{Principal: "device", DeviceID: deviceID}, true
+	if deviceID, credentialID, ok := validateDeviceCredential(cfg, clientID, username, givenPassword, now); ok {
+		return AuthResult{Principal: "device", DeviceID: deviceID, CredentialID: credentialID}, true
 	}
 	if validateServerCredential(cfg, clientID, username, givenPassword, now) {
 		return AuthResult{Principal: "server"}, true
@@ -37,20 +38,21 @@ func validateCredentialOnce(cfg Config, clientID, username, givenPassword string
 	return AuthResult{}, false
 }
 
-func validateDeviceCredential(cfg Config, clientID, username, givenPassword string, now time.Time) (string, bool) {
+func validateDeviceCredential(cfg Config, clientID, username, givenPassword string, now time.Time) (string, string, bool) {
 	if !cfg.Enabled {
-		return "", false
+		return "", "", false
 	}
-	deviceID, expiresAt, ok := parseDeviceUsername(cfg, username)
-	if !ok || expiresAt < now.Unix() {
-		return "", false
+	deviceID, credentialID, expiresAt, ok := parseDeviceUsername(cfg, username)
+	if !ok || expiresAt <= now.Unix() {
+		return "", "", false
 	}
 	baseClientID := deviceClientID(cfg, deviceID)
 	if clientID != baseClientID && !strings.HasPrefix(clientID, baseClientID+"-") {
-		return "", false
+		return "", "", false
 	}
-	return deviceID, hmac.Equal([]byte(sign(cfg.Secret, clientID, username, deviceID)), []byte(givenPassword)) ||
-		hmac.Equal([]byte(sign(cfg.Secret, baseClientID, username, deviceID)), []byte(givenPassword))
+	valid := hmac.Equal([]byte(sign(cfg.Secret, clientID, username, deviceID, credentialID)), []byte(givenPassword)) ||
+		hmac.Equal([]byte(sign(cfg.Secret, baseClientID, username, deviceID, credentialID)), []byte(givenPassword))
+	return deviceID, credentialID, valid
 }
 
 func validateServerCredential(cfg Config, clientID, username, givenPassword string, now time.Time) bool {
@@ -58,7 +60,7 @@ func validateServerCredential(cfg Config, clientID, username, givenPassword stri
 		return false
 	}
 	expiresAt, ok := parseSystemUsername(cfg, username, ServerID)
-	if !ok || expiresAt < now.Unix() {
+	if !ok || expiresAt <= now.Unix() {
 		return false
 	}
 	baseClientID := deviceClientID(cfg, ServerID)

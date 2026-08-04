@@ -5,7 +5,7 @@ networking stack.
 
 ## Services
 
-- `service-biz`: business identity, device, node, network, and IP ownership
+- `service-biz`: business identity, independent device inventory, node, network, and IP allocation
 - `server-wire`: runtime control plane and path planning
 - `server-wire-relay`: UDP relay fallback for `relay_udp`
 - `server-wire-derp`: DERP final fallback for `derp_tcp_tls_443`; current transport is raw TCP JSON-lines, while production TLS/443 requires an external L4/TLS terminator or a future in-process TLS transport

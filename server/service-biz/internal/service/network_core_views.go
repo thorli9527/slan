@@ -9,7 +9,6 @@ import (
 func networkView(item model.Network) NetworkView {
 	return NetworkView{
 		NetworkID:        item.NetworkID,
-		OwnerID:          item.OwnerID,
 		Name:             item.Name,
 		CIDR:             item.CIDR,
 		IntraGroupPolicy: strings.TrimSpace(item.IntraGroupPolicy),

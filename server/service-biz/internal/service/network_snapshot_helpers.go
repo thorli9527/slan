@@ -11,10 +11,9 @@ import (
 
 func buildNetworkSnapshotPayload(
 	ctx context.Context,
-	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsRepository,
+	ops repository.OpsNodeRepository,
 	nowFn func() time.Time,
 	networkID string,
 ) (map[string]any, error) {
@@ -48,7 +47,6 @@ func buildNetworkSnapshotPayload(
 		}, nil
 	}
 	core := NetworkCoreService{
-		Users:    users,
 		Devices:  devices,
 		Networks: networks,
 		Ops:      ops,
@@ -90,10 +88,9 @@ func firstActiveManagedNetworkDeviceID(
 
 func publishNetworkSnapshot(
 	ctx context.Context,
-	users repository.UserRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsRepository,
+	ops repository.OpsNodeRepository,
 	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,
@@ -103,14 +100,13 @@ func publishNetworkSnapshot(
 	if eventPublisher == nil {
 		return nil
 	}
-	snapshot, err := buildNetworkSnapshotPayload(ctx, users, devices, networks, ops, nowFn, networkID)
+	snapshot, err := buildNetworkSnapshotPayload(ctx, devices, networks, ops, nowFn, networkID)
 	if err != nil {
 		return err
 	}
 	occurredAt := currentTime(nowFn)
 	eventSnapshot, err := buildNetworkEventSnapshotFromRepositories(
 		ctx,
-		users,
 		devices,
 		networks,
 		ops,
@@ -153,8 +149,6 @@ func networkResolvedSnapshotPayload(resolved NetworkResolvedConfigView) map[stri
 	for _, peer := range view.Peers {
 		peers = append(peers, map[string]any{
 			"deviceId":   peer.DeviceID,
-			"ownerId":    peer.OwnerID,
-			"ownerEmail": peer.OwnerEmail,
 			"alias":      peer.Alias,
 			"globalIp":   peer.GlobalIP,
 			"globalName": peer.GlobalName,

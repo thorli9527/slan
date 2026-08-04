@@ -8,5 +8,5 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 
-cd "$ROOT_DIR/client_v2/app_flutter"
+cd "$ROOT_DIR/client/app_flutter"
 flutter test test/home_page_ui_test.dart

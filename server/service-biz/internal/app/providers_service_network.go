@@ -6,10 +6,8 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 	repos := deps.networkRepositories()
 	ids := deps.networkIDs()
 	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig(), repos.EventDeliveries)
-	devicePublisher := servicepkg.NewDeviceControlPublisher(deps.mqttConfig())
 	return NetworkServices{
 		CoreAccess: servicepkg.NetworkCoreService{
-			Users:              repos.Users,
 			Devices:            repos.Devices,
 			Networks:           repos.Networks,
 			Ops:                repos.Ops,
@@ -18,18 +16,7 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 			NewNetworkID:       ids.NewNetworkID,
 			Now:                deps.now(),
 		},
-		InviteManagement: servicepkg.NetworkInviteService{
-			Users:           repos.Users,
-			Devices:         repos.Devices,
-			Relations:       repos.Relations,
-			Networks:        repos.Networks,
-			EventPublisher:  eventPublisher,
-			DevicePublisher: devicePublisher,
-			NewInviteID:     ids.NewInviteID,
-			Now:             deps.now(),
-		},
 		DNSManagement: servicepkg.NetworkDNSService{
-			Users:          repos.Users,
 			Devices:        repos.Devices,
 			Networks:       repos.Networks,
 			Ops:            repos.Ops,
@@ -37,7 +24,6 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 			Now:            deps.now(),
 		},
 		AccessManagement: servicepkg.NetworkAccessService{
-			Users:          repos.Users,
 			Devices:        repos.Devices,
 			Networks:       repos.Networks,
 			Ops:            repos.Ops,

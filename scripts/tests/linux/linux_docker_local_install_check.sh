@@ -11,7 +11,7 @@ source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 IMAGE="${SLAN_LINUX_DOCKER_IMAGE:-ubuntu:24.04}"
 CONTAINER_NAME="${SLAN_LINUX_DOCKER_NAME:-slan-linux-local-install-check}"
 SERVER_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
-SESSION_KEY="${SLAN_TEST_SESSION_KEY:-local-docker-session-key}"
+AUTHORIZATION_KEY="${SLAN_TEST_DEVICE_AUTHORIZATION_KEY:-local-docker-authorization-key}"
 TRAY_MODE="${SLAN_LINUX_TRAY_MODE:-disabled}"
 
 log() {
@@ -33,7 +33,7 @@ resolve_linux_package_path() {
     return
   fi
 
-  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local installer_dir="$ROOT_DIR/client/.tmp/installer/linux"
   local host_arch
   host_arch="$(uname -m 2>/dev/null || true)"
   local preferred=()
@@ -100,10 +100,10 @@ apt-get install -y bash curl ca-certificates tar
 log "run Linux installer against local package"
 docker exec "$CONTAINER_NAME" bash -lc "
 set -euo pipefail
-cd /workspace/slan/client_v2/install/linux
+cd /workspace/slan/client/install/linux
 bash install.sh \
   --server='${SERVER_URL}' \
-  --installation-key='${SESSION_KEY}' \
+  --authorization-key='${AUTHORIZATION_KEY}' \
   --tray='${TRAY_MODE}' \
   --package-url='file:///workspace/slan/${PACKAGE_PATH#$ROOT_DIR/}'
 "
@@ -112,10 +112,9 @@ log "verify installed files"
 docker exec "$CONTAINER_NAME" bash -lc "
 set -euo pipefail
 test -x /opt/slan-client-v2/bin/client-core-service
-test -f /etc/slan/bootstrap.env
-grep -q '^SLAN_CONTROL_BASE_URL=${SERVER_URL}\$' /etc/slan/bootstrap.env
-grep -q '^SLAN_INSTALLATION_KEY=${SESSION_KEY}\$' /etc/slan/bootstrap.env
-grep -q '^SLAN_SESSION_KEY=${SESSION_KEY}\$' /etc/slan/bootstrap.env
+test -f /etc/slan/client-v2-console.env
+grep -q '^SLAN_CONTROL_BASE_URL=${SERVER_URL}\$' /etc/slan/client-v2-console.env
+grep -q '^SLAN_DEVICE_AUTHORIZATION_KEY=${AUTHORIZATION_KEY}\$' /etc/slan/client-v2-console.env
 test -f /etc/slan/client-v2-install.env
 grep -q '^SLAN_LINUX_TRAY_MODE=${TRAY_MODE}\$' /etc/slan/client-v2-install.env
 test -f /usr/bin/slan-client-v2-console

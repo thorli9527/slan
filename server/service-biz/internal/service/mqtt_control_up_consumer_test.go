@@ -2,11 +2,26 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
 )
+
+func TestHandleUpstreamMessageRejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	service := MQTTWebhookService{}
+	err := service.HandleUpstreamMessage(
+		context.Background(),
+		"slan/devices/device-a/heartbeat",
+		[]byte(strings.Repeat("x", maxMQTTUpstreamPayloadBytes+1)),
+	)
+	if err == nil || !strings.Contains(err.Error(), "payload exceeds") {
+		t.Fatalf("expected payload size error, got %v", err)
+	}
+}
 
 func TestDecodeControlUpEndpointReport(t *testing.T) {
 	t.Parallel()

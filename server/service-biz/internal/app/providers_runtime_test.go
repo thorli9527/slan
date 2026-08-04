@@ -45,3 +45,12 @@ func TestNewMQTTConfigFallsBackPublicBrokerURLToInternal(t *testing.T) {
 		t.Fatalf("expected public broker url to fall back to internal, got %q", cfg.PublicBrokerURL)
 	}
 }
+
+func TestDeviceCredentialPreviousPeppersDeduplicatesAndExcludesCurrent(t *testing.T) {
+	t.Setenv("SLAN_DEVICE_CREDENTIAL_PEPPER", "current-pepper")
+	t.Setenv("SLAN_DEVICE_CREDENTIAL_PREVIOUS_PEPPERS", " old-a, current-pepper, old-a, old-b ")
+	values := deviceCredentialPreviousPeppers()
+	if len(values) != 2 || values[0] != "old-a" || values[1] != "old-b" {
+		t.Fatalf("unexpected previous peppers: %#v", values)
+	}
+}

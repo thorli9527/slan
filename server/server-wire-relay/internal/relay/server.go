@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,10 +103,9 @@ func (s *UDPServer) servePackets() error {
 			return err
 		}
 		log.Printf(
-			"wire relay datagram remote=%s bytes=%d head=%s",
+			"wire relay datagram remote=%s bytes=%d",
 			addr.String(),
 			n,
-			datagramHead(buf[:n]),
 		)
 		if err := s.handlePacket(addr, buf[:n]); err != nil {
 			if !s.shouldReportTransientError(addr, err, time.Now()) {
@@ -248,17 +246,6 @@ func relayTicketKeyStatus() bizclient.TicketKeyStatus {
 	}
 }
 
-func datagramHead(payload []byte) string {
-	if len(payload) == 0 {
-		return "empty"
-	}
-	limit := len(payload)
-	if limit > 24 {
-		limit = 24
-	}
-	return hex.EncodeToString(payload[:limit])
-}
-
 func (s *UDPServer) handlePacket(addr *net.UDPAddr, payload []byte) error {
 	return s.handlePacketWithWriter(addr, payload, s.write)
 }
@@ -353,14 +340,13 @@ func (s *UDPServer) write(addr *net.UDPAddr, body protocol.ServerMessage) error 
 		return err
 	}
 	log.Printf(
-		"wire relay write remote=%s kind=%s session=%s participant=%s payloadBytes=%d bytes=%d head=%s",
+		"wire relay write remote=%s kind=%s session=%s participant=%s payloadBytes=%d bytes=%d",
 		addr.String(),
 		body.Kind,
 		body.SessionID,
 		body.ParticipantID,
 		len(body.Payload),
 		len(payload),
-		datagramHead(payload),
 	)
 	_, err = s.conn.WriteToUDP(payload, addr)
 	return err

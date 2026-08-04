@@ -1,13 +1,13 @@
 param(
-  [string]$ReleaseDir = "$PSScriptRoot\..\client_v2\app_flutter\build\windows\x64\runner\Release",
-  [string]$OutputDir = "$PSScriptRoot\..\client_v2\.tmp\installer\slan-client-v2-windows",
+  [string]$ReleaseDir = "$PSScriptRoot\..\client\app_flutter\build\windows\x64\runner\Release",
+  [string]$OutputDir = "$PSScriptRoot\..\client\.tmp\installer\slan-client-v2-windows",
   [switch]$Build
 )
 
 $ErrorActionPreference = 'Stop'
 
 $RootDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$PackageScript = Join-Path $RootDir 'client_v2\install\windows\package-installer.ps1'
+$PackageScript = Join-Path $RootDir 'client\install\windows\package-installer.ps1'
 $ReleasePath = [System.IO.Path]::GetFullPath($ReleaseDir)
 $OutputPath = [System.IO.Path]::GetFullPath($OutputDir)
 $ZipPath = "$OutputPath.zip"
@@ -51,10 +51,10 @@ if (-not (Test-Path -LiteralPath $PackageScript -PathType Leaf)) {
 }
 
 if ($Build) {
-  Invoke-LoggedCommand -FilePath 'cargo' -Arguments @('build', '-p', 'client-core-service', '--release') -WorkingDirectory (Join-Path $RootDir 'client_v2\rust')
-  Invoke-LoggedCommand -FilePath 'flutter' -Arguments @('build', 'windows') -WorkingDirectory (Join-Path $RootDir 'client_v2\app_flutter')
+  Invoke-LoggedCommand -FilePath 'cargo' -Arguments @('build', '-p', 'client-core-service', '--release') -WorkingDirectory (Join-Path $RootDir 'client\rust')
+  Invoke-LoggedCommand -FilePath 'flutter' -Arguments @('build', 'windows') -WorkingDirectory (Join-Path $RootDir 'client\app_flutter')
 
-  $serviceSource = Join-Path $RootDir 'client_v2\rust\target\release\client-core-service.exe'
+  $serviceSource = Join-Path $RootDir 'client\rust\target\release\client-core-service.exe'
   $serviceDestination = Join-Path $ReleasePath 'client-core-service.exe'
   if (-not (Test-Path -LiteralPath $serviceSource -PathType Leaf)) {
     throw "Missing built Windows service binary: $serviceSource"

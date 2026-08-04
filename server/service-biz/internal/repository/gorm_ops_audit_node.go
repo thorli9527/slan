@@ -7,7 +7,7 @@ import (
 )
 
 func (s *GormStore) ListAuditEvents(_ context.Context, limit int) ([]model.AuditEvent, error) {
-	query := s.db.Order("event_id desc")
+	query := s.db.Order("created_at desc").Order("event_id desc")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -18,7 +18,14 @@ func (s *GormStore) ListAuditEvents(_ context.Context, limit int) ([]model.Audit
 
 func (s *GormStore) SaveAuditEvent(_ context.Context, event model.AuditEvent) error {
 	row := auditEventRecordFromModel(event)
-	return upsertByColumns(s.db, &row, []string{"event_id"}, []string{"actor_type", "actor_id", "action", "resource_type", "resource_id", "status", "created_at"})
+	return upsertByColumns(s.db, &row, []string{"event_id"}, []string{"actor_type", "actor_id", "action", "resource_type", "resource_id", "status", "remote_ip", "detail", "created_at"})
+}
+
+func (s *GormStore) DeleteAuditEventsBefore(_ context.Context, cutoff int64) error {
+	if cutoff <= 0 {
+		return nil
+	}
+	return s.db.Where("created_at < ?", cutoff).Delete(&gormAuditEventRecord{}).Error
 }
 
 func (s *GormStore) ListRelayNodes(_ context.Context) ([]model.RelayNode, error) {

@@ -7,7 +7,7 @@ func dashboardPayload(view servicepkg.OpsDashboardView) any {
 }
 
 func auditEventPayload(view servicepkg.OpsAuditEventView) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"eventId":      view.EventID,
 		"actorType":    view.ActorType,
 		"actorId":      view.ActorID,
@@ -17,4 +17,11 @@ func auditEventPayload(view servicepkg.OpsAuditEventView) map[string]any {
 		"status":       view.Status,
 		"createdAt":    view.CreatedAt,
 	}
+	if view.RemoteIP != "" {
+		payload["remoteIp"] = view.RemoteIP
+	}
+	if view.Detail != "" {
+		payload["detail"] = view.Detail
+	}
+	return payload
 }

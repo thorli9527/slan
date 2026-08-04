@@ -65,8 +65,8 @@ func TestCheckRequestInput(t *testing.T) {
 	if input.DeviceID != "header-device" {
 		t.Fatalf("deviceId = %q", input.DeviceID)
 	}
-	if input.UserID != "header-user" {
-		t.Fatalf("userId = %q", input.UserID)
+	if input.IdentityID != "header-user" {
+		t.Fatalf("identityId = %q", input.IdentityID)
 	}
 	if input.Topic != "slan/networks/demo/broadcast" {
 		t.Fatalf("topic = %q", input.Topic)

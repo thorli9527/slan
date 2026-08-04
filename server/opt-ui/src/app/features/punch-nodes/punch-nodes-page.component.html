@@ -31,7 +31,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr *ngFor="let node of vm.punchNodes">
+        <tr *ngFor="let node of pagedPunchNodes">
           <td><strong>{{ node.name }}</strong><br><code>{{ node.nodeId }}</code></td>
           <td>{{ node.region }}</td>
           <td><code>{{ node.publicUdpIp }}:{{ node.publicUdpPort }}</code></td>
@@ -63,5 +63,6 @@
         </tr>
       </tbody>
     </table>
+    <ops-pagination [total]="vm.punchNodes.length" [page]="page" [pageSize]="pageSize" (pageChange)="page = $event" (pageSizeChange)="pageSize = $event; resetPage()"></ops-pagination>
   </article>
 </section>

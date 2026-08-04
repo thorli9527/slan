@@ -155,7 +155,7 @@ L4/TLS 终止层转发裸 TCP 到本服务，或后续在所有客户端和服�
 
 ## 与 server-wire 的接口边界
 
-`server-wire-derp` 自身不生成 DERP ticket，不直接调用 `server-biz`。
+`server-wire-derp` 自身不生成 DERP ticket，不直接调用 `service-biz`。
 
 它信任 `server-wire` 输出的：
 

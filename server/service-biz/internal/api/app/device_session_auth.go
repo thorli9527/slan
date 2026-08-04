@@ -14,18 +14,28 @@ func authenticatedDeviceID(
 	sessions servicepkg.DeviceSessionUseCase,
 	claimedDeviceIDs ...string,
 ) (string, bool) {
+	session, ok := authenticatedDeviceSession(w, r, sessions, claimedDeviceIDs...)
+	return session.DeviceID, ok
+}
+
+func authenticatedDeviceSession(
+	w http.ResponseWriter,
+	r *http.Request,
+	sessions servicepkg.DeviceSessionUseCase,
+	claimedDeviceIDs ...string,
+) (servicepkg.DeviceSessionView, bool) {
 	session, err := sessions.AuthenticateDeviceSession(r.Context(), serviceapi.AccessTokenFromRequest(r))
 	if err != nil {
 		serviceapi.WriteError(w, err)
-		return "", false
+		return servicepkg.DeviceSessionView{}, false
 	}
 	deviceID := strings.TrimSpace(session.DeviceID)
 	for _, claimedDeviceID := range claimedDeviceIDs {
 		claimedDeviceID = strings.TrimSpace(claimedDeviceID)
 		if claimedDeviceID != "" && claimedDeviceID != deviceID {
 			serviceapi.WriteError(w, servicepkg.ErrUnauthorized)
-			return "", false
+			return servicepkg.DeviceSessionView{}, false
 		}
 	}
-	return deviceID, true
+	return session, true
 }

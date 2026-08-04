@@ -25,13 +25,12 @@ func networkSummaryViews(items []model.Network) []NetworkSummaryView {
 
 func buildDeviceProfiles(
 	ctx context.Context,
-	users repository.UserRepository,
 	networks repository.NetworkRepository,
 	items []model.Device,
 ) ([]DeviceProfileView, error) {
 	views := make([]DeviceProfileView, 0, len(items))
 	for _, item := range items {
-		view, err := buildDeviceProfile(ctx, users, networks, item)
+		view, err := buildDeviceProfile(ctx, networks, item)
 		if err != nil {
 			return nil, err
 		}

@@ -18,7 +18,6 @@ if (!existsSync(path.join(rootDir, '.git'))) {
 }
 const WebSocket = require(path.join(rootDir, 'server/opt-ui/node_modules/ws'));
 
-const webBase = process.env.SLAN_UI_SMOKE_WEB_BASE || 'http://47.245.40.231:24200';
 const opsBase = process.env.SLAN_UI_SMOKE_OPS_BASE || 'http://47.245.40.231:24201';
 const chromePath = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const outDir = process.env.SLAN_UI_SMOKE_OUT_DIR || path.join(rootDir, '.tmp/ui-browser-smoke');
@@ -375,6 +374,12 @@ async function newPage(port, url, label) {
   const target = await fetchJSON(`http://127.0.0.1:${port}/json/new?${encodeURIComponent('about:blank')}`, { method: 'PUT' });
   const page = new CDPPage(target.webSocketDebuggerUrl, label);
   await page.connect();
+  await page.send('Emulation.setDeviceMetricsOverride', {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
   await page.navigate(url);
   await page.installHelpers();
   return page;
@@ -427,232 +432,6 @@ async function launchChrome() {
   };
 }
 
-async function exerciseCustomerUI(browser) {
-  const page = await newPage(browser.port, webBase, 'web');
-  const email = `ui-browser-${runID}@staticlss.com`;
-  const testDeviceID = `ui-device-${runID}`;
-  try {
-    await page.waitText('SLAN Client Web');
-    await page.click('注册');
-    await page.eval(`window.__uiSmoke.setInput(0, 'UI Browser Smoke')`);
-    await page.eval(`window.__uiSmoke.setInput(1, ${JSON.stringify(email)})`);
-    await page.eval(`window.__uiSmoke.setInput(2, 'password123')`);
-    await page.click('注册并进入主页');
-    await page.waitSelector('.shell');
-    await page.assertHealthy('customer after register');
-    await page.eval(`(async () => {
-      const auth = JSON.parse(localStorage.getItem('slan.clientWeb.auth') || 'null');
-      if (!auth?.user?.userId) throw new Error('customer auth missing for device setup');
-      const response = await fetch('/api/web/devices/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: auth.user.userId,
-          deviceId: ${JSON.stringify(testDeviceID)},
-          name: 'UI Browser Test Device',
-          platform: 'linux',
-          osName: 'Linux',
-          osVersion: '6.8',
-          alias: 'UI Test Device',
-          publicKey: 'ui-smoke-public-key-${runID}',
-        }),
-      });
-      if (!response.ok && response.status !== 409) {
-        throw new Error('register test device failed: HTTP ' + response.status + ' ' + await response.text());
-      }
-      location.href = '/overview';
-    })()`);
-    await page.waitSelector('.shell');
-    await page.installHelpers();
-    await page.assertHealthy('customer test device registered');
-
-    const navs = ['控制台概览', '设备', '用户别名', '网络管理'];
-    for (const nav of navs) {
-      await page.click(nav, 'aside nav button');
-      await page.waitText(nav);
-      await page.assertHealthy(`customer nav ${nav}`);
-      await page.screenshot(`nav-${nav}`);
-    }
-
-    const modalButtons = ['修改密码'];
-    for (const button of modalButtons) {
-      await page.click(button);
-      await page.waitSelector('.modal-backdrop');
-      await page.assertHealthy(`customer modal ${button}`);
-      await page.eval('window.__uiSmoke.closeOverlays()');
-    }
-
-    await page.click('设备', 'aside nav button');
-    await page.waitText(testDeviceID);
-    console.log('[ui-smoke] web device modal: 生成安装命令');
-    await page.click('生成安装命令');
-    await page.waitSelector('.modal-backdrop');
-    await page.waitText('一次性接入安装 Key');
-    await page.assertHealthy('customer device bootstrap modal');
-    await page.eval('window.__uiSmoke.closeOverlays()');
-
-    console.log('[ui-smoke] web device modal: 生成接入码');
-    await page.click('生成接入码');
-    await page.waitSelector('.modal-backdrop');
-    await page.waitText('接入字符串');
-    const inviteCode = await page.eval(`document.querySelector('.modal-backdrop .invite-code strong')?.innerText?.trim() || ''`);
-    if (!inviteCode) {
-      throw new Error('customer device invite code missing');
-    }
-    await page.assertHealthy('customer device invite modal');
-    await page.eval('window.__uiSmoke.closeOverlays()');
-
-    const externalInviteCode = await page.eval(`(async () => {
-      const suffix = ${JSON.stringify(String(runID))};
-      const authResponse = await fetch('/api/web/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: 'ui-inviter-' + suffix + '@staticlss.com',
-          password: 'password123',
-          name: 'UI Invite Owner',
-        }),
-      });
-      if (!authResponse.ok) {
-        throw new Error('create external inviter failed: HTTP ' + authResponse.status + ' ' + await authResponse.text());
-      }
-      const authPayload = await authResponse.json();
-      const inviteResponse = await fetch('/api/web/device-invites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          inviterUserId: authPayload.auth.user.userId,
-          ttlSeconds: 86400,
-        }),
-      });
-      if (!inviteResponse.ok) {
-        throw new Error('create external invite failed: HTTP ' + inviteResponse.status + ' ' + await inviteResponse.text());
-      }
-      const invitePayload = await inviteResponse.json();
-      return invitePayload.inviteCode || '';
-    })()`);
-    if (!externalInviteCode) {
-      throw new Error('external invite code missing');
-    }
-
-    console.log('[ui-smoke] web device modal: 邀请确认');
-    await page.click('邀请确认');
-    await page.waitSelector('.modal-backdrop');
-    await page.eval(`window.__uiSmoke.setValue(document.querySelector('.modal-backdrop input'), ${JSON.stringify(externalInviteCode)})`);
-    await page.click('接入');
-    await sleep(800);
-    await page.assertHealthy('customer device invite confirm');
-
-    const firstDeviceOpened = await page.eval(`(() => {
-      const rowButton = [...document.querySelectorAll('td button.text-link')].find((el) => window.__uiSmoke.visible(el));
-      if (!rowButton) return false;
-      rowButton.click();
-      return true;
-    })()`);
-    if (firstDeviceOpened) {
-      await page.waitSelector('.modal-backdrop');
-      await page.assertHealthy('customer device usage modal');
-      await page.eval('window.__uiSmoke.closeOverlays()');
-    }
-
-    await page.click('用户别名', 'aside nav button');
-    const aliasOpened = await page.eval(`(() => {
-      const button = [...document.querySelectorAll('button')].find((el) => window.__uiSmoke.visible(el) && window.__uiSmoke.text(el).includes('修改'));
-      if (!button) return false;
-      button.click();
-      return true;
-    })()`);
-    if (aliasOpened) {
-      await sleep(300);
-      await page.assertHealthy('customer user alias editor');
-      await page.eval('window.__uiSmoke.closeOverlays()');
-    }
-
-    await page.click('网络管理', 'aside nav button');
-    await page.click('新增网络');
-    await page.waitSelector('.modal-backdrop');
-    await page.assertHealthy('customer network create modal');
-    await page.eval('window.__uiSmoke.closeOverlays()');
-    const openedWorkspace = await page.eval(`(() => {
-      const button = [...document.querySelectorAll('table button.text-link')].find((el) => window.__uiSmoke.visible(el));
-      if (!button) return false;
-      button.click();
-      return true;
-    })()`);
-    if (openedWorkspace) {
-      for (const tab of ['设备', '内网域名', '访问规则']) {
-        await page.click(tab, '.panel-tabs button');
-        await page.assertHealthy(`customer workspace tab ${tab}`);
-        if (tab === '设备') {
-          await page.waitText('网络设备');
-          await page.waitText(testDeviceID);
-          const exists = await page.eval(`Boolean(window.__uiSmoke.findClickable('添加设备'))`);
-          if (exists) {
-            await page.click('添加设备');
-            await page.waitSelector('.modal-backdrop');
-            await page.assertHealthy('customer workspace add device modal');
-            await page.eval('window.__uiSmoke.closeOverlays()');
-          }
-        }
-        if (tab === '内网域名') {
-          const zoneName = `ui-${runID}.lan`;
-          const recordName = `web-${runID}`;
-          await page.click('新增域');
-          await page.waitSelector('.modal-backdrop');
-          await page.eval(`window.__uiSmoke.setValue(document.querySelector('.modal-backdrop input'), ${JSON.stringify(zoneName)})`);
-          await page.assertHealthy('customer dns zone modal');
-          await page.click('创建');
-          await sleep(900);
-          await page.waitText(zoneName);
-          await page.click('解析');
-          await page.waitText('解析管理');
-          await page.click('新增解析');
-          await page.waitSelector('.modal-backdrop');
-          await page.eval(`(() => {
-            const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-            window.__uiSmoke.setValue(inputs[0], ${JSON.stringify(recordName)});
-            window.__uiSmoke.setValue(inputs[1], '8443');
-          })()`);
-          await page.assertHealthy('customer dns record modal');
-          await page.click('创建');
-          await sleep(900);
-          await page.waitText(recordName);
-          await page.assertHealthy('customer dns record created');
-        }
-        if (tab === '访问规则') {
-          const groupName = `UI ACL ${runID}`;
-          await page.click('新增安全组');
-          await page.waitSelector('.modal-backdrop');
-          await page.eval(`window.__uiSmoke.setValue(document.querySelector('.modal-backdrop input'), ${JSON.stringify(groupName)})`);
-          await page.assertHealthy('customer security group modal');
-          await page.click('创建');
-          await sleep(900);
-          await page.waitText(groupName);
-          await page.click(groupName);
-          await page.waitText('新增入方向');
-          await page.click('新增入方向');
-          await page.waitSelector('.modal-backdrop');
-          await page.assertHealthy('customer acl ingress rule modal');
-          await page.click('创建');
-          await sleep(900);
-          await page.waitText('allow');
-          await page.click('新增出方向');
-          await page.waitSelector('.modal-backdrop');
-          await page.assertHealthy('customer acl egress rule modal');
-          await page.click('创建');
-          await sleep(900);
-          await page.assertHealthy('customer acl rules created');
-        }
-      }
-    }
-
-    await page.screenshot('final');
-    return { email, screenshots: outDir };
-  } finally {
-    page.close();
-  }
-}
-
 async function exerciseOpsUI(browser) {
   const page = await newPage(browser.port, opsBase, 'ops');
   try {
@@ -667,47 +446,79 @@ async function exerciseOpsUI(browser) {
     await page.waitSelector('.shell');
     await page.assertHealthy('ops after login');
     await page.eval(`(async () => {
-      const authResponse = await fetch(${JSON.stringify(new URL('/api/web/auth/register', webBase).toString())}, {
+      const token = localStorage.getItem('slan_ops_token');
+      if (!token) throw new Error('Ops token missing for device setup');
+      const deviceResponse = await fetch('/api/ops/devices', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({
-          email: 'ops-ui-customer-${runID}@staticlss.com',
-          password: 'password123',
-          name: 'Ops UI Customer ${runID}',
+          name: 'Ops UI Device ${runID}',
+          alias: 'Ops UI Device',
+          platform: 'linux',
+          osName: 'Linux',
+          osVersion: 'ui-smoke',
+          publicKey: 'ops-ui-device-key-${runID}',
         }),
       });
-      if (!authResponse.ok && authResponse.status !== 409) {
-        throw new Error('seed ops customer failed: HTTP ' + authResponse.status + ' ' + await authResponse.text());
+      if (!deviceResponse.ok) {
+        throw new Error('seed device failed: HTTP ' + deviceResponse.status + ' ' + await deviceResponse.text());
       }
-      const authPayload = authResponse.ok ? await authResponse.json() : null;
-      const userId = authPayload?.auth?.user?.userId;
-      if (userId) {
-        const deviceResponse = await fetch(${JSON.stringify(new URL('/api/web/devices/register', webBase).toString())}, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId,
-            deviceId: 'ops-ui-device-${runID}',
-            name: 'Ops UI Device',
-            platform: 'linux',
-            osName: 'Linux',
-            osVersion: '6.8',
-            alias: 'Ops UI Device',
-            publicKey: 'ops-ui-public-key-${runID}',
-          }),
-        });
-        if (!deviceResponse.ok && deviceResponse.status !== 409) {
-          throw new Error('seed ops device failed: HTTP ' + deviceResponse.status + ' ' + await deviceResponse.text());
-        }
+      const device = await deviceResponse.json();
+      window.__uiSmokeDeviceId = device.deviceId;
+      const credentialResponse = await fetch('/api/ops/device-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          deviceId: device.deviceId,
+          name: 'Ops UI Device',
+          scopes: 'standard_device',
+          expiresAt: 0,
+        }),
+      });
+      if (!credentialResponse.ok) {
+        throw new Error('seed device credential failed: HTTP ' + credentialResponse.status + ' ' + await credentialResponse.text());
       }
+      await credentialResponse.json();
     })()`);
+    const uiDeviceId = await page.eval('window.__uiSmokeDeviceId');
     await page.click('刷新');
     await sleep(1000);
     await page.assertHealthy('ops seeded data loaded');
 
-    const navs = ['运营管理', '运营用户', '中继节点', '客户管理', '设备管理', '客户端发布', '商品管理', '订单管理', '续费管理'];
+    const navs = [
+      '运营概览',
+      '设备管理',
+      '设备组管理',
+      '授权 Key 管理',
+      '网络管理',
+      '打洞节点',
+      '中继节点',
+      '安全审计',
+      '运营账号',
+    ];
+    const parentByNav = {
+      '设备管理': '资源管理',
+      '设备组管理': '资源管理',
+      '授权 Key 管理': '资源管理',
+      '网络管理': '资源管理',
+      '打洞节点': '节点管理',
+      '中继节点': '节点管理',
+    };
+    const openNav = async (nav) => {
+      const parent = parentByNav[nav];
+      if (parent) {
+        await page.click(parent, '.nav-menu-trigger');
+        await page.click(nav, '.nav-sub-item');
+        return;
+      }
+      await page.click(nav, '.nav-item');
+    };
+    await page.click('资源管理', '.nav-menu-trigger');
+    await waitFor(() => page.eval(`window.__uiSmoke.heading() === '设备管理'`), 5000, 'resource menu default page');
+    await page.click('节点管理', '.nav-menu-trigger');
+    await waitFor(() => page.eval(`window.__uiSmoke.heading() === '打洞节点'`), 5000, 'node menu default page');
     for (const nav of navs) {
-      await page.click(nav, 'aside nav button');
+      await openNav(nav);
       await page.waitText(nav);
       await page.assertHealthy(`ops nav ${nav}`);
       await page.screenshot(`nav-${nav}`);
@@ -719,14 +530,11 @@ async function exerciseOpsUI(browser) {
     await page.eval('window.__uiSmoke.closeOverlays()');
 
     const modalMatrix = [
-      ['运营用户', ['新增运营用户']],
+      ['运营账号', ['新增运营账号']],
       ['中继节点', ['新增中继节点']],
-      ['商品管理', ['新增套餐', '新增商品']],
-      ['订单管理', ['创建订单']],
-      ['续费管理', ['手动续费']],
     ];
     for (const [nav, buttons] of modalMatrix) {
-      await page.click(nav, 'aside nav button');
+      await openNav(nav);
       for (const button of buttons) {
         const exists = await page.eval(`Boolean(window.__uiSmoke.findClickable(${JSON.stringify(button)}))`);
         if (!exists) continue;
@@ -739,8 +547,8 @@ async function exerciseOpsUI(browser) {
     }
 
     const operatorEmail = `ops-ui-${runID}@staticlss.com`;
-    await page.click('运营用户', 'aside nav button');
-    await page.click('新增运营用户');
+    await openNav('运营账号');
+    await page.click('新增运营账号');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
@@ -763,13 +571,13 @@ async function exerciseOpsUI(browser) {
     await page.clickModalButton('确认修改');
     await page.waitNoSelector('.modal-backdrop');
     await page.assertHealthy('ops operator password updated');
-    await page.clickRowButton(operatorEmail, '停用运营用户');
+    await page.clickRowButton(operatorEmail, '停用运营账号');
     await sleep(900);
     await page.waitRowText(operatorEmail, 'disabled');
     await page.assertHealthy('ops operator toggled');
 
     const relayName = `Ops UI Relay ${runID}`;
-    await page.click('中继节点', 'aside nav button');
+    await openNav('中继节点');
     await page.click('新增中继节点');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
@@ -791,133 +599,23 @@ async function exerciseOpsUI(browser) {
     await page.waitRowText(relayName, 'disabled');
     await page.assertHealthy('ops relay toggled');
 
-    const planCode = `ops-ui-plan-${runID}`;
-    const planName = `Ops UI Plan ${runID}`;
-    const productName = `Ops UI Product ${runID}`;
-    await page.click('商品管理', 'aside nav button');
-    await page.click('新增套餐');
+    await openNav('设备管理');
+    await page.waitText(uiDeviceId);
+    await page.clickRowButton(uiDeviceId, '查看或修改设备');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-      window.__uiSmoke.setValue(inputs[0], ${JSON.stringify(planCode)});
-      window.__uiSmoke.setValue(inputs[1], ${JSON.stringify(planName)});
-      window.__uiSmoke.setValue(inputs[2], '8');
-      window.__uiSmoke.setValue(inputs[3], '8');
-      window.__uiSmoke.setValue(inputs[4], '16');
-      window.__uiSmoke.setValue(inputs[5], '128');
-      window.__uiSmoke.setValue(inputs[6], '80');
-      window.__uiSmoke.setValue(inputs[7], '8');
-      window.__uiSmoke.setValue(inputs[8], '19');
-      window.__uiSmoke.setValue(inputs[9], '199');
-    })()`);
-    await page.clickModalButton('保存');
-    await page.waitNoSelector('.modal-backdrop');
-    await page.waitText(planName);
-    await page.assertHealthy('ops plan created');
-    await page.click('新增商品');
-    await page.waitSelector('.modal-backdrop');
-    await page.eval(`(() => {
-      const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-      const planSelect = [...document.querySelectorAll('.modal-backdrop select')].find((el) => [...el.options].some((option) => option.value === ${JSON.stringify(planCode)}));
-      if (planSelect) window.__uiSmoke.setValue(planSelect, ${JSON.stringify(planCode)});
-      window.__uiSmoke.setValue(inputs[0], ${JSON.stringify(productName)});
-      window.__uiSmoke.setValue(inputs[1], '31');
-      window.__uiSmoke.setValue(inputs[2], '128');
-      window.__uiSmoke.setValue(inputs[3], '80');
-      window.__uiSmoke.setValue(inputs[4], '29');
-      window.__uiSmoke.setValue(inputs[5], '19');
-      window.__uiSmoke.setValue(inputs[6], 'ops ui product');
-    })()`);
-    await page.clickModalButton('保存');
-    await page.waitNoSelector('.modal-backdrop');
-    await page.waitText(productName);
-    await page.assertHealthy('ops product created');
-    await page.clickRowButton(productName, '下架商品');
-    await sleep(900);
-    await page.waitRowText(productName, 'offline');
-    await page.assertHealthy('ops product toggled');
-
-    await page.click('订单管理', 'aside nav button');
-    await page.click('创建订单');
-    await page.waitSelector('.modal-backdrop');
-    await page.eval(`(() => {
-      const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-      window.__uiSmoke.setValue(inputs[0], '19');
-    })()`);
-    await page.clickModalButton('保存');
-    await page.waitNoSelector('.modal-backdrop');
-    await page.waitText('manual');
-    await page.assertHealthy('ops order created');
-
-    await page.click('客户管理', 'aside nav button');
-    await page.waitText(`ops-ui-customer-${runID}@staticlss.com`);
-    await page.clickRowButton(`ops-ui-customer-${runID}@staticlss.com`, '指定客户级别');
-    await page.waitSelector('.modal-backdrop');
-    await page.eval(`(() => {
-      const planSelect = [...document.querySelectorAll('.modal-backdrop select')].find((el) => [...el.options].some((option) => option.value === ${JSON.stringify(planCode)}));
-      if (planSelect) window.__uiSmoke.setValue(planSelect, ${JSON.stringify(planCode)});
-      const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-      if (inputs[1]) window.__uiSmoke.setValue(inputs[1], '19');
-    })()`);
-    await page.clickModalButton('确认');
-    await page.waitNoSelector('.modal-backdrop');
-    await page.waitText(planName);
-    await page.assertHealthy('ops customer plan assigned');
-
-    await page.click('设备管理', 'aside nav button');
-    await page.waitText(`ops-ui-device-${runID}`);
-    await page.clickRowButton(`ops-ui-device-${runID}`, '查看或修改设备');
-    await page.waitSelector('.modal-backdrop');
-    await page.eval(`(() => {
-      const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-      window.__uiSmoke.setValue(inputs[0], 'Ops UI Device Updated');
+      window.__uiSmoke.setValue(inputs[1], 'Ops UI Device Updated');
     })()`);
     await page.clickModalButton('保存');
     await page.waitNoSelector('.modal-backdrop');
     await page.waitText('Ops UI Device Updated');
     await page.assertHealthy('ops device updated');
-    await page.clickRowButton(`ops-ui-device-${runID}`, '停用设备');
+    await page.clickRowButton(uiDeviceId, '停用设备');
     await sleep(900);
-    await page.waitRowText(`ops-ui-device-${runID}`, '禁用');
+    await page.waitRowText(uiDeviceId, '禁用');
     await page.assertHealthy('ops device toggled');
 
-    await page.click('续费管理', 'aside nav button');
-    await page.waitText(`ops-ui-customer-${runID}@staticlss.com`);
-    await page.clickRowButton(`ops-ui-customer-${runID}@staticlss.com`, '查看或修改续费记录');
-    await page.waitSelector('.modal-backdrop');
-    await page.eval(`(() => {
-      const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
-      const amount = inputs.find((el) => el.type === 'number');
-      if (amount) window.__uiSmoke.setValue(amount, '29');
-    })()`);
-    await page.clickModalButton('保存');
-    await page.waitNoSelector('.modal-backdrop');
-    await page.waitText('29');
-    await page.assertHealthy('ops renewal updated');
-
-    await page.click('客户端发布', 'aside nav button');
-    await page.eval(`(() => {
-      const inputs = [...document.querySelectorAll('input')].filter((el) => window.__uiSmoke.visible(el));
-      window.__uiSmoke.setValue(inputs[0], '9.9.${runID}');
-      window.__uiSmoke.setValue(inputs[1], 'universal');
-      const notes = inputs.find((el) => el.placeholder?.includes('修复内容'));
-      if (notes) window.__uiSmoke.setValue(notes, 'ops ui smoke');
-      const fileInput = document.querySelector('input[type="file"]');
-      const file = new File(['ops-ui-smoke'], 'SLAN-Ops-UI-Smoke-${runID}.pkg', { type: 'application/octet-stream' });
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      fileInput.files = transfer.files;
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-    })()`);
-    await page.click('上传发布');
-    await sleep(1500);
-    await page.waitText(`SLAN-Ops-UI-Smoke-${runID}.pkg`);
-    await page.assertHealthy('ops client download uploaded');
-    const uploadControls = await page.eval(`document.querySelectorAll('input,select').length`);
-    if (uploadControls < 5) {
-      throw new Error('ops client downloads upload controls missing');
-    }
-    await page.assertHealthy('ops client downloads controls');
     await page.screenshot('final');
     return { screenshots: outDir };
   } finally {
@@ -928,10 +626,8 @@ async function exerciseOpsUI(browser) {
 let browser;
 try {
   browser = await launchChrome();
-  const only = process.env.SLAN_UI_SMOKE_ONLY || '';
-  const customer = only === 'ops' ? null : await exerciseCustomerUI(browser);
-  const ops = only === 'web' ? null : await exerciseOpsUI(browser);
-  console.log(JSON.stringify({ status: 'ok', webBase, opsBase, customer, ops, outDir }, null, 2));
+  const ops = await exerciseOpsUI(browser);
+  console.log(JSON.stringify({ status: 'ok', opsBase, ops, outDir }, null, 2));
 } finally {
   await browser?.close();
 }

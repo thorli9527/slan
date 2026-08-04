@@ -95,7 +95,6 @@ func validateSecurityRulePeer(
 	ctx context.Context,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	actorUserID string,
 	networkID string,
 	peerType string,
 	peerValue string,
@@ -117,11 +116,11 @@ func validateSecurityRulePeer(
 		}
 		return ErrInvalidArgument
 	}
-	group, ok, err := devices.GetDeviceGroup(ctx, peerValue)
+	_, ok, err := devices.GetDeviceGroup(ctx, peerValue)
 	if err != nil {
 		return err
 	}
-	if !ok || strings.TrimSpace(group.UserID) == "" || group.UserID != actorUserID {
+	if !ok {
 		return ErrInvalidArgument
 	}
 	groupReferences, ok := networks.(repository.NetworkDeviceGroupRepository)
@@ -145,35 +144,31 @@ func supportedSecurityRulePeerType(peerType string) bool {
 	return peerType == "device" || peerType == "device_group"
 }
 
-func requireOwnedManagedSecurityGroup(
+func requireManagedSecurityGroupWithNetwork(
 	ctx context.Context,
-	users repository.UserRepository,
 	networks repository.NetworkRepository,
-	actorUserID string,
 	securityGroupID string,
 ) (model.SecurityGroup, error) {
 	item, err := requireManagedSecurityGroup(ctx, networks, securityGroupID)
 	if err != nil {
 		return model.SecurityGroup{}, err
 	}
-	if _, err := requireOwnedManagedNetwork(ctx, users, networks, actorUserID, item.NetworkID); err != nil {
+	if _, err := requireManagedNetwork(ctx, networks, item.NetworkID); err != nil {
 		return model.SecurityGroup{}, err
 	}
 	return item, nil
 }
 
-func requireOwnedManagedSecurityRule(
+func requireManagedSecurityRuleWithNetwork(
 	ctx context.Context,
-	users repository.UserRepository,
 	networks repository.NetworkRepository,
-	actorUserID string,
 	ruleID string,
 ) (model.SecurityRule, model.SecurityGroup, error) {
 	rule, err := requireManagedSecurityRule(ctx, networks, ruleID)
 	if err != nil {
 		return model.SecurityRule{}, model.SecurityGroup{}, err
 	}
-	group, err := requireOwnedManagedSecurityGroup(ctx, users, networks, actorUserID, rule.SecurityGroupID)
+	group, err := requireManagedSecurityGroupWithNetwork(ctx, networks, rule.SecurityGroupID)
 	if err != nil {
 		return model.SecurityRule{}, model.SecurityGroup{}, err
 	}

@@ -2,16 +2,43 @@ package service
 
 import (
 	"context"
+
+	"github.com/slan/service-biz/internal/model"
+	"github.com/slan/service-biz/internal/repository"
 )
 
 func (s OpsCustomerService) ListCustomers(ctx context.Context) ([]OpsCustomerView, error) {
-	users, err := s.Users.ListUsers(ctx)
+	customers, err := s.Customers.ListCustomers(ctx)
 	if err != nil {
 		return nil, err
 	}
-	renewals, _ := s.Catalog.ListRenewals(ctx)
-	planExpires := latestRenewalExpiryByCustomer(renewals)
-	return buildOpsCustomerViews(ctx, users, s.Catalog, s.Devices, planExpires), nil
+	return buildOpsCustomerViews(customers), nil
+}
+
+func (s OpsCustomerService) CreateCustomer(ctx context.Context, input CreateCustomerInput) (OpsCustomerView, error) {
+	input = normalizeCreateCustomerInput(input)
+	if input.Email == "" {
+		return OpsCustomerView{}, ErrInvalidArgument
+	}
+	if _, exists, err := s.Customers.GetCustomerByEmail(ctx, input.Email); err != nil {
+		return OpsCustomerView{}, err
+	} else if exists {
+		return OpsCustomerView{}, ErrConflict
+	}
+	now := opsNow(s.Now).Unix()
+	customer := model.Customer{
+		CustomerID: generatedID(s.NewCustomerID, "customer"),
+		Email:      input.Email, Name: input.Name, Country: input.Country,
+		Province: input.Province, City: input.City, IPRegion: input.IPRegion,
+		Status: firstNonEmpty(input.Status, "active"), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.Customers.SaveCustomer(ctx, customer); err != nil {
+		if emailBelongsToAnotherCustomer(ctx, s.Customers, input.Email, customer.CustomerID) {
+			return OpsCustomerView{}, ErrConflict
+		}
+		return OpsCustomerView{}, err
+	}
+	return buildOpsCustomerView(customer), nil
 }
 
 func (s OpsCustomerService) UpdateCustomer(ctx context.Context, input UpdateCustomerInput) (OpsCustomerView, error) {
@@ -19,44 +46,24 @@ func (s OpsCustomerService) UpdateCustomer(ctx context.Context, input UpdateCust
 	if input.CustomerID == "" {
 		return OpsCustomerView{}, ErrInvalidArgument
 	}
-	user, err := requireOpsUser(ctx, s.Users, input.CustomerID)
+	customer, err := requireOpsCustomer(ctx, s.Customers, input.CustomerID)
 	if err != nil {
 		return OpsCustomerView{}, err
 	}
-	user = applyUpdateCustomerInput(user, input, opsNow(s.Now).Unix())
-	if err := s.Users.SaveUser(ctx, user); err != nil {
+	if input.Email != "" && input.Email != customer.Email && emailBelongsToAnotherCustomer(ctx, s.Customers, input.Email, customer.CustomerID) {
+		return OpsCustomerView{}, ErrConflict
+	}
+	customer = applyUpdateCustomerInput(customer, input, opsNow(s.Now).Unix())
+	if err := s.Customers.SaveCustomer(ctx, customer); err != nil {
+		if emailBelongsToAnotherCustomer(ctx, s.Customers, customer.Email, customer.CustomerID) {
+			return OpsCustomerView{}, ErrConflict
+		}
 		return OpsCustomerView{}, err
 	}
-	renewals, _ := s.Catalog.ListRenewals(ctx)
-	return buildOpsCustomerView(ctx, s.Catalog, s.Devices, opsCustomerFromUser(ctx, s.Catalog, user), latestRenewalExpiryByCustomer(renewals)[user.UserID]), nil
+	return buildOpsCustomerView(customer), nil
 }
 
-func (s OpsCustomerService) AssignCustomerPlan(ctx context.Context, input AssignCustomerPlanInput) (OpsCustomerPlanAssignmentView, error) {
-	input = normalizeAssignCustomerPlanInput(input)
-	if input.CustomerID == "" || input.PlanCode == "" {
-		return OpsCustomerPlanAssignmentView{}, ErrInvalidArgument
-	}
-	if _, err := requireOpsUser(ctx, s.Users, input.CustomerID); err != nil {
-		return OpsCustomerPlanAssignmentView{}, err
-	}
-	if err := s.Catalog.SaveCustomerPlan(ctx, input.CustomerID, input.PlanCode); err != nil {
-		return OpsCustomerPlanAssignmentView{}, err
-	}
-	now := opsNow(s.Now).Unix()
-	customer, err := s.UpdateCustomer(ctx, UpdateCustomerInput{CustomerID: input.CustomerID})
-	if err != nil {
-		return OpsCustomerPlanAssignmentView{}, err
-	}
-	renewal := newManualRenewal(now, input.CustomerID, customer.Customer.Email, input)
-	if err := s.Catalog.SaveRenewal(ctx, renewal); err != nil {
-		return OpsCustomerPlanAssignmentView{}, err
-	}
-	return OpsCustomerPlanAssignmentView{
-		Customer:   customer,
-		PlanCode:   input.PlanCode,
-		Period:     renewal.Period,
-		Amount:     renewal.Amount,
-		PaidAt:     renewal.PaidAt,
-		ValidUntil: renewal.RenewAt,
-	}, nil
+func emailBelongsToAnotherCustomer(ctx context.Context, customers repository.CustomerRepository, email, customerID string) bool {
+	item, found, err := customers.GetCustomerByEmail(ctx, email)
+	return err == nil && found && item.CustomerID != customerID
 }

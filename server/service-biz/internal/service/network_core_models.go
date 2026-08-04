@@ -2,7 +2,6 @@ package service
 
 type NetworkView struct {
 	NetworkID        string `json:"networkId"`
-	OwnerID          string `json:"ownerId"`
 	Name             string `json:"name"`
 	CIDR             string `json:"cidr"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
@@ -23,8 +22,6 @@ type NetworkSummaryView struct {
 
 type NetworkConfigPeerView struct {
 	DeviceID   string               `json:"deviceId"`
-	OwnerID    string               `json:"ownerId"`
-	OwnerEmail string               `json:"ownerEmail"`
 	Alias      string               `json:"alias"`
 	GlobalIP   string               `json:"globalIp"`
 	GlobalName string               `json:"globalName"`

@@ -13,8 +13,8 @@ REMOTE_USER="${SLAN_REMOTE_LINUX_USER:-root}"
 REMOTE_PASSWORD="${SLAN_REMOTE_LINUX_PASSWORD:-}"
 REMOTE_SSH_KEY="${SLAN_REMOTE_LINUX_SSH_KEY:-}"
 REMOTE_BUILD_DIR="${SLAN_REMOTE_LINUX_BUILD_DIR:-/tmp/slan-linux-remote-build}"
-REMOTE_OUTPUT_DIR="$REMOTE_BUILD_DIR/client_v2/.tmp/installer/linux"
-LOCAL_OUTPUT_DIR="${SLAN_LINUX_BUILD_OUTPUT_DIR:-$ROOT_DIR/client_v2/.tmp/installer/linux}"
+REMOTE_OUTPUT_DIR="$REMOTE_BUILD_DIR/client/.tmp/installer/linux"
+LOCAL_OUTPUT_DIR="${SLAN_LINUX_BUILD_OUTPUT_DIR:-$ROOT_DIR/client/.tmp/installer/linux}"
 VARIANT="${SLAN_LINUX_BUILD_VARIANT:-console}"
 VERSION="${SLAN_CLIENT_V2_VERSION:-0.1.0}"
 RUST_PROFILE="${SLAN_REMOTE_LINUX_RUST_PROFILE:-debug}"
@@ -181,13 +181,13 @@ EOF
 prepare_source_archive() {
   log "prepare Linux remote build source archive"
   tar -C "$ROOT_DIR" \
-    --exclude='client_v2/rust/target' \
-    --exclude='client_v2/rust/.cargo' \
-    --exclude='client_v2/.tmp' \
+    --exclude='client/rust/target' \
+    --exclude='client/rust/.cargo' \
+    --exclude='client/.tmp' \
     -czf "$LOCAL_SOURCE_TAR" \
     scripts/package_linux.sh \
-    client_v2/install/linux \
-    client_v2/rust
+    client/install/linux \
+    client/rust
 }
 
 install_remote_deps() {
@@ -224,22 +224,22 @@ sync_sources() {
 set -euo pipefail
 cache_dir=\"$REMOTE_BUILD_DIR/.rust-target-cache\"
 rm -rf \"\$cache_dir\"
-if [ -d \"$REMOTE_BUILD_DIR/client_v2/rust/target\" ]; then
-  mv \"$REMOTE_BUILD_DIR/client_v2/rust/target\" \"\$cache_dir\"
+if [ -d \"$REMOTE_BUILD_DIR/client/rust/target\" ]; then
+  mv \"$REMOTE_BUILD_DIR/client/rust/target\" \"\$cache_dir\"
 fi
-rm -rf \"$REMOTE_BUILD_DIR/scripts\" \"$REMOTE_BUILD_DIR/client_v2\"
+rm -rf \"$REMOTE_BUILD_DIR/scripts\" \"$REMOTE_BUILD_DIR/client\"
 mkdir -p \"$REMOTE_BUILD_DIR\"
 tar -C \"$REMOTE_BUILD_DIR\" -xzf \"$REMOTE_BUILD_DIR/source.tar.gz\"
 if [ -d \"\$cache_dir\" ]; then
-  mkdir -p \"$REMOTE_BUILD_DIR/client_v2/rust\"
-  mv \"\$cache_dir\" \"$REMOTE_BUILD_DIR/client_v2/rust/target\"
+  mkdir -p \"$REMOTE_BUILD_DIR/client/rust\"
+  mv \"\$cache_dir\" \"$REMOTE_BUILD_DIR/client/rust/target\"
 fi
 '"
 }
 
 build_remote_package() {
   local cargo_args=("build" "-p" "client-core-service")
-  local service_bin="$REMOTE_BUILD_DIR/client_v2/rust/target/${RUST_PROFILE}/client-core-service"
+  local service_bin="$REMOTE_BUILD_DIR/client/rust/target/${RUST_PROFILE}/client-core-service"
   if [[ "$RUST_PROFILE" == "release" ]]; then
     cargo_args+=("--release")
   fi
@@ -247,7 +247,7 @@ build_remote_package() {
   remote_expect_ssh "bash -lc '
 set -euo pipefail
 source \"\$HOME/.cargo/env\"
-cd \"$REMOTE_BUILD_DIR/client_v2/rust\"
+cd \"$REMOTE_BUILD_DIR/client/rust\"
 cargo ${cargo_args[*]}
 cd \"$REMOTE_BUILD_DIR\"
 bash scripts/package_linux.sh \

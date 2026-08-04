@@ -9,6 +9,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 
 IMAGE="${SLAN_LINUX_DOCKER_IMAGE:-ubuntu:24.04}"
 BUILD_PACKAGE="${SLAN_LINUX_DOCKER_MAC_BUILD_PACKAGE:-0}"
@@ -20,21 +21,19 @@ KEEP_REMOTE_RESOURCES="${SLAN_KEEP_LINUX_DOCKER_MAC_REMOTE_RESOURCES:-0}"
 LINUX_NETWORK_MOCK="${SLAN_LINUX_NETWORK_MOCK:-0}"
 
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 TIMEOUT_SECONDS="${SLAN_LINUX_DOCKER_MAC_TIMEOUT_SECONDS:-120}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_LINUX_DOCKER_MAC_BOOTSTRAP_TTL_SECONDS:-1800}"
 LOCAL_API_TIMEOUT_SECONDS="${SLAN_LINUX_DOCKER_MAC_LOCAL_API_TIMEOUT_SECONDS:-20}"
 
 MAC_SERVICE_MODE="${SLAN_MAC_SERVICE_MODE:-existing}"
 MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:46392}"
-DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service"
+DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client/rust/target/debug/client-core-service"
 if [[ ! -x "$DEFAULT_MAC_SERVICE_BIN" ]]; then
-  DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
+  DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
 fi
 MAC_SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$DEFAULT_MAC_SERVICE_BIN}"
-MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-$ROOT_DIR/client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
+MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-$ROOT_DIR/client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 RESET_EXISTING_MAC_SERVICE_IDENTITY="${SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY:-1}"
@@ -47,15 +46,6 @@ TCP_BODY_MAC_TO_LINUX="${SLAN_TEST_TCP_BODY_MAC_TO_LINUX:-mac-to-linux-tcp-$(dat
 UDP_BODY_LINUX_TO_MAC="${SLAN_TEST_UDP_BODY_LINUX_TO_MAC:-linux-to-mac-udp-$(date +%s%N)}"
 TCP_BODY_LINUX_TO_MAC="${SLAN_TEST_TCP_BODY_LINUX_TO_MAC:-linux-to-mac-tcp-$(date +%s%N)}"
 
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-  GENERATED_TEST_EMAIL=0
-else
-  EMAIL="linux-mac-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
-
 WORK_DIR="${SLAN_LINUX_DOCKER_MAC_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-linux-docker-mac.XXXXXX")}"
 RESULT_JSON_PATH="$WORK_DIR/linux.json"
 LINUX_ECHO_LOG="$WORK_DIR/linux-echo.log"
@@ -65,8 +55,9 @@ MAC_CORE_LOG="$WORK_DIR/state/SLAN/client-core-service.log"
 
 BOOTSTRAP_ID=""
 BOOTSTRAP_KEY=""
-USER_ID=""
-USER_TOKEN=""
+MAC_CREDENTIAL_ID=""
+MAC_AUTHORIZATION_KEY=""
+OPS_TOKEN=""
 NETWORK_ID=""
 ZONE_ID=""
 ZONE_NAME=""
@@ -86,7 +77,7 @@ resolve_linux_package_path() {
     return
   fi
 
-  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local installer_dir="$ROOT_DIR/client/.tmp/installer/linux"
   local host_arch
   host_arch="$(uname -m 2>/dev/null || true)"
   local preferred=()
@@ -137,7 +128,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-log "linux docker + mac defaults: account=${EMAIL} biz=${BIZ_URL} web=${WEB_BASE_URL}"
+log "linux docker + mac defaults: biz=${BIZ_URL} ops=${OPS_BASE_URL}"
 
 json_value() {
   local key="$1"
@@ -155,7 +146,8 @@ is_truthy() {
 
 best_effort_delete() {
   local url="$1"
-  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" >/dev/null 2>&1 || true
+  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null 2>&1 || true
 }
 
 create_json() {
@@ -163,6 +155,7 @@ create_json() {
   local payload="$2"
   curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -X POST "$url" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "$payload"
 }
@@ -217,7 +210,7 @@ finally:
 ' "127.0.0.1" "46392" "${LOCAL_API_TIMEOUT_SECONDS}"
 }
 
-run_client_core_login_check() {
+run_client_core_activation_check() {
   local label="$1"
   shift
   local attempts="${SLAN_CONTROL_RETRY_ATTEMPTS:-3}"
@@ -236,13 +229,6 @@ run_client_core_login_check() {
       return 0
     fi
     echo "$label attempt $attempt/$attempts failed: $output" >&2
-    if [[ "$output" == *"HTTP 409"* ]]; then
-      for index in "${!args[@]}"; do
-        if [[ "${args[$index]}" == "-register=true" ]]; then
-          args[$index]="-register=false"
-        fi
-      done
-    fi
     if [[ "$attempt" != "$attempts" ]]; then
       sleep $((attempt * 5))
     fi
@@ -259,43 +245,25 @@ ensure_package() {
   [[ -f "$PACKAGE_PATH" ]] || fail "Linux client package not found: $PACKAGE_PATH"
 }
 
-register_and_login() {
-  log "register/login test user"
-  curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/register" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
-
-  local auth_json
-  auth_json="$(curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_ID="$(printf '%s' "$auth_json" | jq -r '.userId // .auth.userId // .auth.session.userId // .auth.user.userId // empty')"
-  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-  [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
-}
-
 resolve_network() {
-  log "resolve default network"
-  local networks_json
-  networks_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
-  NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
-  [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
+  log "create Ops network"
+  local network_json
+  network_json="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "linux-docker-mac-$(date +%s%N)")"
+  NETWORK_ID="$(printf '%s' "$network_json" | jq -r '.networkId // empty')"
+  [[ -n "$NETWORK_ID" ]] || fail "failed to create Ops network"
 }
 
 create_bootstrap_key() {
-  local bootstrap_json
-  bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"Docker Linux Mac Check\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
-  BOOTSTRAP_ID="$(printf '%s' "$bootstrap_json" | json_value id)"
+  local bootstrap_json mac_json
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
+  bootstrap_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Docker Linux Mac Check")"
+  BOOTSTRAP_ID="$(printf '%s' "$bootstrap_json" | json_value credentialId)"
   BOOTSTRAP_KEY="$(printf '%s' "$bootstrap_json" | json_value key)"
   [[ -n "$BOOTSTRAP_ID" && -n "$BOOTSTRAP_KEY" ]] || fail "failed to create bootstrap key"
+  mac_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Docker Mac Check")"
+  MAC_CREDENTIAL_ID="$(printf '%s' "$mac_json" | json_value credentialId)"
+  MAC_AUTHORIZATION_KEY="$(printf '%s' "$mac_json" | json_value key)"
+  [[ -n "$MAC_CREDENTIAL_ID" && -n "$MAC_AUTHORIZATION_KEY" ]] || fail "failed to create Mac device authorization key"
 }
 
 start_container() {
@@ -348,10 +316,9 @@ install_client() {
   local local_package_in_container="/workspace/slan/${PACKAGE_PATH#$ROOT_DIR/}"
   docker_exec "
 set -euo pipefail
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh \
+bash /workspace/slan/client/install/linux/install.sh \
   --server='${BIZ_URL}' \
-  --installation-key='${BOOTSTRAP_KEY}' \
+  --authorization-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${local_package_in_container}'
 "
@@ -365,9 +332,7 @@ export SLAN_CLIENT_CORE_SERVICE_HOST='127.0.0.1:46392'
 export SLAN_LINUX_NETWORK_MOCK='${LINUX_NETWORK_MOCK}'
 exec /usr/bin/slan-client-v2-console \
   --server-url '${BIZ_URL}' \
-  --email '${EMAIL}' \
-  --password '${PASSWORD}' \
-  --device-name 'Docker Linux Mac Check' \
+  --authorization-key '${BOOTSTRAP_KEY}' \
   --foreground >/tmp/slan-console.out 2>/tmp/slan-console.err
 " >/dev/null
 }
@@ -383,19 +348,19 @@ wait_local_api() {
   fail "linux docker local API did not become ready"
 }
 
-wait_signed_in() {
+wait_activated() {
   local deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
   local status_json=''
   while (( $(date +%s) < deadline )); do
     status_json="$(request_json localStatus || true)"
-    if [[ -n "$status_json" ]] && jq -e '.signedIn == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$status_json"; then
+    if [[ -n "$status_json" ]] && jq -e '.activated == true and (.deviceId // "" | length > 0)' >/dev/null <<<"$status_json"; then
       printf '%s\n' "$status_json"
       return 0
     fi
     sleep 1
   done
   printf '%s\n' "$status_json"
-  fail "linux docker did not reach signed-in state"
+  fail "linux docker did not reach activated state"
 }
 
 wait_control_ready() {
@@ -457,7 +422,7 @@ verify_existing_macos_service() {
   installed_hash="$(sha256_file "/Library/Application Support/SLAN/client-core-service")"
   [[ "$expected_hash" == "$installed_hash" ]] || fail "installed mac client-core-service is stale; reinstall with scripts/install_macos_service.sh"
   health_output="$(
-    run_client_core_login_check "mac service health" \
+    run_client_core_activation_check "mac service health" \
       -address "$MAC_SERVICE_HOST" \
       -health-only=true \
       -timeout 10s
@@ -470,7 +435,7 @@ ensure_macos_app_service() {
   open "$MACOS_APP_PATH"
   local health_output
   health_output="$(
-    run_client_core_login_check "mac app service health" \
+    run_client_core_activation_check "mac app service health" \
       -address "$MAC_SERVICE_HOST" \
       -health-only=true \
       -timeout 15s
@@ -524,25 +489,35 @@ start_mac_service_if_needed() {
   verify_existing_macos_service "$MAC_SERVICE_BIN"
 }
 
-login_and_enable_mac() {
+activate_mac() {
   local output
   output="$(
-    run_client_core_login_check "mac docker login" \
+    run_client_core_activation_check "mac docker activation" \
       -biz-url "$BIZ_URL" \
       -address "$MAC_SERVICE_HOST" \
-      -email "$EMAIL" \
-      -password "$PASSWORD" \
-      -register=false \
-      -enable-network=true \
+      -authorization-key "$MAC_AUTHORIZATION_KEY" \
+      -enable-network=false \
       -timeout 90s
   )" || {
     echo "$output" >&2
-    fail "failed to login/enable mac service network"
+    fail "failed to activate Mac service"
   }
   echo "$output"
   MAC_DEVICE_ID="$(echo "$output" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
-  MAC_IP="$(echo "$output" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
   [[ -n "$MAC_DEVICE_ID" ]] || fail "failed to parse Mac device id"
+}
+
+enable_mac_network() {
+  local output
+  output="$(
+    run_client_core_activation_check "mac docker network enable" \
+      -biz-url "$BIZ_URL" \
+      -address "$MAC_SERVICE_HOST" \
+      -activate=false \
+      -enable-network=true \
+      -timeout 90s
+  )" || fail "failed to enable Mac service network"
+  MAC_IP="$(echo "$output" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
   [[ -n "$MAC_IP" ]] || fail "failed to parse Mac virtual IP"
   MAC_IP="${MAC_IP%%/*}"
 }
@@ -558,27 +533,39 @@ provision_linux_container() {
   start_console
   log "wait for Linux Docker local API"
   wait_local_api
-  log "wait for Linux Docker signed-in local status"
-  local signed_in_json
-  signed_in_json="$(wait_signed_in)"
-  LINUX_DEVICE_ID="$(jq -r '.deviceId // empty' <<<"$signed_in_json")"
+  log "wait for Linux Docker activated local status"
+  local activated_json
+  activated_json="$(wait_activated)"
+  LINUX_DEVICE_ID="$(jq -r '.deviceId // empty' <<<"$activated_json")"
   [[ -n "$LINUX_DEVICE_ID" ]] || fail "failed to parse Linux Docker device id"
   log "wait for Linux Docker control transport ready"
   wait_control_ready
 }
 
+attach_devices_to_network() {
+  local device_id
+  for device_id in "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID"; do
+    curl --silent --show-error --fail -X POST \
+      "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/devices" \
+      -H "Authorization: Bearer ${OPS_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "{\"deviceId\":\"${device_id}\"}" >/dev/null
+  done
+}
+
 resolve_security_group() {
-  local groups_json
-  groups_json="$(curl --silent --show-error --fail "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
-  SECURITY_GROUP_ID="$(printf '%s' "$groups_json" | jq -r '.items[0].securityGroupId // empty')"
-  [[ -n "$SECURITY_GROUP_ID" ]] || fail "network ${NETWORK_ID} has no security group"
+  local group_json
+  group_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/security-groups" \
+    "{\"name\":\"linux-docker-mac-security-$(date +%s%N)\"}")"
+  SECURITY_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.securityGroupId // empty')"
+  [[ -n "$SECURITY_GROUP_ID" ]] || fail "failed to create Ops security group"
 }
 
 create_dns_zone() {
   ZONE_NAME="linux-mac-$(date +%s).slan.test"
   local zone_json
-  zone_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
-    "{\"zoneName\":\"${ZONE_NAME}\"}")"
+  zone_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/zones" \
+    "{\"name\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
   [[ -n "$ZONE_ID" ]] || fail "dns zone create returned empty zoneId"
 }
@@ -587,7 +574,7 @@ create_dns_record() {
   local name="$1"
   local target_device_id="$2"
   local record_json record_id
-  record_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  record_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
   [[ -n "$record_id" ]] || fail "dns record create returned empty recordId for ${name}"
@@ -601,7 +588,7 @@ add_rule() {
   local peer_value="$4"
   local priority="$5"
   local rule_json rule_id
-  rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  rule_json="$(create_json "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
@@ -714,12 +701,9 @@ resolve_linux_ip_from_status() {
 wait_mac_message() {
   local from_device_id="$1"
   local body="$2"
-  run_client_core_login_check "mac wait message" \
+  run_client_core_activation_check "mac wait message" \
     -address "$MAC_SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -register=false \
-    -login=false \
+    -activate=false \
     -expect-from "$from_device_id" \
     -expect-body "$body" \
     -timeout 90s >/dev/null
@@ -728,12 +712,9 @@ wait_mac_message() {
 send_mac_message() {
   local target_device_id="$1"
   local body="$2"
-  run_client_core_login_check "mac send message" \
+  run_client_core_activation_check "mac send message" \
     -address "$MAC_SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -register=false \
-    -login=false \
+    -activate=false \
     -send-target "$target_device_id" \
     -send-body "$body" \
     -timeout 45s >/dev/null
@@ -1079,25 +1060,24 @@ PY
   if [[ "$KEEP_CONTAINER" != "1" ]]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$BOOTSTRAP_ID" && -n "$USER_TOKEN" && -n "$USER_ID" ]]; then
-    curl --silent --show-error -X POST \
-      "${WEB_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
-      -H "Authorization: Bearer ${USER_TOKEN}" \
-      -H 'Content-Type: application/json' \
-      -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
+  if [[ -n "$BOOTSTRAP_ID" && -n "$OPS_TOKEN" ]]; then
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$BOOTSTRAP_ID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$MAC_CREDENTIAL_ID" && -n "$OPS_TOKEN" ]]; then
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$MAC_CREDENTIAL_ID" >/dev/null 2>&1 || true
   fi
   if [[ "$KEEP_REMOTE_RESOURCES" != "1" ]]; then
     for rule_id in "${RULE_IDS[@]:-}"; do
-      best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${rule_id}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/security-rules/${rule_id}"
     done
     for record_id in "${RECORD_IDS[@]:-}"; do
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${record_id}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/records/${record_id}"
     done
-    [[ -n "$ZONE_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+    [[ -n "$ZONE_ID" ]] && best_effort_delete "${OPS_BASE_URL}/api/ops/dns/zones/${ZONE_ID}"
+    slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
   else
     echo "kept remote network resources: networkId=$NETWORK_ID zoneId=${ZONE_ID:-} ruleCount=${#RULE_IDS[@]} recordCount=${#RECORD_IDS[@]}"
   fi
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "$KEEP_WORK_DIR" == "1" ]]; then
     echo "kept work dir: $WORK_DIR"
   else
@@ -1115,15 +1095,18 @@ main() {
   need /opt/homebrew/bin/go
 
   ensure_package
-  register_and_login
-  resolve_network
   create_bootstrap_key
+  resolve_network
 
   start_mac_service_if_needed
-  log "login and enable Mac network"
-  login_and_enable_mac
+  log "activate Mac client"
+  activate_mac
   log "provision Linux Docker client"
   provision_linux_container
+  log "attach activated devices to test network"
+  attach_devices_to_network
+  log "enable Mac network after Ops assignment"
+  enable_mac_network
 
   create_dns_zone
   create_dns_record mac "$MAC_DEVICE_ID"
@@ -1165,8 +1148,8 @@ main() {
   wait_linux_message "$MAC_DEVICE_ID" "$body_mac_to_linux"
 
   if [[ "$MACOS_NETWORK_MOCK" == "1" || "$LINUX_NETWORK_MOCK" == "1" ]]; then
-    printf 'linuxDockerMacIntegration: ok email=%s networkId=%s zone=%s mac=%s linux=%s macIp=%s linuxIp=%s packetTests=0 messageTests=1\n' \
-      "$EMAIL" "$NETWORK_ID" "$ZONE_NAME" "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID" "${MAC_IP:-mock}" "${LINUX_IP:-mock}"
+    printf 'linuxDockerMacIntegration: ok networkId=%s zone=%s mac=%s linux=%s macIp=%s linuxIp=%s packetTests=0 messageTests=1\n' \
+      "$NETWORK_ID" "$ZONE_NAME" "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID" "${MAC_IP:-mock}" "${LINUX_IP:-mock}"
     return 0
   fi
 
@@ -1197,8 +1180,8 @@ main() {
   grep -q 'SOCKET_ECHO_UDP_RECEIVED=' "$MAC_ECHO_LOG"
   grep -q 'SOCKET_ECHO_TCP_RECEIVED=' "$MAC_ECHO_LOG"
 
-  printf 'linuxDockerMacIntegration: ok email=%s networkId=%s zone=%s mac=%s linux=%s macIp=%s linuxIp=%s packetTests=1 messageTests=1\n' \
-    "$EMAIL" "$NETWORK_ID" "$ZONE_NAME" "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID" "$MAC_IP" "$LINUX_IP"
+  printf 'linuxDockerMacIntegration: ok networkId=%s zone=%s mac=%s linux=%s macIp=%s linuxIp=%s packetTests=1 messageTests=1\n' \
+    "$NETWORK_ID" "$ZONE_NAME" "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID" "$MAC_IP" "$LINUX_IP"
 }
 
 main "$@"

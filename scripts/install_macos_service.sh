@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_PATH="${BASH_SOURCE:-$0}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
+# shellcheck source=scripts/lib/client_default_endpoints.sh
+. "$SCRIPT_DIR/lib/client_default_endpoints.sh"
+
 LABEL="dev.slan.client-core-service"
 INSTALL_DIR="/Library/Application Support/SLAN"
 STATE_ROOT="/Library/Preferences/dev.slan.client-core-service"
@@ -10,8 +15,7 @@ PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
 SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1:46392}"
-DEFAULT_CONTROL_BASE_URL="http://47.245.40.231:28080"
-CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-${SLAN_BIZ_URL:-$DEFAULT_CONTROL_BASE_URL}}"
+CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}}"
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 RESET_IDENTITY="${SLAN_RESET_MACOS_IDENTITY:-0}"
 TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
@@ -109,7 +113,7 @@ if [[ -z "$SOURCE_BIN" && -n "$APP_PATH" ]]; then
 fi
 
 if [[ -z "$SOURCE_BIN" ]]; then
-  SOURCE_BIN="client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
+  SOURCE_BIN="client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
 fi
 
 if [[ ! -x "$SOURCE_BIN" ]]; then
@@ -149,9 +153,6 @@ chmod 755 "$INSTALL_DIR" "$LOG_DIR"
 chown -R root:wheel "$STATE_ROOT"
 chmod 700 "$STATE_ROOT" "$STATE_DIR"
 [[ ! -f "${STATE_DIR}/config.json" ]] || chmod 600 "${STATE_DIR}/config.json"
-
-DEVICE_ID="$(SLAN_STATE_DIR="$STATE_ROOT" "$SERVICE_BIN" --ensure-device-id)"
-echo "deviceId: $DEVICE_ID"
 
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

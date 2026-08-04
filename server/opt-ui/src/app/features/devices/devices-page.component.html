@@ -3,57 +3,49 @@
     <div class="panel-title">
       <div>
         <h2>设备管理</h2>
-        <p>运营端查看全局设备、客户归属、IP、心跳、网络启用状态和流量。</p>
+        <p>运营端管理独立设备身份、IP、心跳、网络启用状态和流量。</p>
       </div>
       <div class="toolbar">
-        <input class="search-input" [(ngModel)]="vm.deviceKeyword" placeholder="搜索设备、客户、IP、系统">
+        <input class="search-input" [(ngModel)]="vm.deviceKeyword" (ngModelChange)="resetPage()" placeholder="搜索设备、IP、系统">
+        <button class="primary" type="button" (click)="vm.openCredentialDialog('')">创建授权 Key</button>
       </div>
     </div>
 
-    <table>
+    <div class="device-table-wrap">
+    <table class="device-table">
       <thead>
         <tr>
           <th>设备</th>
-          <th>客户</th>
-          <th>系统</th>
+          <th>客户端系统</th>
           <th>IP</th>
-          <th>心跳/网络/设备</th>
-          <th>网络</th>
+          <th>心跳/网络</th>
+          <th>授权 Key</th>
           <th>流量</th>
           <th>上报时间</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
-        <tr *ngFor="let device of vm.filteredDevices">
+        <tr *ngFor="let device of pagedDevices">
           <td>
-            <strong>{{ device.alias || device.name || device.deviceId }}</strong><br>
-            <code>{{ device.deviceId }}</code>
-          </td>
-          <td>
-            <strong>{{ device.ownerEmail || device.ownerId }}</strong><br>
-            <code>{{ device.ownerId }}</code>
+            <div class="resource-name-cell"><strong>{{ device.name || device.deviceId }}</strong><button class="quick-rename-button" type="button" title="修改设备名称" aria-label="修改设备名称" (click)="vm.openQuickRename('device', device)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button></div>
           </td>
           <td>{{ device.osName || device.platform }} {{ device.osVersion }}</td>
-          <td><code>{{ device.globalIp }}</code><br><small>{{ device.globalName }}</small></td>
+          <td><code>{{ device.globalIp }}</code></td>
           <td>
             <span class="status" [class.online]="device.heartbeatOnline">{{ device.heartbeatOnline ? '在线' : '不在线' }}</span>
             <span class="status" [class.online]="device.networkEnabled">{{ device.networkEnabled ? '启用' : '停用' }}</span>
-            <span class="status" [class.online]="device.deviceEnabled">{{ device.deviceEnabled ? '启用' : '禁用' }}</span>
           </td>
-          <td>{{ device.networkCount }}</td>
-          <td>
-            收 {{ vm.formatBytes(device.rxBytesTotal) }}<br>
-            发 {{ vm.formatBytes(device.txBytesTotal) }}
-          </td>
+          <td><span class="status" [class.online]="vm.hasActiveCredential(device.deviceId)">{{ vm.hasActiveCredential(device.deviceId) ? '有效' : '无效' }}</span></td>
+          <td class="traffic-inline">收 {{ vm.formatBytes(device.rxBytesTotal) }} / 发 {{ vm.formatBytes(device.txBytesTotal) }}</td>
           <td>{{ device.lastReportAt || '-' }}</td>
           <td>
             <div class="row-actions">
-              <button class="table-icon-button" type="button" title="查看或修改设备" aria-label="查看或修改设备" (click)="vm.openDeviceDialog(device)">
-                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.013 1.427a2 2 0 0 1 2.828 2.828l-7.28 7.28-3.3.472.471-3.3 7.281-7.28Zm1.414 1.414a1 1 0 0 0-1.414 0L4.675 9.18l-.236 1.65 1.65-.236 6.338-6.339a1 1 0 0 0 0-1.414Z"/></svg>
-              </button>
               <button class="table-icon-button" type="button" [title]="device.deviceEnabled ? '停用设备' : '启用设备'" [attr.aria-label]="device.deviceEnabled ? '停用设备' : '启用设备'" (click)="vm.toggleDevice(device)">
                 <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6A.5.5 0 0 1 8 1Zm3.854 1.646a.5.5 0 0 1 .707.708A5 5 0 1 1 3.439 3.354a.5.5 0 1 1 .707-.708A4 4 0 1 0 8 2a.5.5 0 0 1 0 1 3 3 0 1 1-2.121.879.5.5 0 1 1 .707.707A2 2 0 1 0 8 4a.5.5 0 0 1 0-1 4 4 0 1 1 2.854-.354Z"/></svg>
+              </button>
+              <button class="table-icon-button" type="button" title="绑定设备组" aria-label="绑定设备组" (click)="vm.openDeviceGroupAssignmentDialog(device)">
+                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0-1a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm5.5 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm0-1a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3ZM1 13c0-2.21 2.239-4 5-4s5 1.79 5 4v1H1v-1Zm1 .02V13h8v-.02C9.984 11.45 8.254 10 6 10s-3.984 1.45-4 3.02ZM12 9c2.21 0 4 1.343 4 3v1h-4v-1h3c0-1.014-1.337-2-3-2V9Z"/></svg>
               </button>
               <button class="danger-icon-button" type="button" title="删除设备" aria-label="删除设备" (click)="vm.deleteDevice(device)">
                 <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1h3a1 1 0 0 1 1 1V3h3v1h-1v9a2 2 0 0 1-2 2h-5a2 2 0 0 1-2-2V4h-1V3h3V2a1 1 0 0 1 1-1Zm3 2V2h-3v1h3Zm-4 1v9a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V4h-7Zm2 2h1v6h-1V6Zm3 0h-1v6h1V6Z"/></svg>
@@ -62,9 +54,11 @@
           </td>
         </tr>
         <tr *ngIf="vm.filteredDevices.length === 0">
-          <td colspan="9" class="empty-cell">暂无设备</td>
+          <td colspan="8" class="empty-cell">暂无设备</td>
         </tr>
       </tbody>
     </table>
+    </div>
+    <ops-pagination [total]="vm.filteredDevices.length" [page]="page" [pageSize]="pageSize" (pageChange)="page = $event" (pageSizeChange)="pageSize = $event; resetPage()"></ops-pagination>
   </article>
 </section>

@@ -3,6 +3,7 @@ package service
 type OpsLoginInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	RemoteIP string `json:"-"`
 }
 
 type CreateOperatorInput struct {
@@ -25,6 +26,7 @@ type SetOperatorPasswordInput struct {
 }
 
 type OpsChangePasswordInput struct {
-	OperatorID string `json:"operatorId"`
-	Password   string `json:"password"`
+	OperatorID  string `json:"operatorId"`
+	OldPassword string `json:"oldPassword"`
+	Password    string `json:"password"`
 }

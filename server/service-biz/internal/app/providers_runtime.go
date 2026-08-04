@@ -48,6 +48,31 @@ func envString(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
 }
 
+func deviceCredentialPepper() string {
+	if value := envString("SLAN_DEVICE_CREDENTIAL_PEPPER"); value != "" {
+		return value
+	}
+	return "slan-development-device-credential-pepper"
+}
+
+func deviceCredentialPreviousPeppers() []string {
+	values := strings.Split(envString("SLAN_DEVICE_CREDENTIAL_PREVIOUS_PEPPERS"), ",")
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{deviceCredentialPepper(): {}}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
 func envBool(key string) (bool, bool) {
 	value := envString(key)
 	if value == "" {

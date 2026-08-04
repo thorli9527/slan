@@ -9,10 +9,12 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
-WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
+OPS_EMAIL="${SLAN_OPS_EMAIL:-admin1}"
+OPS_PASSWORD="${SLAN_OPS_PASSWORD:-admin1}"
 TIMEOUT_SECONDS="${SLAN_MAC_REMOTE_LINUX_TIMEOUT_SECONDS:-180}"
 LOCAL_API_TIMEOUT_SECONDS="${SLAN_MAC_REMOTE_LINUX_LOCAL_API_TIMEOUT_SECONDS:-120}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_MAC_REMOTE_LINUX_BOOTSTRAP_TTL_SECONDS:-1800}"
@@ -33,12 +35,12 @@ LINUX_DEVICE_ALIAS="${SLAN_REMOTE_LINUX_DEVICE_ALIAS:-Remote Linux CLI}"
 
 MAC_SERVICE_MODE="${SLAN_MAC_SERVICE_MODE:-existing}"
 MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:46392}"
-DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service"
+DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client/rust/target/debug/client-core-service"
 if [[ ! -x "$DEFAULT_MAC_SERVICE_BIN" ]]; then
-  DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
+  DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
 fi
 MAC_SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$DEFAULT_MAC_SERVICE_BIN}"
-MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-$ROOT_DIR/client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
+MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-$ROOT_DIR/client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 RESET_EXISTING_MAC_SERVICE_IDENTITY="${SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY:-1}"
@@ -50,15 +52,6 @@ PATH_MODE="${SLAN_PATH_MODE:-auto}"
 POST_ENABLE_WAIT_SECONDS="${SLAN_MAC_REMOTE_LINUX_POST_ENABLE_WAIT_SECONDS:-45}"
 SKIP_UDP_CHECKS="${SLAN_SKIP_UDP_CHECKS:-0}"
 KEEP_RESOURCES="${SLAN_KEEP_MAC_REMOTE_LINUX_RESOURCES:-0}"
-
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-  GENERATED_TEST_EMAIL=0
-else
-  EMAIL="mac-remote-linux-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 
 if [[ -n "${SLAN_TEST_UDP_ECHO_PORT:-}" ]]; then
   UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT}"
@@ -85,12 +78,13 @@ MAC_ECHO_LOG="$WORK_DIR/mac-echo.log"
 MAC_SERVICE_LOG="$WORK_DIR/macos-service.log"
 MAC_CORE_LOG="$WORK_DIR/state/SLAN/client-core-service.log"
 
-USER_ID=""
-USER_TOKEN=""
 NETWORK_ID=""
 SECURITY_GROUP_ID=""
 BOOTSTRAP_KEY_ID=""
 BOOTSTRAP_KEY=""
+MAC_CREDENTIAL_ID=""
+MAC_AUTHORIZATION_KEY=""
+OPS_TOKEN=""
 DEVICE_GROUP_ID=""
 ZONE_ID=""
 ZONE_NAME=""
@@ -132,7 +126,7 @@ best_effort_delete() {
   local url="$1"
   curl --silent --show-error --connect-timeout 5 --max-time 20 \
     -X DELETE "$url" \
-    -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
+    -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null 2>&1 || true
 }
 
 sudo_run() {
@@ -147,7 +141,7 @@ sha256_file() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
-run_client_core_login_check() {
+run_client_core_activation_check() {
   local label="$1"
   shift
   local attempts="${SLAN_CONTROL_RETRY_ATTEMPTS:-3}"
@@ -166,14 +160,6 @@ run_client_core_login_check() {
       return 0
     fi
     echo "$label attempt $attempt/$attempts failed: $output" >&2
-    if [[ "$output" == *"HTTP 409"* ]]; then
-      local index
-      for index in "${!args[@]}"; do
-        if [[ "${args[$index]}" == "-register=true" ]]; then
-          args[$index]="-register=false"
-        fi
-      done
-    fi
     if [[ "$attempt" != "$attempts" ]]; then
       sleep $((attempt * 5))
     fi
@@ -195,7 +181,7 @@ verify_existing_macos_service() {
   )"
   [[ "$expected_hash" == "$installed_hash" ]] || fail "installed mac client-core-service is stale; reinstall with scripts/install_macos_service.sh"
   health_output="$(
-    run_client_core_login_check "mac service health" \
+    run_client_core_activation_check "mac service health" \
       -address "$MAC_SERVICE_HOST" \
       -health-only=true \
       -timeout 10s
@@ -208,7 +194,7 @@ ensure_macos_app_service() {
   open "$MACOS_APP_PATH"
   local health_output
   health_output="$(
-    run_client_core_login_check "mac app service health" \
+    run_client_core_activation_check "mac app service health" \
       -address "$MAC_SERVICE_HOST" \
       -health-only=true \
       -timeout 15s
@@ -266,19 +252,17 @@ start_mac_service_if_needed() {
   verify_existing_macos_service "$MAC_SERVICE_BIN"
 }
 
-login_mac() {
+activate_mac() {
   local output
   output="$(
-    run_client_core_login_check "mac remote linux login" \
+    run_client_core_activation_check "mac remote linux activation" \
       -biz-url "$BIZ_URL" \
       -address "$MAC_SERVICE_HOST" \
-      -email "$EMAIL" \
-      -password "$PASSWORD" \
-      -register=false \
+      -authorization-key "$MAC_AUTHORIZATION_KEY" \
       -timeout 90s
   )" || {
     echo "$output" >&2
-    fail "failed to login mac service"
+    fail "failed to activate mac service"
   }
   echo "$output"
   MAC_DEVICE_ID="$(echo "$output" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
@@ -288,12 +272,9 @@ login_mac() {
 enable_mac_network() {
   local output
   output="$(
-    run_client_core_login_check "mac remote linux enable network" \
+    run_client_core_activation_check "mac remote linux enable network" \
       -address "$MAC_SERVICE_HOST" \
-      -email "$EMAIL" \
-      -password "$PASSWORD" \
-      -register=false \
-      -login=false \
+      -activate=false \
       -enable-network=true \
       -timeout 120s
   )" || {
@@ -309,12 +290,9 @@ enable_mac_network() {
 wait_mac_message() {
   local from_device_id="$1"
   local body="$2"
-  run_client_core_login_check "mac wait message" \
+  run_client_core_activation_check "mac wait message" \
     -address "$MAC_SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -register=false \
-    -login=false \
+    -activate=false \
     -expect-from "$from_device_id" \
     -expect-body "$body" \
     -timeout 90s >/dev/null
@@ -323,12 +301,9 @@ wait_mac_message() {
 send_mac_message() {
   local target_device_id="$1"
   local body="$2"
-  run_client_core_login_check "mac send message" \
+  run_client_core_activation_check "mac send message" \
     -address "$MAC_SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -register=false \
-    -login=false \
+    -activate=false \
     -send-target "$target_device_id" \
     -send-body "$body" \
     -timeout 45s >/dev/null
@@ -718,7 +693,7 @@ resolve_linux_package_path() {
     printf '%s\n' "$SLAN_REMOTE_LINUX_PACKAGE"
     return
   fi
-  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local installer_dir="$ROOT_DIR/client/.tmp/installer/linux"
   local candidate="$installer_dir/SLAN-Client-V2-linux-${normalized_arch}.tar.gz"
   if [[ -f "$candidate" ]]; then
     printf '%s\n' "$candidate"
@@ -752,81 +727,48 @@ resolve_remote_built_package_path() {
     SLAN_REMOTE_LINUX_RUST_PROFILE="${SLAN_REMOTE_LINUX_RUST_PROFILE:-debug}" \
     SLAN_REMOTE_LINUX_SKIP_FETCH=1 \
     bash "$ROOT_DIR/scripts/build_linux_client_remote.sh" >/dev/null
-  printf '%s\n' "/tmp/slan-linux-remote-build/client_v2/.tmp/installer/linux/SLAN-Client-V2-linux-amd64.tar.gz"
-}
-
-register_and_login_user() {
-  curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/register" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
-  local auth_json
-  auth_json="$(curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_ID="$(printf '%s' "$auth_json" | jq -r '.userId // .auth.userId // .auth.session.userId // .auth.user.userId // empty')"
-  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-  [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
-}
-
-refresh_user_token() {
-  local auth_json
-  auth_json="$(curl --silent --show-error --fail \
-    -X POST "${BIZ_URL}/api/app/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
-  [[ -n "$USER_TOKEN" ]] || fail "failed to refresh test user token"
+  printf '%s\n' "/tmp/slan-linux-remote-build/client/.tmp/installer/linux/SLAN-Client-V2-linux-amd64.tar.gz"
 }
 
 resolve_network_context() {
-  local networks_json groups_json
-  networks_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
-  NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
-  [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
-  groups_json="$(curl --silent --show-error --fail \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
-  SECURITY_GROUP_ID="$(printf '%s' "$groups_json" | jq -r '.items[0].securityGroupId // .[0].securityGroupId // empty')"
-  [[ -n "$SECURITY_GROUP_ID" ]] || fail "network ${NETWORK_ID} has no security group"
+  local network_json group_json
+  network_json="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "mac-remote-linux-$(date +%s%N)")"
+  NETWORK_ID="$(printf '%s' "$network_json" | jq -r '.networkId // empty')"
+  [[ -n "$NETWORK_ID" ]] || fail "failed to create Ops network"
+  group_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/security-groups" \
+    "{\"name\":\"mac-remote-linux-security-$(date +%s%N)\"}")"
+  SECURITY_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.securityGroupId // empty')"
+  [[ -n "$SECURITY_GROUP_ID" ]] || fail "failed to create Ops security group"
 }
 
-create_bootstrap_key() {
-  local bootstrap_json
-  bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${LINUX_DEVICE_ALIAS}\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
-  BOOTSTRAP_KEY_ID="$(printf '%s' "$bootstrap_json" | jq -r '.id // .installationKeyId // empty')"
-  BOOTSTRAP_KEY="$(printf '%s' "$bootstrap_json" | jq -r '.key // .installationKey // empty')"
-  [[ -n "$BOOTSTRAP_KEY_ID" && -n "$BOOTSTRAP_KEY" ]] || fail "failed to create remote Linux bootstrap key"
+create_device_authorization_key() {
+  local bootstrap_json mac_json
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL" "$OPS_EMAIL" "$OPS_PASSWORD")"
+  bootstrap_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$LINUX_DEVICE_ALIAS")"
+  BOOTSTRAP_KEY_ID="$(printf '%s' "$bootstrap_json" | jq -r '.credentialId // empty')"
+  BOOTSTRAP_KEY="$(printf '%s' "$bootstrap_json" | jq -r '.key // empty')"
+  [[ -n "$BOOTSTRAP_KEY_ID" && -n "$BOOTSTRAP_KEY" ]] || fail "failed to create remote Linux device authorization key"
+  mac_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Mac Remote Linux Check")"
+  MAC_CREDENTIAL_ID="$(printf '%s' "$mac_json" | jq -r '.credentialId // empty')"
+  MAC_AUTHORIZATION_KEY="$(printf '%s' "$mac_json" | jq -r '.key // empty')"
+  [[ -n "$MAC_CREDENTIAL_ID" && -n "$MAC_AUTHORIZATION_KEY" ]] || fail "failed to create Mac device authorization key"
 }
 
 create_json() {
   local url="$1"
   local payload="$2"
-  local request_url="$url"
   local response_file
   local status
   response_file="$(mktemp "${TMPDIR:-/tmp}/slan-create-json.XXXXXX")"
-  if [[ "$request_url" == *\?* ]]; then
-    request_url="${request_url}&actorUserId=${USER_ID}"
-  else
-    request_url="${request_url}?actorUserId=${USER_ID}"
-  fi
   status="$(curl --silent --show-error --connect-timeout 5 --max-time 30 \
     -o "$response_file" \
     -w '%{http_code}' \
-    -X POST "$request_url" \
-    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -X POST "$url" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "$payload")"
   if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
-    echo "create_json failed status=$status url=$request_url payload=$payload body=$(cat "$response_file")" >&2
+    echo "create_json failed status=$status url=$url payload=$payload body=$(cat "$response_file")" >&2
     rm -f "$response_file"
     return 22
   fi
@@ -837,8 +779,8 @@ create_json() {
 create_dns_zone() {
   local zone_json
   ZONE_NAME="mac-linux-$(date +%s).slan.test"
-  zone_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
-    "{\"zoneName\":\"${ZONE_NAME}\"}")"
+  zone_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/zones" \
+    "{\"name\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
   [[ -n "$ZONE_ID" ]] || fail "dns zone create returned empty zoneId"
 }
@@ -847,7 +789,7 @@ create_dns_record() {
   local name="$1"
   local target_device_id="$2"
   local record_json record_id
-  record_json="$(create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  record_json="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
   [[ -n "$record_id" ]] || fail "dns record create returned empty recordId for ${name}"
@@ -889,7 +831,7 @@ add_rule() {
   local peer_value="$4"
   local priority="$5"
   local rule_json rule_id
-  rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  rule_json="$(create_json "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
@@ -898,7 +840,7 @@ add_rule() {
 
 provision_network_device_group() {
   local group_json
-  group_json="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+  group_json="$(create_json "${OPS_BASE_URL}/api/ops/device-groups" \
     "{\"name\":\"mac-linux-$(date +%s%N)\",\"description\":\"Mac Linux integration devices\"}")"
   DEVICE_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.groupId // empty')"
   [[ -n "$DEVICE_GROUP_ID" ]] || fail "device group create returned empty groupId"
@@ -906,16 +848,16 @@ provision_network_device_group() {
   local device_id
   for device_id in "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID"; do
     curl --silent --show-error --fail \
-      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
-      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -X POST "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}/devices" \
+      -H "Authorization: Bearer ${OPS_TOKEN}" \
       -H 'Content-Type: application/json' \
-      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+      -d "{\"deviceId\":\"${device_id}\"}" >/dev/null
   done
   log "prepared device group assignments group=${DEVICE_GROUP_ID}"
 }
 
 attach_device_group_to_network() {
-  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups" \
     "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
   log "attached device group network=${NETWORK_ID} group=${DEVICE_GROUP_ID}"
 }
@@ -940,28 +882,26 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  [[ -n "$BOOTSTRAP_KEY_ID" && -n "$OPS_TOKEN" ]] && slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$BOOTSTRAP_KEY_ID" >/dev/null 2>&1 || true
+  [[ -n "$MAC_CREDENTIAL_ID" && -n "$OPS_TOKEN" ]] && slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$MAC_CREDENTIAL_ID" >/dev/null 2>&1 || true
   if is_truthy "$KEEP_RESOURCES"; then
-    echo "kept remote integration resources: email=$EMAIL network=$NETWORK_ID group=$DEVICE_GROUP_ID mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID" >&2
+    echo "kept remote integration resources: network=$NETWORK_ID group=$DEVICE_GROUP_ID mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID" >&2
   elif [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/security-rules/${RULE_IDS[$index]}"
     done
     for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/records/${RECORD_IDS[$index]}"
     done
     if [[ -n "$ZONE_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/zones/${ZONE_ID}"
     fi
     if [[ -n "$DEVICE_GROUP_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
     fi
-    if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
-      best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
-    fi
-    slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
-  else
-    slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
+    slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
+    [[ -n "$DEVICE_GROUP_ID" ]] && best_effort_delete "${OPS_BASE_URL}/api/ops/device-groups/${DEVICE_GROUP_ID}"
   fi
   if [[ "${SLAN_KEEP_MAC_REMOTE_LINUX_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
@@ -990,9 +930,8 @@ main() {
       bash "$ROOT_DIR/scripts/tests/linux/linux_remote_install_check.sh"
   fi
 
-  register_and_login_user
+  create_device_authorization_key
   resolve_network_context
-  create_bootstrap_key
   remote_prepare_dependencies
 
   local normalized_remote_arch
@@ -1007,6 +946,9 @@ main() {
   fi
 
   log "install remote Linux client package"
+  remote_exec "mkdir -p '$REMOTE_DIR/lib'"
+  remote_expect_scp "$ROOT_DIR/client/install/linux/install.sh" "$REMOTE_DIR/install.sh"
+  remote_expect_scp "$ROOT_DIR/client/install/linux/lib/slan-linux-install.sh" "$REMOTE_DIR/lib/slan-linux-install.sh"
   remote_exec "
 set -euo pipefail
 mkdir -p '${REMOTE_DIR}'
@@ -1017,10 +959,9 @@ rm -f /var/lib/SLAN/client-v2-device-id.txt
 rm -f /var/lib/SLAN/client-v2-device-public-key.txt
 rm -f /var/lib/SLAN/client-v2-control-tasks.xml
 rm -f /etc/slan/client-v2-console.env
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o '${REMOTE_DIR}/install.sh'
 bash '${REMOTE_DIR}/install.sh' \
   --server='${BIZ_URL}' \
-  --installation-key='${BOOTSTRAP_KEY}' \
+  --authorization-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${REMOTE_PACKAGE_PATH}'
 cat > /etc/slan/client-v2.env <<'EOF'
@@ -1032,20 +973,19 @@ systemctl restart slan-client-v2.service
 
   log "start or verify mac local service"
   start_mac_service_if_needed
-  log "sign in Mac local service"
-  login_mac
+  log "activate Mac local service"
+  activate_mac
 
   log "wait remote Linux local API"
   remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
   log "sign in remote Linux local service"
-  local remote_signed_in_json
-  remote_signed_in_json="$(remote_helper wait_signed_in_or_login "$EMAIL" "$PASSWORD" "$TIMEOUT_SECONDS")"
-  LINUX_DEVICE_ID="$(json_field "$remote_signed_in_json" '.deviceId // empty')"
+  local remote_activated_json
+  remote_activated_json="$(remote_helper wait_activated "$BOOTSTRAP_KEY" "$TIMEOUT_SECONDS")"
+  LINUX_DEVICE_ID="$(json_field "$remote_activated_json" '.deviceId // empty')"
   [[ -n "$LINUX_DEVICE_ID" ]] || fail "failed to parse remote Linux device id"
   log "wait remote Linux control transport"
   remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
 
-  refresh_user_token
   provision_network_device_group
   create_dns_zone
   create_dns_record mac "$MAC_DEVICE_ID"
@@ -1080,7 +1020,7 @@ curl --silent --show-error --fail --max-time 5 http://127.0.0.1:${HTTP_PORT}/ >/
   log "restart remote Linux client and reload the complete network snapshot"
   remote_exec "systemctl restart slan-client-v2.service"
   remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
-  remote_helper wait_signed_in_or_login "$EMAIL" "$PASSWORD" "$TIMEOUT_SECONDS" >/dev/null
+  remote_helper wait_activated "$BOOTSTRAP_KEY" "$TIMEOUT_SECONDS" >/dev/null
   remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
 
   log "wait remote Linux network module receive dns/acl config"
@@ -1146,7 +1086,7 @@ curl --silent --show-error --fail --max-time 5 http://127.0.0.1:${HTTP_PORT}/ >/
   assert_active_path "Mac" "$(mac_request_json localStatus)"
   assert_active_path "Linux" "$(remote_helper request_json localStatus)"
 
-  echo "macRemoteLinuxIntegration: ok mode=$PATH_MODE path=${EXPECT_PATH_KIND:-auto} email=$EMAIL mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID macIp=$MAC_IP linuxIp=$LINUX_IP zone=$ZONE_NAME remote=$REMOTE_HOST"
+  echo "macRemoteLinuxIntegration: ok mode=$PATH_MODE path=${EXPECT_PATH_KIND:-auto} mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID macIp=$MAC_IP linuxIp=$LINUX_IP zone=$ZONE_NAME remote=$REMOTE_HOST"
 }
 
 main "$@"

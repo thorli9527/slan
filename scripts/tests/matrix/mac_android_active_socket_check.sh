@@ -8,19 +8,21 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_activation_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
 
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
+APP_DIR="$ROOT_DIR/client/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 GO_BIN="${SLAN_GO_BIN:-/opt/homebrew/bin/go}"
-DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service"
+DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client/rust/target/debug/client-core-service"
 if [[ ! -x "$DEFAULT_MAC_SERVICE_BIN" ]]; then
-  DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
+  DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service"
 fi
 SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$DEFAULT_MAC_SERVICE_BIN}"
 
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 if [[ -n "${SLAN_ANDROID_BIZ_URL:-}" ]]; then
   ANDROID_BIZ_URL="$SLAN_ANDROID_BIZ_URL"
 elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhost:28080" ]]; then
@@ -32,25 +34,17 @@ fi
 MAC_SERVICE_MODE="${SLAN_MAC_SERVICE_MODE:-existing}"
 MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:46392}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 TIMEOUT="${SLAN_MAC_ANDROID_ACTIVE_TIMEOUT:-120s}"
 UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT:-19090}"
 TCP_PORT="${SLAN_TEST_TCP_ECHO_PORT:-19091}"
 ANDROID_POST_ENABLE_WAIT_SECONDS="${SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS:-35}"
 ANDROID_HOLD_SECONDS="${SLAN_ANDROID_ACTIVE_HOLD_SECONDS:-240}"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 SUDO_PASSWORD="${SLAN_SUDO_PASSWORD:-}"
 RESET_EXISTING_MAC_SERVICE_IDENTITY="${SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY:-1}"
 MAC_FORCE_RELAY_ONLY="${SLAN_MAC_FORCE_RELAY_ONLY:-1}"
 
-GENERATED_TEST_EMAIL=0
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-else
-  EMAIL="mac-android-active-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 WORK_DIR="${SLAN_MAC_ANDROID_ACTIVE_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-android-active.XXXXXX")}"
 MAC_SERVICE_LOG="$WORK_DIR/macos-service.log"
 ANDROID_LOG="$WORK_DIR/android-active.log"
@@ -58,6 +52,12 @@ ANDROID_LOGCAT="$WORK_DIR/android-logcat.log"
 MAC_CORE_LOG="$WORK_DIR/state/SLAN/client-core-service.log"
 
 PIDS=()
+OPS_TOKEN=""
+NETWORK_ID=""
+MAC_CREDENTIAL_ID=""
+MAC_AUTHORIZATION_KEY=""
+ANDROID_CREDENTIAL_ID=""
+ANDROID_AUTHORIZATION_KEY=""
 ADB_ARGS=("$ADB")
 if [[ -n "$ANDROID_DEVICE" ]]; then
   ADB_ARGS+=(-s "$ANDROID_DEVICE")
@@ -89,7 +89,7 @@ sudo_run() {
   fi
 }
 
-run_client_core_login_check() {
+run_client_core_activation_check() {
   local label="$1"
   shift
   local attempts="${SLAN_CONTROL_RETRY_ATTEMPTS:-3}"
@@ -108,19 +108,35 @@ run_client_core_login_check() {
       return 0
     fi
     echo "$label attempt $attempt/$attempts failed: $output" >&2
-    if [[ "$output" == *"HTTP 409"* ]]; then
-      for index in "${!args[@]}"; do
-        if [[ "${args[$index]}" == "-register=true" ]]; then
-          args[$index]="-register=false"
-        fi
-      done
-    fi
     if [[ "$attempt" != "$attempts" ]]; then
       sleep $((attempt * 5))
     fi
   done
   echo "$output"
   return "$status"
+}
+
+create_device_authorization_keys() {
+  local credential
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
+  credential="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Mac Android Active Mac")"
+  MAC_CREDENTIAL_ID="$(printf '%s' "$credential" | jq -er '.credentialId')"
+  MAC_AUTHORIZATION_KEY="$(printf '%s' "$credential" | jq -er '.key')"
+  credential="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Mac Android Active Android" "$ANDROID_TEST_DEVICE_ID")"
+  ANDROID_CREDENTIAL_ID="$(printf '%s' "$credential" | jq -er '.credentialId')"
+  ANDROID_AUTHORIZATION_KEY="$(printf '%s' "$credential" | jq -er '.key')"
+  curl --silent --show-error --fail -X POST "$BIZ_URL/api/device-auth/token" \
+    -H 'Content-Type: application/json' \
+    -d "{\"key\":\"$ANDROID_AUTHORIZATION_KEY\",\"deviceId\":\"$ANDROID_TEST_DEVICE_ID\"}" >/dev/null
+}
+
+create_ops_network() {
+  local mac_device_id="$1"
+  local network
+  network="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "mac-android-active-$(date +%s%N)")"
+  NETWORK_ID="$(printf '%s' "$network" | jq -er '.networkId')"
+  slan_ops_add_network_device "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$mac_device_id"
+  slan_ops_add_network_device "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$ANDROID_TEST_DEVICE_ID"
 }
 
 verify_existing_macos_service() {
@@ -132,7 +148,7 @@ verify_existing_macos_service() {
   installed_hash="$(sha256_file "/Library/Application Support/SLAN/client-core-service")"
   [[ "$expected_hash" == "$installed_hash" ]] || fail "installed mac client-core-service is stale; reinstall with scripts/install_macos_service.sh"
   health_output="$(
-    run_client_core_login_check "mac service health" \
+    run_client_core_activation_check "mac service health" \
       -address "$MAC_SERVICE_HOST" \
       -health-only=true \
       -timeout 10s
@@ -279,16 +295,17 @@ start_android_flutter_peer_echo() {
   while IFS= read -r define; do
     android_common_dart_defines+=("$define")
   done < <(
-    slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+    slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true
   )
   for attempt in 1 2; do
     : >"$ANDROID_LOG"
     (
       cd "$APP_DIR"
-      flutter test integration_test/mobile_login_test.dart \
+      flutter test integration_test/device_activation_harness_test.dart \
         -d "$ANDROID_DEVICE" \
         --timeout "${SLAN_ANDROID_FLUTTER_TEST_TIMEOUT:-12m}" \
         "${android_common_dart_defines[@]}" \
+        --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
         --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
         --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
         --dart-define="SLAN_TEST_HOLD_SECONDS=$ANDROID_HOLD_SECONDS" \
@@ -331,7 +348,9 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
+  slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$MAC_CREDENTIAL_ID" >/dev/null 2>&1 || true
+  slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$ANDROID_CREDENTIAL_ID" >/dev/null 2>&1 || true
   if [[ "${SLAN_KEEP_MAC_ANDROID_ACTIVE_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
@@ -353,6 +372,7 @@ start_android_vpn_appops_guard
 start_android_vpn_consent_guard
 
 mkdir -p "$WORK_DIR/state"
+create_device_authorization_keys
 
 if [[ "$MAC_SERVICE_MODE" == "existing" ]]; then
   reset_existing_macos_service_identity "$SERVICE_BIN"
@@ -361,21 +381,31 @@ else
   fail "only SLAN_MAC_SERVICE_MODE=existing is supported for mac Android active socket check"
 fi
 
-echo "+ login and enable Mac service network at $MAC_SERVICE_HOST"
+echo "+ activate Mac service at $MAC_SERVICE_HOST"
 MAC_OUTPUT="$(
-  run_client_core_login_check "mac active login" \
+  run_client_core_activation_check "mac active activation" \
     -biz-url "$BIZ_URL" \
     -address "$MAC_SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -register=true \
-    -enable-network=true \
+    -authorization-key "$MAC_AUTHORIZATION_KEY" \
+    -enable-network=false \
     -timeout "$TIMEOUT"
 )"
 echo "$MAC_OUTPUT"
 MAC_DEVICE_ID="$(echo "$MAC_OUTPUT" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
-MAC_IP="$(echo "$MAC_OUTPUT" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
 [[ -n "$MAC_DEVICE_ID" ]] || fail "failed to parse Mac device id"
+create_ops_network "$MAC_DEVICE_ID"
+
+echo "+ enable Mac service network after Ops assignment"
+MAC_OUTPUT="$(
+  run_client_core_activation_check "mac active network enable" \
+    -biz-url "$BIZ_URL" \
+    -address "$MAC_SERVICE_HOST" \
+    -activate=false \
+    -enable-network=true \
+    -timeout "$TIMEOUT"
+)"
+echo "$MAC_OUTPUT"
+MAC_IP="$(echo "$MAC_OUTPUT" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
 [[ -n "$MAC_IP" ]] || fail "failed to parse Mac virtual IP"
 MAC_IP="${MAC_IP%%/*}"
 echo "Mac network IP: $MAC_IP"
@@ -399,6 +429,9 @@ for _ in $(seq 1 180); do
   sleep 1
 done
 [[ -n "$ANDROID_IP" ]] || { cat "$ANDROID_LOG"; fail "timed out waiting for Android network IP"; }
+ANDROID_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$ANDROID_LOG" | tail -n 1)"
+[[ "$ANDROID_DEVICE_ID" == "$ANDROID_TEST_DEVICE_ID" ]] \
+  || { cat "$ANDROID_LOG"; fail "Android device id mismatch: expected=$ANDROID_TEST_DEVICE_ID actual=$ANDROID_DEVICE_ID"; }
 echo "Android network IP: $ANDROID_IP"
 
 for _ in $(seq 1 60); do
@@ -442,4 +475,4 @@ kill "$ANDROID_PID" 2>/dev/null || true
 wait "$ANDROID_PID" || true
 cat "$ANDROID_LOG"
 
-echo "macAndroidActiveSocketCheck: ok email=$EMAIL macIp=$MAC_IP androidIp=$ANDROID_IP udp=$UDP_PORT tcp=$TCP_PORT"
+echo "macAndroidActiveSocketCheck: ok macIp=$MAC_IP androidIp=$ANDROID_IP udp=$UDP_PORT tcp=$TCP_PORT"

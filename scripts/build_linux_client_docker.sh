@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${SLAN_LINUX_BUILD_IMAGE:-ubuntu:24.04}"
 CONTAINER_NAME="${SLAN_LINUX_BUILD_CONTAINER:-slan-linux-client-build}"
-OUTPUT_DIR="${SLAN_LINUX_BUILD_OUTPUT_DIR:-$ROOT_DIR/client_v2/.tmp/installer/linux}"
+OUTPUT_DIR="${SLAN_LINUX_BUILD_OUTPUT_DIR:-$ROOT_DIR/client/.tmp/installer/linux}"
 VARIANT="${SLAN_LINUX_BUILD_VARIANT:-console}"
 VERSION="${SLAN_CLIENT_V2_VERSION:-0.1.0}"
 PLATFORM="${SLAN_LINUX_BUILD_PLATFORM:-}"
@@ -83,7 +83,7 @@ log "build Linux client-core-service"
 docker exec "$CONTAINER_NAME" bash -lc '
 set -euo pipefail
 source "$HOME/.cargo/env"
-cd /workspace/slan/client_v2/rust
+cd /workspace/slan/client/rust
 cargo build -p client-core-service --release
 '
 
@@ -93,10 +93,10 @@ set -euo pipefail
 source \"\$HOME/.cargo/env\"
 cd /workspace/slan
 bash scripts/package_linux.sh \
-  --service-bin=/workspace/slan/client_v2/rust/target/release/client-core-service \
+  --service-bin=/workspace/slan/client/rust/target/release/client-core-service \
   --variant=${VARIANT} \
   --version=${VERSION} \
-  --output-dir=/workspace/slan/client_v2/.tmp/installer/linux
+  --output-dir=/workspace/slan/client/.tmp/installer/linux
 "
 
 ARCHIVE_PATH="$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name 'SLAN-Client-V2-linux-*.tar.gz' | sort | tail -1)"

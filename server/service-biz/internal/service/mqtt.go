@@ -17,22 +17,22 @@ type MQTTAuthInput struct {
 }
 
 type MQTTAuthView struct {
-	Allowed   bool
-	TenantID  string
-	UserID    string
-	Principal string
-	DeviceID  string
+	Allowed    bool
+	TenantID   string
+	IdentityID string
+	Principal  string
+	DeviceID   string
 }
 
 type MQTTCheckInput struct {
-	Principal string
-	DeviceID  string
-	UserID    string
-	ClientID  string
-	Username  string
-	Topic     string
-	Subscribe bool
-	Connect   bool
+	Principal  string
+	DeviceID   string
+	IdentityID string
+	ClientID   string
+	Username   string
+	Topic      string
+	Subscribe  bool
+	Connect    bool
 }
 
 type MQTTEndpointReportInput struct {
@@ -76,7 +76,9 @@ type MQTTUseCase interface {
 }
 
 type MQTTWebhookService struct {
+	Devices         repository.DeviceRepository
 	Networks        repository.NetworkRepository
+	Credentials     repository.DeviceCredentialRepository
 	EventPublisher  NetworkEventPublisher
 	EventDeliveries repository.NetworkEventDeliveryStore
 	Config          mqttkit.Config

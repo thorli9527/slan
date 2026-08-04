@@ -1,0 +1,16 @@
+<nav class="pagination" *ngIf="total > 0" aria-label="列表分页">
+  <span class="pagination-total">共 {{ total }} 条</span>
+  <label class="pagination-size">
+    <span class="sr-only">每页条数</span>
+    <select [value]="pageSize" (change)="changePageSize($event)">
+      <option *ngFor="let size of pageSizeOptions" [value]="size">{{ size }} 条/页</option>
+    </select>
+  </label>
+  <button class="pagination-button" type="button" title="上一页" aria-label="上一页" [disabled]="currentPage <= 1" (click)="changePage(currentPage - 1)">
+    <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5 1-1-4-4 4-4-1-1Z"/></svg>
+  </button>
+  <span class="pagination-page">{{ currentPage }} / {{ totalPages }}</span>
+  <button class="pagination-button" type="button" title="下一页" aria-label="下一页" [disabled]="currentPage >= totalPages" (click)="changePage(currentPage + 1)">
+    <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 3 5 5-5 5-1-1 4-4-4-4 1-1Z"/></svg>
+  </button>
+</nav>

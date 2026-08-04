@@ -48,16 +48,16 @@ client-desktop-ui-test:
 	./scripts/test_client_desktop_ui.sh
 
 client-macos-build:
-	cd client_v2/rust && cargo build -p client-core-service --release --target aarch64-apple-darwin
-	cd client_v2/rust && cargo build -p client-core-service --release --target x86_64-apple-darwin
-	cd client_v2/app_flutter && flutter build macos
+	cd client/rust && cargo build -p client-core-service --release --target aarch64-apple-darwin
+	cd client/rust && cargo build -p client-core-service --release --target x86_64-apple-darwin
+	cd client/app_flutter && flutter build macos
 	lipo -create \
-		client_v2/rust/target/aarch64-apple-darwin/release/client-core-service \
-		client_v2/rust/target/x86_64-apple-darwin/release/client-core-service \
-		-output client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
-	chmod 755 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
-	codesign --force --deep --sign - client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
-	codesign --verify --deep --strict --verbose=2 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
+		client/rust/target/aarch64-apple-darwin/release/client-core-service \
+		client/rust/target/x86_64-apple-darwin/release/client-core-service \
+		-output client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
+	chmod 755 client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
+	codesign --force --deep --sign - client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
+	codesign --verify --deep --strict --verbose=2 client/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
 
 client-macos-package: client-macos-build
 	./scripts/package_macos.sh
@@ -71,8 +71,8 @@ else
 endif
 
 client-linux-build:
-	cd client_v2/rust && cargo build -p client-core-service --release
-	cd client_v2/app_flutter && flutter build linux
+	cd client/rust && cargo build -p client-core-service --release
+	cd client/app_flutter && flutter build linux
 
 client-linux-package:
 	./scripts/package_linux.sh
@@ -90,7 +90,7 @@ flutter-analyze-safe:
 ifeq ($(OS),Windows_NT)
 	powershell -ExecutionPolicy Bypass -File .\scripts\flutter_analyze_safe.ps1
 else
-	cd client_v2/app_flutter && flutter analyze
+	cd client/app_flutter && flutter analyze
 endif
 
 protocol-contract-check:

@@ -47,11 +47,11 @@ func (h DeviceConfigHandler) DeviceNetworkConfigs(w http.ResponseWriter, r *http
 }
 
 func (h DeviceConfigHandler) DeviceMQTTCredential(w http.ResponseWriter, r *http.Request) {
-	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	session, ok := authenticatedDeviceSession(w, r, h.DeviceSessions, requestDeviceID(r))
 	if !ok {
 		return
 	}
-	item, err := h.Devices.DeviceMQTTCredential(r.Context(), deviceID)
+	item, err := h.Devices.DeviceMQTTCredential(r.Context(), session.DeviceID, session.CredentialID, session.RefreshExpiry)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
@@ -60,11 +60,11 @@ func (h DeviceConfigHandler) DeviceMQTTCredential(w http.ResponseWriter, r *http
 }
 
 func (h DeviceConfigHandler) DeviceMQTTProfile(w http.ResponseWriter, r *http.Request) {
-	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	session, ok := authenticatedDeviceSession(w, r, h.DeviceSessions, requestDeviceID(r))
 	if !ok {
 		return
 	}
-	item, err := h.Devices.DeviceMQTTProfile(r.Context(), deviceID)
+	item, err := h.Devices.DeviceMQTTProfile(r.Context(), session.DeviceID, session.CredentialID, session.RefreshExpiry)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

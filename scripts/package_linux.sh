@@ -2,14 +2,14 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-PACKAGE_SCRIPT="$ROOT_DIR/client_v2/install/linux/package-linux.sh"
-INSTALL_LIB="$ROOT_DIR/client_v2/install/linux/lib/slan-linux-install.sh"
-OUTPUT_DIR="$ROOT_DIR/client_v2/.tmp/installer/linux"
+PACKAGE_SCRIPT="$ROOT_DIR/client/install/linux/package-linux.sh"
+INSTALL_LIB="$ROOT_DIR/client/install/linux/lib/slan-linux-install.sh"
+OUTPUT_DIR="$ROOT_DIR/client/.tmp/installer/linux"
 ARCH="${SLAN_CLIENT_V2_ARCH:-}"
 VARIANT="all"
 VERSION="${SLAN_CLIENT_V2_VERSION:-0.1.0}"
 BUILD=0
-SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/release/client-core-service"
+SERVICE_BIN="$ROOT_DIR/client/rust/target/release/client-core-service"
 PACKAGE_ARGS=()
 
 usage() {
@@ -90,12 +90,12 @@ if [ "$BUILD" -eq 1 ]; then
     exit 2
   fi
   (
-    cd "$ROOT_DIR/client_v2/rust"
+    cd "$ROOT_DIR/client/rust"
     cargo build -p client-core-service --release
   )
   if [ "$VARIANT" != "console" ]; then
     (
-      cd "$ROOT_DIR/client_v2/app_flutter"
+      cd "$ROOT_DIR/client/app_flutter"
       flutter build linux
     )
   fi

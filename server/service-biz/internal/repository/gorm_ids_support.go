@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 func (s *GormStore) nextID(name, prefix string) string {
@@ -32,21 +30,11 @@ func (s *GormStore) nextCounterValue(name string) int64 {
 		return 0
 	}
 	var value int64
-	err := s.db.Transaction(func(db *gorm.DB) error {
-		var counter gormCounter
-		result := db.Where("name = ?", name).First(&counter)
-		if result.Error != nil {
-			if result.Error == gorm.ErrRecordNotFound {
-				counter = gormCounter{Name: name, Value: 1}
-				value = counter.Value
-				return db.Create(&counter).Error
-			}
-			return result.Error
-		}
-		counter.Value += 1
-		value = counter.Value
-		return db.Save(&counter).Error
-	})
+	err := s.db.Raw(`
+		INSERT INTO gorm_counters (name, value) VALUES (?, 1)
+		ON CONFLICT (name) DO UPDATE SET value = gorm_counters.value + 1
+		RETURNING value
+	`, name).Scan(&value).Error
 	if err != nil {
 		return 0
 	}

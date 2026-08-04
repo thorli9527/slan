@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
@@ -10,16 +9,32 @@ import (
 	"github.com/slan/service-biz/internal/repository"
 )
 
+func deviceSessionView(item model.DeviceSession) DeviceSessionView {
+	return DeviceSessionView{
+		SessionID:     item.SessionID,
+		DeviceID:      item.DeviceID,
+		CredentialID:  item.CredentialID,
+		AccessToken:   item.AccessToken,
+		RefreshToken:  item.RefreshToken,
+		Status:        item.Status,
+		SessionMode:   item.SessionMode,
+		ExpiresAt:     item.ExpiresAt,
+		RefreshExpiry: item.RefreshExpiry,
+		CreatedAt:     item.CreatedAt,
+		UpdatedAt:     item.UpdatedAt,
+		RevokedAt:     item.RevokedAt,
+	}
+}
+
 func buildBoundDeviceSessionView(
 	ctx context.Context,
-	users repository.UserRepository,
 	networks repository.NetworkRepository,
 	mqttConfig mqttkit.Config,
 	now time.Time,
 	device model.Device,
 	session model.DeviceSession,
 ) (DeviceSessionBoundView, error) {
-	profile, err := buildDeviceProfile(ctx, users, networks, device)
+	profile, err := buildDeviceProfile(ctx, networks, device)
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
@@ -30,34 +45,6 @@ func buildBoundDeviceSessionView(
 	return DeviceSessionBoundView{
 		Profile: profile,
 		Session: deviceSessionView(session),
-		MQTT:    newDeviceMQTTProfile(mqttConfig, now, device.DeviceID, deviceNetworks),
-	}, nil
-}
-
-func buildBootstrapDeviceSessionView(
-	ctx context.Context,
-	users repository.UserRepository,
-	networks repository.NetworkRepository,
-	mqttConfig mqttkit.Config,
-	now time.Time,
-	device model.Device,
-	session model.DeviceSession,
-) (DeviceSessionBootstrapView, error) {
-	bound, err := buildBoundDeviceSessionView(ctx, users, networks, mqttConfig, now, device, session)
-	if err != nil {
-		return DeviceSessionBootstrapView{}, err
-	}
-	if strings.TrimSpace(device.VirtualIP) == "" {
-		bound.Profile.ActiveNetworkID = ""
-		bound.Profile.CurrentVirtualIP = ""
-		bound.Profile.VirtualIP = ""
-		bound.Profile.GlobalIP = ""
-	}
-	return DeviceSessionBootstrapView{
-		Profile:    bound.Profile,
-		Device:     deviceView(device),
-		Session:    bound.Session,
-		MQTT:       bound.MQTT,
-		Credential: bound.MQTT.Credential,
+		MQTT:    newDeviceMQTTProfile(mqttConfig, now, device.DeviceID, session.CredentialID, session.RefreshExpiry, deviceNetworks),
 	}, nil
 }

@@ -8,12 +8,14 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_activation_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
+source "$ROOT_DIR/scripts/tests/shared/ops_device_credentials.sh"
+APP_DIR="$ROOT_DIR/client/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client_v2/rust/target/release/client-core-service}"
+SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client/rust/target/release/client-core-service}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+OPS_BASE_URL="${SLAN_OPS_BASE_URL:-$SLAN_DEFAULT_OPS_BASE_URL}"
 if [[ -n "${SLAN_ANDROID_BIZ_URL:-}" ]]; then
   ANDROID_BIZ_URL="$SLAN_ANDROID_BIZ_URL"
 elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhost:28080" ]]; then
@@ -21,26 +23,8 @@ elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhos
 else
   ANDROID_BIZ_URL="$BIZ_URL"
 fi
-if [[ -n "${SLAN_WEB_BIZ_URL:-}" ]]; then
-  ADMIN_BIZ_URL="$SLAN_WEB_BIZ_URL"
-elif [[ -n "${SLAN_NETWORK_ADMIN_BIZ_URL:-}" ]]; then
-  ADMIN_BIZ_URL="$SLAN_NETWORK_ADMIN_BIZ_URL"
-elif [[ "$BIZ_URL" == "http://127.0.0.1:28080" || "$BIZ_URL" == "http://localhost:28080" ]]; then
-  ADMIN_BIZ_URL="${BIZ_URL%:28080}:28081"
-else
-  ADMIN_BIZ_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
-fi
 SERVICE_HOST="${SLAN_ANDROID_SERVICE_HOST:-127.0.0.1:46396}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
-PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-GENERATED_TEST_EMAIL=0
-if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
-  EMAIL="$SLAN_TEST_EMAIL"
-else
-  EMAIL="mac-android-integration-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
-fi
-CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 TIMEOUT="${SLAN_ANDROID_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_ANDROID_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-android.XXXXXX")}"
 MAC_LOG="$WORK_DIR/macos-service.log"
@@ -53,12 +37,16 @@ ANDROID_DEVICE_ID_WAIT_SECONDS="${SLAN_ANDROID_DEVICE_ID_WAIT_SECONDS:-180}"
 PROVISION_DNS_ACL="${SLAN_PROVISION_DNS_ACL:-0}"
 
 NETWORK_ID=""
-USER_ID=""
 SECURITY_GROUP_ID=""
 ZONE_ID=""
 ZONE_NAME=""
 RECORD_IDS=()
 RULE_IDS=()
+OPS_TOKEN=""
+MAC_CREDENTIAL_ID=""
+MAC_AUTHORIZATION_KEY=""
+ANDROID_CREDENTIAL_ID=""
+ANDROID_AUTHORIZATION_KEY=""
 
 PIDS=()
 
@@ -79,7 +67,8 @@ extract_json_field() {
 
 best_effort_delete() {
   local url="$1"
-  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" >/dev/null 2>&1 || true
+  curl --silent --show-error --connect-timeout 5 --max-time 20 \
+    -X DELETE "$url" -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null 2>&1 || true
 }
 
 create_json() {
@@ -87,39 +76,53 @@ create_json() {
   local payload="$2"
   curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -X POST "$url" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "$payload"
 }
 
 ensure_network_context() {
-  [[ -n "$NETWORK_ID" && -n "$USER_ID" && -n "$SECURITY_GROUP_ID" ]] && return 0
+  [[ -n "$NETWORK_ID" && -n "$SECURITY_GROUP_ID" ]] && return 0
 
-  local auth networks groups
-  auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    -X POST "${ADMIN_BIZ_URL}/api/web/auth/login" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
-  USER_ID="$(extract_json_field "$auth" "userId")"
-  [[ -n "$USER_ID" ]] || {
-    echo "failed to parse user id from auth login response" >&2
-    return 1
-  }
-
-  networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    "${ADMIN_BIZ_URL}/api/web/networks?userId=${USER_ID}")"
-  NETWORK_ID="$(extract_json_field "$networks" "networkId")"
-  [[ -n "$NETWORK_ID" ]] || {
-    echo "failed to parse network id for user ${USER_ID}" >&2
-    return 1
-  }
-
-  groups="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
-    "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
-  SECURITY_GROUP_ID="$(extract_json_field "$groups" "securityGroupId")"
+  local network group
+  network="$(slan_ops_create_network "$OPS_BASE_URL" "$OPS_TOKEN" "android-integration-$(date +%s%N)")"
+  NETWORK_ID="$(extract_json_field "$network" "networkId")"
+  [[ -n "$NETWORK_ID" ]] || return 1
+  group="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/security-groups" \
+    "{\"name\":\"android-integration-security-$(date +%s%N)\"}")"
+  SECURITY_GROUP_ID="$(extract_json_field "$group" "securityGroupId")"
   [[ -n "$SECURITY_GROUP_ID" ]] || {
     echo "failed to parse security group id for network ${NETWORK_ID}" >&2
     return 1
   }
+}
+
+create_device_authorization_keys() {
+  local credential_json android_credential_json
+  OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
+  credential_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Android Integration Mac")"
+  MAC_CREDENTIAL_ID="$(extract_json_field "$credential_json" "credentialId")"
+  MAC_AUTHORIZATION_KEY="$(extract_json_field "$credential_json" "key")"
+  [[ -n "$MAC_CREDENTIAL_ID" && -n "$MAC_AUTHORIZATION_KEY" ]] || {
+    echo "failed to create Mac authorization key" >&2
+    return 1
+  }
+  android_credential_json="$(slan_ops_create_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "Android Integration Device")"
+  ANDROID_CREDENTIAL_ID="$(extract_json_field "$android_credential_json" "credentialId")"
+  ANDROID_AUTHORIZATION_KEY="$(extract_json_field "$android_credential_json" "key")"
+  [[ -n "$ANDROID_CREDENTIAL_ID" && -n "$ANDROID_AUTHORIZATION_KEY" ]] || {
+    echo "failed to create Android authorization key" >&2
+    return 1
+  }
+}
+
+attach_devices_to_network() {
+  ensure_network_context
+  local device_id
+  for device_id in "$MAC_DEVICE_ID" "$ANDROID_DEVICE_ID"; do
+    slan_ops_add_network_device \
+      "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" "$device_id"
+  done
 }
 
 create_security_rule() {
@@ -127,7 +130,7 @@ create_security_rule() {
   local peer_value="$2"
   local priority="$3"
   local response rule_id
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
+  response="$(create_json "${OPS_BASE_URL}/api/ops/security-groups/${SECURITY_GROUP_ID}/rules" \
     "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"tcp\",\"portFrom\":443,\"portTo\":443,\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(extract_json_field "$response" "ruleId")"
   [[ -n "$rule_id" ]] || {
@@ -146,15 +149,15 @@ provision_dns_acl_resources() {
   ensure_network_context
 
   ZONE_NAME="android-mac-${RANDOM}-$(date +%s).lan"
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
-    "{\"zoneName\":\"${ZONE_NAME}\"}")"
+  response="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/zones" \
+    "{\"name\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(extract_json_field "$response" "zoneId")"
   [[ -n "$ZONE_ID" ]] || {
     echo "failed to create dns zone ${ZONE_NAME}" >&2
     return 1
   }
 
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"mac\",\"recordType\":\"A\",\"targetDeviceId\":\"${mac_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(extract_json_field "$response" "recordId")"
   [[ -n "$record_id" ]] || {
@@ -163,7 +166,7 @@ provision_dns_acl_resources() {
   }
   RECORD_IDS+=("$record_id")
 
-  response="$(create_json "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+  response="$(create_json "${OPS_BASE_URL}/api/ops/networks/${NETWORK_ID}/dns/records" \
     "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"android\",\"recordType\":\"A\",\"targetDeviceId\":\"${android_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(extract_json_field "$response" "recordId")"
   [[ -n "$record_id" ]] || {
@@ -180,7 +183,7 @@ provision_dns_acl_resources() {
   echo "androidIntegrationCheck: provisioned dnsZone=${ZONE_NAME} network=${NETWORK_ID} mac=${mac_device_id} android=${android_device_id}"
 }
 
-run_client_core_login_check() {
+run_client_core_activation_check() {
   local label="$1"
   shift
   local attempts="${SLAN_CONTROL_RETRY_ATTEMPTS:-3}"
@@ -199,13 +202,6 @@ run_client_core_login_check() {
       return 0
     fi
     echo "$label attempt $attempt/$attempts failed: $output" >&2
-    if [[ "$output" == *"HTTP 409"* ]]; then
-      for index in "${!args[@]}"; do
-        if [[ "${args[$index]}" == "-register=true" ]]; then
-          args[$index]="-register=false"
-        fi
-      done
-    fi
     if [[ "$attempt" != "$attempts" ]]; then
       sleep $((attempt * 5))
     fi
@@ -219,17 +215,17 @@ start_android_flutter_message_harness() {
   local android_send_dart_defines=()
   local android_expect_dart_defines=()
   mapfile -t android_common_dart_defines < <(
-    slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+    slan_mobile_activation_common_defines "$ANDROID_BIZ_URL" "$ANDROID_AUTHORIZATION_KEY" true
   )
   mapfile -t android_send_dart_defines < <(
-    slan_mobile_login_message_send_defines "$MAC_DEVICE_ID" "$ANDROID_TO_MAC_BODY"
+    slan_mobile_message_send_defines "$MAC_DEVICE_ID" "$ANDROID_TO_MAC_BODY"
   )
   mapfile -t android_expect_dart_defines < <(
-    slan_mobile_login_message_expect_defines "$MAC_DEVICE_ID" "$MAC_TO_ANDROID_BODY"
+    slan_mobile_message_expect_defines "$MAC_DEVICE_ID" "$MAC_TO_ANDROID_BODY"
   )
   (
     cd "$APP_DIR"
-    flutter test integration_test/mobile_login_test.dart \
+    flutter test integration_test/device_activation_harness_test.dart \
       -d "$ANDROID_DEVICE" \
       --timeout "${SLAN_ANDROID_FLUTTER_TEST_TIMEOUT:-10m}" \
       "${android_common_dart_defines[@]}" \
@@ -326,19 +322,25 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  if [[ -n "$MAC_CREDENTIAL_ID" && -n "$OPS_TOKEN" ]]; then
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$MAC_CREDENTIAL_ID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$ANDROID_CREDENTIAL_ID" && -n "$OPS_TOKEN" ]]; then
+    slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$ANDROID_CREDENTIAL_ID" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${ADMIN_BIZ_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/security-rules/${RULE_IDS[$index]}"
     done
     for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
-      best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/records/${RECORD_IDS[$index]}"
     done
     if [[ -n "$ZONE_ID" ]]; then
-      best_effort_delete "${ADMIN_BIZ_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+      best_effort_delete "${OPS_BASE_URL}/api/ops/dns/zones/${ZONE_ID}"
     fi
+    slan_ops_delete_network "$OPS_BASE_URL" "$OPS_TOKEN" "$NETWORK_ID" >/dev/null 2>&1 || true
   fi
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_ANDROID_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
@@ -354,7 +356,7 @@ fi
 
 if [[ ! -x "$SERVICE_BIN" ]]; then
   echo "client-core-service binary is missing: $SERVICE_BIN" >&2
-  echo "run: cd client_v2/rust && cargo build -p client-core-service" >&2
+  echo "run: cd client/rust && cargo build -p client-core-service" >&2
   exit 1
 fi
 
@@ -379,6 +381,7 @@ start_android_vpn_appops_guard
 start_android_vpn_consent_guard
 
 mkdir -p "$WORK_DIR/state"
+create_device_authorization_keys
 
 echo "+ start mac client-core-service on $SERVICE_HOST"
 SLAN_CLIENT_CORE_SERVICE_HOST="$SERVICE_HOST" \
@@ -389,48 +392,43 @@ SLAN_CLIENT_CORE_SERVICE_HOST="$SERVICE_HOST" \
   "$SERVICE_BIN" >"$MAC_LOG" 2>&1 &
 PIDS+=("$!")
 
-echo "+ login mac client-core-service"
+echo "+ activate mac client-core-service"
 MAC_OUTPUT="$(
-  run_client_core_login_check "mac login" \
+  run_client_core_activation_check "mac activation" \
     -biz-url "$BIZ_URL" \
     -address "$SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -register=true \
+    -authorization-key "$MAC_AUTHORIZATION_KEY" \
     -enable-network=true \
     -timeout "$TIMEOUT"
 )"
 echo "$MAC_OUTPUT"
 MAC_DEVICE_ID="$(echo "$MAC_OUTPUT" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
 if [[ -z "$MAC_DEVICE_ID" ]]; then
-  echo "failed to parse mac device id from login output" >&2
+  echo "failed to parse mac device id from activation output" >&2
   exit 1
 fi
 
 echo "+ start Android flutter message harness"
 start_android_flutter_message_harness
 capture_android_device_id_or_die
+attach_devices_to_network
 
 provision_dns_acl_resources "$MAC_DEVICE_ID" "$ANDROID_DEVICE_ID"
 
 echo "+ wait mac receive Android message"
-run_client_core_login_check "mac wait Android message" \
+run_client_core_activation_check "mac wait Android message" \
   -biz-url "$BIZ_URL" \
   -address "$SERVICE_HOST" \
-  -email "$EMAIL" \
-  -password "$PASSWORD" \
-  -login=false \
+  -activate=false \
   -expect-from "$ANDROID_DEVICE_ID" \
   -expect-body "$ANDROID_TO_MAC_BODY" \
   -timeout "$TIMEOUT"
 
 echo "+ send mac message to Android"
-run_client_core_login_check "mac send Android message" \
+run_client_core_activation_check "mac send Android message" \
   -biz-url "$BIZ_URL" \
   -address "$SERVICE_HOST" \
-  -email "$EMAIL" \
-  -password "$PASSWORD" \
-  -login=false \
+  -activate=false \
   -send-target "$ANDROID_DEVICE_ID" \
   -send-body "$MAC_TO_ANDROID_BODY" \
   -timeout "$TIMEOUT"
@@ -441,12 +439,10 @@ run_client_core_login_check "mac send Android message" \
     if ! kill -0 "$ANDROID_PID" 2>/dev/null; then
       break
     fi
-    run_client_core_login_check "mac resend Android message" \
+    run_client_core_activation_check "mac resend Android message" \
       -biz-url "$BIZ_URL" \
       -address "$SERVICE_HOST" \
-      -email "$EMAIL" \
-      -password "$PASSWORD" \
-      -login=false \
+      -activate=false \
       -send-target "$ANDROID_DEVICE_ID" \
       -send-body "$MAC_TO_ANDROID_BODY" \
       -timeout "$TIMEOUT" >/dev/null || true
@@ -462,4 +458,4 @@ if ! wait "$ANDROID_PID"; then
 fi
 cat "$ANDROID_LOG"
 
-echo "androidIntegrationCheck: ok email=$EMAIL mac=$MAC_DEVICE_ID android=$ANDROID_DEVICE_ID"
+echo "androidIntegrationCheck: ok mac=$MAC_DEVICE_ID android=$ANDROID_DEVICE_ID"

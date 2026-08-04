@@ -3,8 +3,6 @@ package service
 import "strings"
 
 func normalizeCreateDeviceGroupInput(input CreateDeviceGroupInput) CreateDeviceGroupInput {
-	input.UserID = strings.TrimSpace(input.UserID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	return input
@@ -12,7 +10,6 @@ func normalizeCreateDeviceGroupInput(input CreateDeviceGroupInput) CreateDeviceG
 
 func normalizeUpdateDeviceGroupInput(input UpdateDeviceGroupInput) UpdateDeviceGroupInput {
 	input.GroupID = strings.TrimSpace(input.GroupID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	return input
@@ -20,14 +17,25 @@ func normalizeUpdateDeviceGroupInput(input UpdateDeviceGroupInput) UpdateDeviceG
 
 func normalizeDeleteDeviceGroupInput(input DeleteDeviceGroupInput) DeleteDeviceGroupInput {
 	input.GroupID = strings.TrimSpace(input.GroupID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	return input
 }
 
 func normalizeSetDeviceGroupsInput(input SetDeviceGroupsInput) SetDeviceGroupsInput {
-	input.UserID = strings.TrimSpace(input.UserID)
-	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.DeviceID = strings.TrimSpace(input.DeviceID)
+	seen := make(map[string]struct{}, len(input.GroupIDs))
+	groupIDs := make([]string, 0, len(input.GroupIDs))
+	for _, groupID := range input.GroupIDs {
+		groupID = normalizeDeviceGroupID(groupID)
+		if groupID == "" {
+			continue
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		groupIDs = append(groupIDs, groupID)
+	}
+	input.GroupIDs = groupIDs
 	return input
 }
 

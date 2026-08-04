@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
-APP_DIR="$ROOT_DIR/client_v2/app_flutter"
+APP_DIR="$ROOT_DIR/client/app_flutter"
 APP_PATH="${SLAN_MACOS_APP_PATH:-$APP_DIR/build/macos/Build/Products/Release/slan_client_v2.app}"
 SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1:46392}"
 CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}}"

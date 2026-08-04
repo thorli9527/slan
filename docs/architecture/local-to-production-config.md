@@ -20,11 +20,11 @@
 
 `service-biz` 会强制检查：
 
-- `http.public_scheme=https`
-- `http.public_host` 不能是 `localhost / 127.0.0.1 / ::1`
-- relay ticket、MQTT、ops token、Postgres password、`internal.wire_token` 不能是空值、本地默认值或 `change-me-*`
-- 默认管理员如果启用，密码不能保持 `admin` 或示例值
-- `wire.control_plane_urls` 至少包含一个非 loopback 的 `server-wire` 实例
+- `SLAN_DEVICE_CREDENTIAL_PEPPER`、`SLAN_MQTT_PASSWORD_SECRET`、`SLAN_MQTT_WEBHOOK_TOKEN` 和 `SLAN_INTERNAL_WIRE_TOKEN` 必须显式配置，长度不少于 32 个字符。
+- 上述密钥不能使用开发默认值或包含 `change-me`。校验错误只输出环境变量名，不回显密钥值。
+- PostgreSQL 密码必须显式配置且长度不少于 16 个字符；使用 `SLAN_SERVICE_BIZ_DSN` 时会解析 DSN 内的密码进行同样校验。
+- `SLAN_MQTT_PUBLIC_BROKER_URL` 必须使用 `mqtts://` 或 `wss://`，且不能指向 loopback 主机。
+- 空库首启必须显式设置 `SLAN_OPS_DEFAULT_ADMIN_PASSWORD`；长度为 12 至 72 字节且不能包含常见弱口令片段
 
 `server-wire`、`server-wire-relay`、`server-wire-derp` 会强制检查：
 
@@ -38,11 +38,25 @@
 
 ### `service-biz`
 
-- `POSTGRES_PASSWORD`：本地默认值不能直接上线。
-- `SLAN_OPS_ACCESS_TOKEN`：仅作为应急运维旁路使用，生产必须换成高强度随机值。
-- `SLAN_OPS_DEFAULT_ADMIN_PASSWORD`：仅用于首启 seed，生产必须更换，并在首登后立即改密。
+- `SLAN_SERVICE_BIZ_DB_PASSWORD` / `SLAN_SERVICE_BIZ_DSN`：必须包含非默认的强 PostgreSQL 密码。
+- `SLAN_OPS_DEFAULT_ADMIN_EMAIL`：空库首启管理员邮箱，默认 `admin@slan.local`。
+- `SLAN_OPS_DEFAULT_ADMIN_PASSWORD`：仅用于空库首启 seed，必须显式配置 12 至 72 字节强密码；已有 Operator 数据时不会读取或改写。
+- `SLAN_DEVICE_CREDENTIAL_PEPPER`：用于授权 Key 摘要，必须使用独立高强度随机值。
+- `SLAN_DEVICE_CREDENTIAL_PREVIOUS_PEPPERS`：逗号分隔的历史 pepper，最多 3 个，每个不少于 32 字符，仅在授权 Key 轮换窗口内保留。
+- `SLAN_MQTT_PASSWORD_SECRET`：用于签发和校验 MQTT 凭据，必须使用独立高强度随机值。
+- `SLAN_MQTT_WEBHOOK_TOKEN`：用于 BifroMQ Auth Provider 调用 `service-biz /mqtt/*` 的服务间鉴权，不得与 MQTT 凭据签名密钥复用。
+- `SLAN_MQTT_PUBLIC_BROKER_URL`：生产客户端入口，必须是非 loopback 的 TLS URL。
+- `SLAN_INTERNAL_WIRE_TOKEN`：`server-wire` 调用 `service-biz /internal/wire/*` 的共享内部令牌，生产必须使用独立高强度随机值。
 - `SLAN_HTTP_PUBLIC_HOST`：本地是 `slan.localhost:18443`，生产必须改成真实域名。
 - `SLAN_HTTP_PUBLIC_SCHEME`：生产固定为 `https`。
+
+### 授权 Key pepper 轮换
+
+1. 将当前 pepper 加入 `SLAN_DEVICE_CREDENTIAL_PREVIOUS_PEPPERS`，同时将新随机值设为 `SLAN_DEVICE_CREDENTIAL_PEPPER`。
+2. 部署所有 `service-biz` 实例，确认新旧授权 Key 均能正常交换，新建 Key 只使用新 pepper。
+3. 等待旧 Key 全部过期或在 Ops 吊销后，从历史列表移除旧 pepper 并再次部署。
+
+轮换不修改已存储的摘要，不执行数据迁移。移除历史 pepper 后，所有仍使用该 pepper 摘要的旧 Key 立即失效。
 
 ### `server-wire`
 

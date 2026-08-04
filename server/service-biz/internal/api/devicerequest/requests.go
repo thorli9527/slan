@@ -2,21 +2,6 @@ package devicerequest
 
 import servicepkg "github.com/slan/service-biz/internal/service"
 
-type RegisterDevice struct {
-	UserID        string `json:"userId"`
-	OwnerID       string `json:"ownerId"`
-	ActorUserID   string `json:"actorUserId"`
-	DeviceID      string `json:"deviceId"`
-	Name          string `json:"name"`
-	Platform      string `json:"platform"`
-	Alias         string `json:"alias"`
-	OSName        string `json:"osName"`
-	OSVersion     string `json:"osVersion"`
-	PublicKey     string `json:"publicKey"`
-	DeviceVersion string `json:"deviceVersion"`
-	CountryCode   string `json:"countryCode"`
-}
-
 type UpdateDeviceRuntime struct {
 	DeviceID        string `json:"deviceId"`
 	NetworkID       string `json:"networkId"`
@@ -44,33 +29,6 @@ type UpdateDeviceRuntime struct {
 	PathDowngrades  int64  `json:"pathDowngrades"`
 	PathUpgrades    int64  `json:"pathUpgrades"`
 	LastPathChange  string `json:"lastPathChange"`
-}
-
-func (r RegisterDevice) ToInput() servicepkg.RegisterDeviceInput {
-	ownerID := firstNonEmpty(r.OwnerID, r.UserID)
-	name := firstNonEmpty(r.Alias, r.Name)
-	return servicepkg.RegisterDeviceInput{
-		OwnerID:       ownerID,
-		ActorUserID:   r.ActorUserID,
-		DeviceID:      r.DeviceID,
-		Name:          name,
-		Platform:      r.Platform,
-		Alias:         r.Alias,
-		OSName:        r.OSName,
-		OSVersion:     r.OSVersion,
-		PublicKey:     r.PublicKey,
-		DeviceVersion: r.DeviceVersion,
-		CountryCode:   r.CountryCode,
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (r UpdateDeviceRuntime) ToInput() servicepkg.UpdateDeviceRuntimeInput {

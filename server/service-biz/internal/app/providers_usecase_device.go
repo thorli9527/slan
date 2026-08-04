@@ -1,11 +1,9 @@
 package app
 
-func newDeviceUseCasesFromServices(deviceServices DeviceServices, authServices AuthServices) DeviceUseCases {
+func newDeviceUseCasesFromServices(deviceServices DeviceServices) DeviceUseCases {
 	return DeviceUseCases{
 		DeviceManagement: deviceServices.DeviceManagement,
-		TokenManagement:  authServices.TokenManagement,
-		BootstrapAuth:    deviceServices.BootstrapAuth,
-		GroupManagement:  deviceServices.GroupManagement,
+		Credentials:      deviceServices.Credentials,
 		SessionRuntime:   deviceServices.SessionRuntime,
 		ClientMessages:   deviceServices.ClientMessages,
 	}

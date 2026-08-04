@@ -5,32 +5,19 @@ import servicepkg "github.com/slan/service-biz/internal/service"
 func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 	repos := deps.deviceRepositories()
 	ids := deps.deviceIDs()
-	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig(), deps.networkRepositories().EventDeliveries)
 	return DeviceServices{
-		DeviceManagement: servicepkg.NewDeviceCoreService(repos.Users, repos.Devices, repos.Relations, repos.Networks, deps.mqttConfig(), ids.NewDeviceID, nil),
-		BootstrapAuth: servicepkg.NewDeviceBootstrapService(
-			repos.Users,
-			repos.Devices,
-			repos.Networks,
-			deps.mqttConfig(),
-			ids.NewSessionID,
-			nil,
-		),
-		GroupManagement: servicepkg.DeviceGroupService{
-			Users:           repos.Users,
-			Devices:         repos.Devices,
-			Relations:       repos.Relations,
-			Networks:        repos.Networks,
-			NetworkGroups:   repos.NetworkGroups,
-			EventPublisher:  eventPublisher,
-			DevicePublisher: servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
+		DeviceManagement: servicepkg.NewDeviceCoreService(repos.Devices, repos.Networks, deps.mqttConfig(), nil),
+		Credentials: servicepkg.DeviceCredentialService{
+			Devices: repos.Devices, Credentials: repos.Credentials, Audit: repos.Audit, Networks: repos.Networks,
+			MQTT: deps.mqttConfig(), Pepper: deviceCredentialPepper(), PreviousPeppers: deviceCredentialPreviousPeppers(), NewSessID: ids.NewSessionID,
 		},
 		SessionRuntime: servicepkg.DeviceSessionService{
-			Users:     repos.Users,
-			Devices:   repos.Devices,
-			Networks:  repos.Networks,
-			MQTT:      deps.mqttConfig(),
-			NewSessID: ids.NewSessionID,
+			Devices:     repos.Devices,
+			Credentials: repos.Credentials,
+			Audit:       repos.Audit,
+			Networks:    repos.Networks,
+			MQTT:        deps.mqttConfig(),
+			NewSessID:   ids.NewSessionID,
 		},
 		ClientMessages: servicepkg.ClientMessageService{
 			Devices:  repos.Devices,

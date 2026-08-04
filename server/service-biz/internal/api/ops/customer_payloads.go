@@ -9,39 +9,16 @@ import (
 func customerPayload(view servicepkg.OpsCustomerView) map[string]any {
 	item := view.Customer
 	return map[string]any{
-		"customerId":     item.CustomerID,
-		"email":          item.Email,
-		"name":           item.Name,
-		"country":        item.Country,
-		"province":       item.Province,
-		"city":           item.City,
-		"ipRegion":       item.IPRegion,
-		"planCode":       item.PlanCode,
-		"planExpiresAt":  view.PlanExpiresAt,
-		"ownDevices":     view.OwnDevices,
-		"invitedDevices": view.InvitedDevices,
-		"relayUsedGb":    view.RelayUsedGB,
-		"status":         item.Status,
-		"updatedAt":      item.UpdatedAt,
-	}
-}
-
-func assignedCustomerPlanPayload(view servicepkg.OpsCustomerPlanAssignmentView) map[string]any {
-	customer := view.Customer.Customer
-	return map[string]any{
-		"customer": customerPayload(view.Customer),
-		"renewal": map[string]any{
-			"renewalId":     "renewal-" + formatUnix(view.PaidAt),
-			"customerId":    customer.CustomerID,
-			"customerEmail": customer.Email,
-			"planCode":      view.PlanCode,
-			"period":        view.Period,
-			"amount":        view.Amount,
-			"paidAt":        view.PaidAt,
-			"validUntil":    view.ValidUntil,
-			"source":        "manual",
-			"operator":      "ops",
-		},
+		"customerId":  item.CustomerID,
+		"email":       item.Email,
+		"name":        item.Name,
+		"country":     item.Country,
+		"province":    item.Province,
+		"city":        item.City,
+		"ipRegion":    item.IPRegion,
+		"relayUsedGb": view.RelayUsedGB,
+		"status":      item.Status,
+		"updatedAt":   item.UpdatedAt,
 	}
 }
 
@@ -49,13 +26,12 @@ func managedDevicePayload(view servicepkg.OpsManagedDeviceView) map[string]any {
 	item := view.Device
 	return map[string]any{
 		"deviceId":        item.DeviceID,
-		"ownerId":         item.OwnerID,
-		"ownerEmail":      view.OwnerEmail,
 		"name":            item.Name,
 		"alias":           item.Alias,
 		"platform":        item.Platform,
 		"osName":          item.OSName,
 		"osVersion":       item.OSVersion,
+		"deviceVersion":   item.DeviceVersion,
 		"globalIp":        view.GlobalIP,
 		"globalName":      view.GlobalName,
 		"status":          item.Status,

@@ -18,7 +18,6 @@ type DeviceMQTTProfileView struct {
 
 type DeviceView struct {
 	DeviceID      string `json:"deviceId"`
-	OwnerID       string `json:"ownerId"`
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
 	Alias         string `json:"alias"`
@@ -39,7 +38,6 @@ type DeviceProfileView struct {
 	Device           DeviceView `json:"device"`
 	ActiveNetworkID  string     `json:"activeNetworkId"`
 	NetworkEnabled   bool       `json:"networkEnabled"`
-	OwnerEmail       string     `json:"ownerEmail"`
 	MembershipStatus string     `json:"membershipStatus"`
 	CurrentVirtualIP string     `json:"currentVirtualIp"`
 	VirtualIP        string     `json:"virtualIp"`

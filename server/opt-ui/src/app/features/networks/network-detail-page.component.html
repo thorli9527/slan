@@ -1,0 +1,102 @@
+<section class="page network-detail-page" *ngIf="vm.networkDetailNetwork as network">
+  <div class="network-console-head">
+    <button class="icon-back-button" type="button" title="返回网络列表" aria-label="返回网络列表" (click)="vm.closeNetworkDetail()">
+      <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.8 3 2 8l4.8 5 1-1L4.6 8.7H14V7.3H4.6L7.8 4l-1-1Z"/></svg>
+    </button>
+    <div class="network-console-title">
+      <div class="resource-title-row"><h2>{{ network.name }}</h2><button class="quick-rename-button" type="button" title="修改网络名称" aria-label="修改网络名称" (click)="vm.openQuickRename('network', network)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button><span class="status" [class.online]="network.status === 'active'">{{ network.status === 'active' ? '运行中' : '已停用' }}</span></div>
+      <div class="network-detail-meta"><span>网络 ID <code>{{ network.networkId }}</code></span><span>组内策略 {{ network.intraGroupPolicy }}</span><span>有效设备 {{ network.deviceIds.length }}</span><span>设备组 {{ network.deviceGroupIds.length }}</span></div>
+    </div>
+  </div>
+
+  <div class="resource-primary-tabs" role="tablist" aria-label="网络资源">
+    <button type="button" [class.active]="vm.networkPolicyTab === 'dns'" (click)="setPolicyTab('dns')">DNS 管理</button>
+    <button type="button" [class.active]="vm.networkPolicyTab === 'security'" (click)="setPolicyTab('security')">安全组管理</button>
+  </div>
+
+  <article class="panel resource-console" *ngIf="vm.networkPolicyTab === 'dns'">
+    <div class="resource-console-heading"><div><h3>DNS 管理</h3><p>管理当前网络内生效的私有解析区域与解析记录。</p></div><div class="resource-counts"><span>区域 <strong>{{ vm.dnsZones.length }}</strong></span><span>记录 <strong>{{ vm.dnsRecords.length }}</strong></span></div></div>
+    <div class="resource-subtabs">
+      <button type="button" [class.active]="dnsResource === 'zones'" (click)="setDNSResource('zones')">解析区域 <span>{{ vm.dnsZones.length }}</span></button>
+      <button type="button" [class.active]="dnsResource === 'records'" (click)="setDNSResource('records')">解析记录 <span>{{ vm.dnsRecords.length }}</span></button>
+    </div>
+    <div class="resource-toolbar">
+      <button class="primary" type="button" (click)="dnsResource === 'zones' ? openDNSZone() : openDNSRecord()">
+        <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25V2Z"/></svg>
+        {{ dnsResource === 'zones' ? '创建解析区域' : '添加解析记录' }}
+      </button>
+      <div class="toolbar-spacer"></div>
+      <label class="search-control"><span class="sr-only">搜索 DNS 资源</span><input [(ngModel)]="dnsKeyword" (ngModelChange)="resetDNSPage()" [placeholder]="dnsResource === 'zones' ? '搜索区域名称或 ID' : '搜索记录、类型或目标'"></label>
+      <button class="table-icon-button" type="button" title="刷新" aria-label="刷新" (click)="vm.loadNetworkPolicies()"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 5.2A5.7 5.7 0 1 0 13.5 10h-1.6a4.2 4.2 0 1 1-.1-3.7L9.5 8.5H15V3l-1.8 2.2Z"/></svg></button>
+    </div>
+
+    <div class="resource-table-wrap" *ngIf="dnsResource === 'zones'">
+      <table class="resource-table"><thead><tr><th>解析区域</th><th>记录数</th><th>状态</th><th>区域 ID</th><th class="operation-column">操作</th></tr></thead><tbody>
+        <tr *ngFor="let item of pagedDNSZones"><td><strong>{{ item.name }}</strong><small>私有区域</small></td><td>{{ zoneRecordCount(item.zoneId) }}</td><td><span class="status" [class.online]="item.status === 'active'">{{ item.status === 'active' ? '正常' : '停用' }}</span></td><td><code>{{ item.zoneId }}</code></td><td><div class="row-actions"><button class="table-icon-button" type="button" title="编辑区域" aria-label="编辑区域" (click)="openDNSZone(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button><button class="danger-icon-button" type="button" title="删除区域" aria-label="删除区域" (click)="vm.deleteDNSZone(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4l1 2h3v1h-1l-.7 10H3.7L3 4H2V3h3l1-2Zm1 .9L6.5 3h3L9 1.9H7ZM4 4l.6 9h6.8l.6-9H4Z"/></svg></button></div></td></tr>
+        <tr *ngIf="filteredDNSZones.length === 0"><td colspan="5" class="empty-cell">{{ dnsKeyword ? '没有匹配的解析区域' : '暂无解析区域，请先创建区域' }}</td></tr>
+      </tbody></table>
+      <ops-pagination [total]="filteredDNSZones.length" [page]="dnsZonePage" [pageSize]="pageSize" (pageChange)="dnsZonePage = $event" (pageSizeChange)="setPageSize($event)"></ops-pagination>
+    </div>
+    <div class="resource-table-wrap" *ngIf="dnsResource === 'records'">
+      <table class="resource-table"><thead><tr><th>主机记录</th><th>记录类型</th><th>记录值</th><th>解析区域</th><th>TTL</th><th class="operation-column">操作</th></tr></thead><tbody>
+        <tr *ngFor="let item of pagedDNSRecords"><td><strong>{{ item.name }}</strong><small><code>{{ item.recordId }}</code></small></td><td><span class="type-badge">{{ item.type }}</span></td><td><code>{{ item.value }}</code><small *ngIf="item.port">端口 {{ item.port }}</small></td><td>{{ zoneName(item.zoneId) }}</td><td>{{ item.ttl }} 秒</td><td><div class="row-actions"><button class="table-icon-button" type="button" title="编辑记录" aria-label="编辑记录" (click)="openDNSRecord(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button><button class="danger-icon-button" type="button" title="删除记录" aria-label="删除记录" (click)="vm.deleteDNSRecord(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4l1 2h3v1h-1l-.7 10H3.7L3 4H2V3h3l1-2Zm1 .9L6.5 3h3L9 1.9H7ZM4 4l.6 9h6.8l.6-9H4Z"/></svg></button></div></td></tr>
+        <tr *ngIf="filteredDNSRecords.length === 0"><td colspan="6" class="empty-cell">{{ dnsKeyword ? '没有匹配的解析记录' : '暂无解析记录' }}</td></tr>
+      </tbody></table>
+      <ops-pagination [total]="filteredDNSRecords.length" [page]="dnsRecordPage" [pageSize]="pageSize" (pageChange)="dnsRecordPage = $event" (pageSizeChange)="setPageSize($event)"></ops-pagination>
+    </div>
+  </article>
+
+  <article class="panel resource-console" *ngIf="vm.networkPolicyTab === 'security'">
+    <ng-container *ngIf="!vm.securityGroupDetail">
+      <div class="resource-console-heading"><div><h3>安全组管理</h3><p>安全组是访问控制的边界，进入安全组后配置其访问规则。</p></div><div class="resource-counts"><span>安全组 <strong>{{ vm.securityGroups.length }}</strong></span><span>规则 <strong>{{ vm.securityRules.length }}</strong></span></div></div>
+      <div class="resource-toolbar">
+        <button class="primary" type="button" (click)="openSecurityGroup()">
+          <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25V2Z"/></svg>
+          创建安全组
+        </button>
+        <div class="toolbar-spacer"></div>
+        <label class="search-control"><span class="sr-only">搜索安全组</span><input [(ngModel)]="securityKeyword" (ngModelChange)="resetSecurityPage()" placeholder="搜索安全组名称或 ID"></label>
+        <button class="table-icon-button" type="button" title="刷新" aria-label="刷新" (click)="vm.loadNetworkPolicies()"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 5.2A5.7 5.7 0 1 0 13.5 10h-1.6a4.2 4.2 0 1 1-.1-3.7L9.5 8.5H15V3l-1.8 2.2Z"/></svg></button>
+      </div>
+
+      <div class="resource-table-wrap">
+        <table class="resource-table security-group-table"><thead><tr><th>安全组名称</th><th>说明</th><th>安全组 ID</th><th class="operation-column">操作</th></tr></thead><tbody>
+          <tr *ngFor="let item of pagedSecurityGroups"><td><div class="resource-name-cell"><a class="resource-link-button" [href]="vm.securityGroupRulesPath(network, item)" (click)="showRulesForGroup($event, item)">{{ item.name }}</a><button class="quick-rename-button" type="button" title="修改安全组名称" aria-label="修改安全组名称" (click)="vm.openQuickRename('securityGroup', item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button></div></td><td>{{ item.description || '-' }}</td><td><code>{{ item.securityGroupId }}</code></td><td><div class="row-actions"><button class="danger-icon-button" type="button" title="删除安全组" aria-label="删除安全组" (click)="vm.deleteSecurityGroup(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4l1 2h3v1h-1l-.7 10H3.7L3 4H2V3h3l1-2Zm1 .9L6.5 3h3L9 1.9H7ZM4 4l.6 9h6.8l.6-9H4Z"/></svg></button></div></td></tr>
+          <tr *ngIf="filteredSecurityGroups.length === 0"><td colspan="4" class="empty-cell">{{ securityKeyword ? '没有匹配的安全组' : '暂无安全组，请先创建安全组' }}</td></tr>
+        </tbody></table>
+        <ops-pagination [total]="filteredSecurityGroups.length" [page]="securityGroupPage" [pageSize]="pageSize" (pageChange)="securityGroupPage = $event" (pageSizeChange)="setPageSize($event)"></ops-pagination>
+      </div>
+    </ng-container>
+
+    <ng-container *ngIf="vm.securityGroupDetail as group">
+      <div class="resource-console-heading security-group-detail-heading">
+        <button class="icon-back-button" type="button" title="返回安全组列表" aria-label="返回安全组列表" (click)="closeSecurityGroupRules()">
+          <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.8 3 2 8l4.8 5 1-1L4.6 8.7H14V7.3H4.6L7.8 4l-1-1Z"/></svg>
+        </button>
+        <div class="security-group-detail-title"><p>安全组 / 访问规则</p><div class="resource-name-cell"><h3>{{ group.name }}</h3><button class="quick-rename-button" type="button" title="修改安全组名称" aria-label="修改安全组名称" (click)="vm.openQuickRename('securityGroup', group)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button></div><span>{{ group.description || '暂无说明' }}</span></div>
+        <div class="resource-counts"><span>访问规则 <strong>{{ securityRuleCount(group.securityGroupId) }}</strong></span><span>安全组 ID <code>{{ group.securityGroupId }}</code></span></div>
+      </div>
+      <div class="resource-toolbar">
+        <button class="primary" type="button" (click)="openSecurityRule()">
+        <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25V2Z"/></svg>
+          添加访问规则
+        </button>
+        <div class="toolbar-spacer"></div>
+        <label class="search-control"><span class="sr-only">搜索访问规则</span><input [(ngModel)]="securityKeyword" (ngModelChange)="resetSecurityPage()" placeholder="搜索协议、来源或策略"></label>
+        <button class="table-icon-button" type="button" title="刷新" aria-label="刷新" (click)="vm.loadNetworkPolicies()"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 5.2A5.7 5.7 0 1 0 13.5 10h-1.6a4.2 4.2 0 1 1-.1-3.7L9.5 8.5H15V3l-1.8 2.2Z"/></svg></button>
+      </div>
+      <div class="resource-table-wrap">
+        <table class="resource-table security-rule-table"><thead><tr><th>方向</th><th>策略</th><th>协议/端口</th><th>来源或目标</th><th>优先级</th><th>状态</th><th class="operation-column">操作</th></tr></thead><tbody>
+          <tr *ngFor="let item of pagedSecurityRules"><td>{{ item.direction === 'ingress' ? '入方向' : '出方向' }}</td><td><span class="policy-action" [class.deny]="item.action === 'deny'">{{ item.action === 'allow' ? '允许' : '拒绝' }}</span></td><td>{{ item.protocol }} / {{ item.portRange || '全部' }}</td><td><strong>{{ item.peerValue || '全部' }}</strong><small>{{ item.peerType }}</small></td><td>{{ item.priority }}</td><td><span class="status" [class.online]="item.enabled">{{ item.enabled ? '启用' : '停用' }}</span></td><td><div class="row-actions"><button class="table-icon-button" type="button" title="编辑规则" aria-label="编辑规则" (click)="openSecurityRule(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 1.5a2 2 0 0 1 2.8 2.8l-7.2 7.2-3.4.5.5-3.4L11 1.5Zm1.4 1.4a1 1 0 0 0-1.4 0L4.6 9.3l-.2 1.5 1.5-.2 6.5-6.4a1 1 0 0 0 0-1.3Z"/></svg></button><button class="danger-icon-button" type="button" title="删除规则" aria-label="删除规则" (click)="vm.deleteSecurityRule(item)"><svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4l1 2h3v1h-1l-.7 10H3.7L3 4H2V3h3l1-2Zm1 .9L6.5 3h3L9 1.9H7ZM4 4l.6 9h6.8l.6-9H4Z"/></svg></button></div></td></tr>
+          <tr *ngIf="filteredSecurityRules.length === 0"><td colspan="7" class="empty-cell">{{ securityKeyword ? '没有匹配的访问规则' : '该安全组暂无访问规则' }}</td></tr>
+        </tbody></table>
+        <ops-pagination [total]="filteredSecurityRules.length" [page]="securityRulePage" [pageSize]="pageSize" (pageChange)="securityRulePage = $event" (pageSizeChange)="setPageSize($event)"></ops-pagination>
+      </div>
+    </ng-container>
+  </article>
+
+  <div class="modal-backdrop" *ngIf="showDNSZoneDialog"><section class="modal"><div class="modal-header"><div><h2>{{ vm.selectedDNSZone ? '编辑解析区域' : '创建解析区域' }}</h2><p>解析区域仅在当前网络内生效。</p></div><button class="icon-close" type="button" title="关闭" (click)="showDNSZoneDialog = false">x</button></div><div class="form-grid"><label><span>区域名称</span><input [(ngModel)]="vm.dnsZoneForm.name" placeholder="例如 corp.internal"></label><label><span>状态</span><select [(ngModel)]="vm.dnsZoneForm.status"><option value="active">启用</option><option value="disabled">停用</option></select></label></div><div class="modal-footer"><button class="ghost" type="button" (click)="showDNSZoneDialog = false">取消</button><button class="primary" type="button" (click)="saveDNSZone()">确定</button></div></section></div>
+  <div class="modal-backdrop" *ngIf="showDNSRecordDialog"><section class="modal"><div class="modal-header"><div><h2>{{ vm.selectedDNSRecord ? '编辑解析记录' : '添加解析记录' }}</h2><p>地址记录只能解析到当前网络内的设备。</p></div><button class="icon-close" type="button" title="关闭" (click)="showDNSRecordDialog = false">x</button></div><div class="form-grid two-col"><label><span>解析区域</span><select [(ngModel)]="vm.dnsRecordForm.zoneId"><option *ngFor="let zone of vm.dnsZones" [value]="zone.zoneId">{{ zone.name }}</option></select></label><label><span>主机记录</span><input [(ngModel)]="vm.dnsRecordForm.name" placeholder="例如 api"></label><label><span>记录类型</span><select [(ngModel)]="vm.dnsRecordForm.type" (ngModelChange)="onDNSRecordTypeChange($event)"><option value="A">A</option><option value="AAAA">AAAA</option><option value="CNAME">CNAME</option></select></label><label *ngIf="vm.dnsRecordForm.type === 'CNAME'"><span>目标域名</span><input [(ngModel)]="vm.dnsRecordForm.value" placeholder="例如 service.internal"></label><label *ngIf="vm.dnsRecordForm.type !== 'CNAME'"><span>目标设备</span><select [(ngModel)]="vm.dnsRecordForm.value"><option *ngFor="let device of availableNetworkDevices" [value]="device.deviceId">{{ deviceLabel(device) }} · {{ device.globalIp }}</option></select></label><label><span>TTL（秒）</span><input [(ngModel)]="vm.dnsRecordForm.ttl" type="number" min="0"></label></div><div class="modal-footer"><button class="ghost" type="button" (click)="showDNSRecordDialog = false">取消</button><button class="primary" type="button" [disabled]="vm.dnsZones.length === 0 || (vm.dnsRecordForm.type !== 'CNAME' && availableNetworkDevices.length === 0)" (click)="saveDNSRecord()">确定</button></div></section></div>
+  <div class="modal-backdrop" *ngIf="showSecurityGroupDialog"><section class="modal"><div class="modal-header"><div><h2>创建安全组</h2><p>安全组用于组织当前网络的访问控制规则。</p></div><button class="icon-close" type="button" title="关闭" (click)="showSecurityGroupDialog = false">x</button></div><div class="form-grid"><label><span>安全组名称</span><input [(ngModel)]="vm.securityGroupForm.name" placeholder="例如开发环境"></label><label><span>说明</span><input [(ngModel)]="vm.securityGroupForm.description" placeholder="填写安全组用途"></label></div><div class="modal-footer"><button class="ghost" type="button" (click)="showSecurityGroupDialog = false">取消</button><button class="primary" type="button" (click)="saveSecurityGroup()">确定</button></div></section></div>
+  <div class="modal-backdrop" *ngIf="showSecurityRuleDialog"><section class="modal policy-rule-modal"><div class="modal-header"><div><h2>{{ vm.selectedSecurityRule ? '编辑访问规则' : '添加访问规则' }}</h2><p>{{ vm.securityGroupDetail?.name }} · 来源或目标只能选择当前网络内的设备及引用设备组。</p></div><button class="icon-close" type="button" title="关闭" (click)="showSecurityRuleDialog = false">x</button></div><div class="form-grid two-col"><label><span>方向</span><select [(ngModel)]="vm.securityRuleForm.direction"><option value="ingress">入方向</option><option value="egress">出方向</option></select></label><label><span>策略</span><select [(ngModel)]="vm.securityRuleForm.action"><option value="allow">允许</option><option value="deny">拒绝</option></select></label><label><span>协议</span><select [(ngModel)]="vm.securityRuleForm.protocol"><option value="any">全部</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></label><label><span>端口范围</span><input [(ngModel)]="vm.securityRuleForm.portRange" placeholder="80 或 8000-8080；留空表示全部"></label><label><span>来源/目标类型</span><select [(ngModel)]="vm.securityRuleForm.peerType" (ngModelChange)="onSecurityPeerTypeChange($event)"><option value="device_group">设备组</option><option value="device">设备</option></select></label><label *ngIf="vm.securityRuleForm.peerType === 'device_group'"><span>来源/目标设备组</span><select [(ngModel)]="vm.securityRuleForm.peerValue"><option *ngFor="let group of availableNetworkDeviceGroups" [value]="group.groupId">{{ group.name }}</option></select></label><label *ngIf="vm.securityRuleForm.peerType === 'device'"><span>来源/目标设备</span><select [(ngModel)]="vm.securityRuleForm.peerValue"><option *ngFor="let device of availableNetworkDevices" [value]="device.deviceId">{{ deviceLabel(device) }} · {{ device.globalIp }}</option></select></label><label><span>优先级</span><input [(ngModel)]="vm.securityRuleForm.priority" type="number" min="0"></label><label><span>说明</span><input [(ngModel)]="vm.securityRuleForm.description"></label><label><span>状态</span><select [(ngModel)]="vm.securityRuleForm.enabled"><option [ngValue]="true">启用</option><option [ngValue]="false">停用</option></select></label></div><div class="modal-footer"><button class="ghost" type="button" (click)="showSecurityRuleDialog = false">取消</button><button class="primary" type="button" [disabled]="!vm.securityRuleForm.peerValue" (click)="saveSecurityRule()">确定</button></div></section></div>
+</section>

@@ -23,6 +23,13 @@ func (s *GormStore) SaveNetworkEventDelivery(ctx context.Context, item model.Net
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error
 }
 
+func (s *GormStore) DeleteExpiredNetworkEventDeliveries(ctx context.Context, expiresAt int64) (int64, error) {
+	result := s.db.WithContext(ctx).
+		Where("expires_at <= ?", expiresAt).
+		Delete(&gormNetworkEventDeliveryRecord{})
+	return result.RowsAffected, result.Error
+}
+
 func networkEventDeliveryRecordFromModel(item model.NetworkEventDelivery) gormNetworkEventDeliveryRecord {
 	return gormNetworkEventDeliveryRecord{
 		EventID: item.EventID, TargetDeviceID: item.TargetDeviceID, NetworkID: item.NetworkID,

@@ -11,14 +11,14 @@
 - 独立运行的 smoke / e2e / matrix / 平台回归脚本抽到测试工程视图
 - 每个主要子项目都提供自己的 `tests/` 入口，便于从子项目维度查看测试体系
 
-## client_v2
+## client
 
 - 业务工程：
-  [`client_v2/app_flutter`](/Users/thorli/workspace/slan/slan/client_v2/app_flutter)
-  [`client_v2/plugins/client_core_plugin`](/Users/thorli/workspace/slan/slan/client_v2/plugins/client_core_plugin)
-  [`client_v2/rust/crates`](/Users/thorli/workspace/slan/slan/client_v2/rust/crates)
+  [`client/app_flutter`](/Users/thorli/workspace/slan/slan/client/app_flutter)
+  [`client/plugins/client_core_plugin`](/Users/thorli/workspace/slan/slan/client/plugins/client_core_plugin)
+  [`client/rust/crates`](/Users/thorli/workspace/slan/slan/client/rust/crates)
 - 测试工程入口：
-  [`client_v2/tests`](/Users/thorli/workspace/slan/slan/client_v2/tests)
+  [`client/tests`](/Users/thorli/workspace/slan/slan/client/tests)
 
 ## service-biz
 
@@ -40,13 +40,11 @@
   [`server/server-wire-derp/tests`](/Users/thorli/workspace/slan/slan/server/server-wire-derp/tests)
   [`server/server-wire-punch/tests`](/Users/thorli/workspace/slan/slan/server/server-wire-punch/tests)
 
-## Web 前端
+## Ops 前端
 
 - 业务工程：
-  [`server/web-ui/src`](/Users/thorli/workspace/slan/slan/server/web-ui/src)
   [`server/opt-ui/src`](/Users/thorli/workspace/slan/slan/server/opt-ui/src)
 - 测试工程入口：
-  [`server/web-ui/tests`](/Users/thorli/workspace/slan/slan/server/web-ui/tests)
   [`server/opt-ui/tests`](/Users/thorli/workspace/slan/slan/server/opt-ui/tests)
 
 ## 外部测试脚本总入口
