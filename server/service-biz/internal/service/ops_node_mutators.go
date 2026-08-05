@@ -6,7 +6,7 @@ func newRelayNode(nodeID string, now int64, input UpsertNodeInput) model.RelayNo
 	return model.RelayNode{
 		NodeID:           nodeID,
 		Name:             input.Name,
-		Region:           input.Region,
+		Region:           firstNonEmpty(input.DERPRegionID, nodeID),
 		Endpoint:         input.Endpoint,
 		Transport:        firstNonEmpty(input.Transport, "relay_udp"),
 		Priority:         input.Priority,
@@ -28,9 +28,7 @@ func mergeRelayNode(current model.RelayNode, input UpsertNodeInput, now int64) m
 	if item.Name == "" {
 		item.Name = current.Name
 	}
-	if item.Region == "" {
-		item.Region = current.Region
-	}
+	item.Region = firstNonEmpty(input.DERPRegionID, current.Region, current.NodeID)
 	if item.Endpoint == "" {
 		item.Endpoint = current.Endpoint
 	}
@@ -89,7 +87,6 @@ func newPunchNode(nodeID string, now int64, input UpsertNodeInput) model.PunchNo
 	return model.PunchNode{
 		NodeID:         nodeID,
 		Name:           input.Name,
-		Region:         input.Region,
 		Endpoint:       input.Endpoint,
 		MaxSessions:    input.MaxSessions,
 		ActiveSessions: input.ActiveSessions,
@@ -106,9 +103,6 @@ func mergePunchNode(current model.PunchNode, input UpsertNodeInput, now int64) m
 	item.CreatedAt = current.CreatedAt
 	if item.Name == "" {
 		item.Name = current.Name
-	}
-	if item.Region == "" {
-		item.Region = current.Region
 	}
 	if item.Endpoint == "" {
 		item.Endpoint = current.Endpoint

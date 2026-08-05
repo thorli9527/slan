@@ -51,11 +51,11 @@ curl --silent --fail "$BIZ_BASE/healthz" | grep -q '"status":"ok"' || fail "biz 
 
 echo "==> Ops resource checks"
 OPS_TOKEN="$(slan_ops_login "$OPS_BASE")"
-for endpoint in dashboard operators relay-nodes customers devices device-credentials networks device-groups plans products orders renewals audit-events; do
+for endpoint in dashboard operators relay-nodes punch-nodes customers devices device-credentials networks device-groups audit-events; do
   auth_curl "$OPS_BASE/api/ops/$endpoint" >/dev/null || fail "Ops list failed: $endpoint"
 done
 
-CREDENTIAL="$(slan_ops_create_device_credential "$OPS_BASE" "$OPS_TOKEN" "Remote UI Device" "$DEVICE_ID")"
+CREDENTIAL="$(slan_ops_create_device_credential "$OPS_BASE" "$OPS_TOKEN" "Remote UI Device")"
 CREDENTIAL_ID="$(printf '%s' "$CREDENTIAL" | jq -er '.credentialId')"
 AUTHORIZATION_KEY="$(printf '%s' "$CREDENTIAL" | jq -er '.key')"
 SESSION="$(curl --silent --show-error --fail -X POST "$BIZ_BASE/api/device-auth/token" \
@@ -65,7 +65,6 @@ DEVICE_TOKEN="$(printf '%s' "$SESSION" | jq -er '.deviceSession.deviceToken')"
 
 NETWORK="$(slan_ops_create_network "$OPS_BASE" "$OPS_TOKEN" "Remote Smoke Network $RUN_ID")"
 NETWORK_ID="$(printf '%s' "$NETWORK" | jq -er '.networkId')"
-slan_ops_add_network_device "$OPS_BASE" "$OPS_TOKEN" "$NETWORK_ID" "$DEVICE_ID"
 auth_curl -X PATCH "$OPS_BASE/api/ops/networks/$NETWORK_ID" -H 'Content-Type: application/json' \
   -d '{"name":"Remote Smoke Network Updated","status":"active"}' >/dev/null || fail "network update failed"
 
@@ -78,13 +77,13 @@ auth_curl -X POST "$OPS_BASE/api/ops/networks/$NETWORK_ID/device-groups" -H 'Con
   -d "{\"groupId\":\"$DEVICE_GROUP_ID\"}" >/dev/null || fail "network device group add failed"
 
 ZONE="$(auth_curl -X POST "$OPS_BASE/api/ops/networks/$NETWORK_ID/dns/zones" -H 'Content-Type: application/json' \
-  -d "{\"zoneName\":\"remote-${RUN_ID}.staticlss.com\"}")" || fail "dns zone create failed"
+  -d "{\"name\":\"remote-${RUN_ID}.staticlss.com\"}")" || fail "dns zone create failed"
 ZONE_ID="$(printf '%s' "$ZONE" | jq -er '.zoneId')"
 RECORD="$(auth_curl -X POST "$OPS_BASE/api/ops/networks/$NETWORK_ID/dns/records" -H 'Content-Type: application/json' \
-  -d "{\"zoneId\":\"$ZONE_ID\",\"name\":\"app\",\"recordType\":\"A\",\"targetDeviceId\":\"$DEVICE_ID\",\"ttl\":60}")" || fail "dns record create failed"
+  -d "{\"zoneId\":\"$ZONE_ID\",\"name\":\"app\",\"type\":\"A\",\"value\":\"$DEVICE_ID\",\"ttl\":60}")" || fail "dns record create failed"
 RECORD_ID="$(printf '%s' "$RECORD" | jq -er '.recordId')"
 auth_curl -X PATCH "$OPS_BASE/api/ops/dns/records/$RECORD_ID" -H 'Content-Type: application/json' \
-  -d "{\"name\":\"app2\",\"recordType\":\"A\",\"targetDeviceId\":\"$DEVICE_ID\",\"ttl\":120}" >/dev/null || fail "dns record update failed"
+  -d "{\"zoneId\":\"$ZONE_ID\",\"name\":\"app2\",\"type\":\"A\",\"value\":\"$DEVICE_ID\",\"ttl\":120}" >/dev/null || fail "dns record update failed"
 
 SECURITY_GROUP="$(auth_curl -X POST "$OPS_BASE/api/ops/networks/$NETWORK_ID/security-groups" -H 'Content-Type: application/json' \
   -d '{"name":"Remote Smoke ACL","description":"remote smoke"}')" || fail "security group create failed"

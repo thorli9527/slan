@@ -7,6 +7,7 @@ toolchain go1.26.3
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/jackc/pgx/v5 v5.6.0
+	github.com/oschwald/maxminddb-golang/v2 v2.4.1
 	golang.org/x/crypto v0.42.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.30.0
@@ -21,5 +22,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )

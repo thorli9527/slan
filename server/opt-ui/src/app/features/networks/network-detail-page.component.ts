@@ -13,7 +13,6 @@ import { DEFAULT_PAGE_SIZE, paginate } from '../../shared/pagination';
 export class NetworkDetailPageComponent {
   @Input({ required: true }) vm!: any;
 
-  dnsResource: 'zones' | 'records' = 'zones';
   dnsKeyword = '';
   securityKeyword = '';
   showDNSZoneDialog = false;
@@ -30,14 +29,17 @@ export class NetworkDetailPageComponent {
     const keyword = this.dnsKeyword.trim().toLowerCase();
     if (!keyword) return this.vm.dnsZones;
     return this.vm.dnsZones.filter((item: any) =>
-      [item.name, item.zoneId, item.status].some((value) => String(value ?? '').toLowerCase().includes(keyword)),
+      [item.name, item.status].some((value) => String(value ?? '').toLowerCase().includes(keyword)),
     );
   }
 
   get filteredDNSRecords(): any[] {
     const keyword = this.dnsKeyword.trim().toLowerCase();
-    if (!keyword) return this.vm.dnsRecords;
-    return this.vm.dnsRecords.filter((item: any) =>
+    const records = this.vm.dnsRecords.filter(
+      (item: any) => item.zoneId === this.vm.dnsZoneDetailId,
+    );
+    if (!keyword) return records;
+    return records.filter((item: any) =>
       [item.name, item.type, item.value, item.recordId, this.zoneName(item.zoneId)]
         .some((value) => String(value ?? '').toLowerCase().includes(keyword)),
     );
@@ -102,15 +104,9 @@ export class NetworkDetailPageComponent {
     this.resetAllPages();
   }
 
-  setDNSResource(resource: 'zones' | 'records'): void {
-    this.dnsResource = resource;
-    this.dnsKeyword = '';
-    this.resetDNSPage();
-  }
-
   resetDNSPage(): void {
-    if (this.dnsResource === 'zones') this.dnsZonePage = 1;
-    else this.dnsRecordPage = 1;
+    if (this.vm.dnsZoneDetail) this.dnsRecordPage = 1;
+    else this.dnsZonePage = 1;
   }
 
   resetSecurityPage(): void {
@@ -136,6 +132,20 @@ export class NetworkDetailPageComponent {
 
   zoneRecordCount(zoneId: string): number {
     return this.vm.dnsRecords.filter((item: any) => item.zoneId === zoneId).length;
+  }
+
+  showRecordsForZone(event: MouseEvent, zone: any): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    this.dnsKeyword = '';
+    this.dnsRecordPage = 1;
+    this.vm.openDNSZoneRecords(zone);
+  }
+
+  closeDNSZoneRecords(): void {
+    this.dnsKeyword = '';
+    this.dnsZonePage = 1;
+    this.vm.closeDNSZoneRecords();
   }
 
   securityGroupName(securityGroupId: string): string {
@@ -175,7 +185,7 @@ export class NetworkDetailPageComponent {
     else {
       this.vm.selectedDNSRecord = null;
       this.vm.dnsRecordForm = {
-        zoneId: this.vm.dnsZones[0]?.zoneId || '',
+        zoneId: this.vm.dnsZoneDetailId || '',
         name: '', type: 'A', value: this.availableNetworkDevices[0]?.deviceId || '', port: '', ttl: 300,
       };
     }

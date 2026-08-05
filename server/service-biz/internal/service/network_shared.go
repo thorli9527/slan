@@ -42,6 +42,7 @@ type NetworkRuntimeService struct {
 	Devices   repository.DeviceRepository
 	Networks  repository.NetworkRepository
 	Ops       repository.OpsNodeRepository
+	LocateIP  func(string) (DeviceLocation, bool)
 	NewSessID func(string) string
 	Now       func() time.Time
 }

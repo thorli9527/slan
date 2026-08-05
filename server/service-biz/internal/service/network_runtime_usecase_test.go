@@ -159,8 +159,11 @@ func (s *networkRuntimeTestDevices) GetDevice(_ context.Context, deviceID string
 	return item, ok, nil
 }
 
-func (s *networkRuntimeTestDevices) SaveDevice(context.Context, model.Device) error { return nil }
-func (s *networkRuntimeTestDevices) DeleteDevice(context.Context, string) error     { return nil }
+func (s *networkRuntimeTestDevices) SaveDevice(_ context.Context, item model.Device) error {
+	s.devices[item.DeviceID] = item
+	return nil
+}
+func (s *networkRuntimeTestDevices) DeleteDevice(context.Context, string) error { return nil }
 func (s *networkRuntimeTestDevices) NewDeviceVirtualIPID() string {
 	return "vip00000000000000000000000000000001"
 }
@@ -265,6 +268,7 @@ func TestBuildNetworkConfigUsesGlobalGroupsForSharedDevice(t *testing.T) {
 
 type networkRuntimeTestOps struct {
 	relayNodes []model.RelayNode
+	punchNodes []model.PunchNode
 }
 
 func (s *networkRuntimeTestOps) ListRelayNodes(context.Context) ([]model.RelayNode, error) {
@@ -285,7 +289,9 @@ func (s *networkRuntimeTestOps) GetRelayNode(_ context.Context, nodeID string) (
 func (s *networkRuntimeTestOps) SaveRelayNode(context.Context, model.RelayNode) error { return nil }
 func (s *networkRuntimeTestOps) DeleteRelayNode(context.Context, string) error        { return nil }
 func (s *networkRuntimeTestOps) ListPunchNodes(context.Context) ([]model.PunchNode, error) {
-	return nil, nil
+	out := make([]model.PunchNode, len(s.punchNodes))
+	copy(out, s.punchNodes)
+	return out, nil
 }
 
 func (s *networkRuntimeTestOps) GetPunchNode(context.Context, string) (model.PunchNode, bool, error) {
@@ -314,10 +320,11 @@ func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
 	}})
 
 	_, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
-		NetworkID: "net-1",
-		SrcNodeID: "node-src",
-		DstNodeID: "node-dst",
-		Reason:    "test",
+		NetworkID:       "net-1",
+		SrcNodeID:       "node-src",
+		DstNodeID:       "node-dst",
+		RelayEndpointID: "relay-1",
+		Reason:          "test",
 	})
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
@@ -341,10 +348,11 @@ func TestIssueRelayTicketAllowsPortScopedDeny(t *testing.T) {
 	}})
 
 	view, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
-		NetworkID: "net-1",
-		SrcNodeID: "node-src",
-		DstNodeID: "node-dst",
-		Reason:    "test",
+		NetworkID:       "net-1",
+		SrcNodeID:       "node-src",
+		DstNodeID:       "node-dst",
+		RelayEndpointID: "relay-1",
+		Reason:          "test",
 	})
 	if err != nil {
 		t.Fatalf("IssueRelayTicket returned error: %v", err)
@@ -372,20 +380,22 @@ func TestIssueRelayTicketReusesStableSessionForSameNodePair(t *testing.T) {
 	service := newNetworkRuntimeTestService(nil)
 
 	forward, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
-		NetworkID: "net-1",
-		SrcNodeID: "node-src",
-		DstNodeID: "node-dst",
-		Reason:    "forward",
+		NetworkID:       "net-1",
+		SrcNodeID:       "node-src",
+		DstNodeID:       "node-dst",
+		RelayEndpointID: "relay-1",
+		Reason:          "forward",
 	})
 	if err != nil {
 		t.Fatalf("forward IssueRelayTicket returned error: %v", err)
 	}
 
 	reverse, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
-		NetworkID: "net-1",
-		SrcNodeID: "node-dst",
-		DstNodeID: "node-src",
-		Reason:    "reverse",
+		NetworkID:       "net-1",
+		SrcNodeID:       "node-dst",
+		DstNodeID:       "node-src",
+		RelayEndpointID: "relay-1",
+		Reason:          "reverse",
 	})
 	if err != nil {
 		t.Fatalf("reverse IssueRelayTicket returned error: %v", err)
@@ -408,6 +418,7 @@ func TestCreatePunchConnectSessionRejectsMissingPeerMembership(t *testing.T) {
 		NetworkID:       "net-1",
 		RequesterNodeID: "node-src",
 		PeerNodeID:      "node-missing",
+		PunchNodeID:     "punch-1",
 		TTLSeconds:      30,
 	})
 	if !errors.Is(err, ErrNotFound) {
@@ -421,6 +432,7 @@ func TestCreatePunchConnectSessionRejectsMissingRequesterMembership(t *testing.T
 		NetworkID:       "net-1",
 		RequesterNodeID: "node-missing",
 		PeerNodeID:      "node-dst",
+		PunchNodeID:     "punch-1",
 		TTLSeconds:      30,
 	})
 	if !errors.Is(err, ErrNotFound) {

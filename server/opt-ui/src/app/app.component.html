@@ -38,6 +38,21 @@
   </section>
 </div>
 
+<div class="modal-backdrop confirmation-backdrop" *ngIf="confirmationDialog as dialog">
+  <section class="modal confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-dialog-title" aria-describedby="confirmation-dialog-message">
+    <div class="modal-header">
+      <div>
+        <h2 id="confirmation-dialog-title">{{ dialog.title }}</h2>
+        <p id="confirmation-dialog-message">{{ dialog.message }}</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost" type="button" (click)="resolveConfirmation(false)">取消</button>
+      <button class="danger" type="button" (click)="resolveConfirmation(true)">{{ dialog.confirmLabel }}</button>
+    </div>
+  </section>
+</div>
+
 <ng-container *ngIf="isLoggedIn">
 <div class="shell">
   <aside class="sider">
@@ -52,6 +67,10 @@
       <button class="nav-item" type="button" [class.active]="active === 'overview'" [attr.aria-current]="active === 'overview' ? 'page' : null" (click)="setActive('overview')">
         <strong>运营概览</strong>
         <span>平台指标与待处理事项</span>
+      </button>
+      <button class="nav-item" type="button" *ngFor="let item of resourceNavItems" [class.active]="active === item.id" [attr.aria-current]="active === item.id ? 'page' : null" (click)="setActive(item.id)">
+        <strong>{{ item.label }}</strong>
+        <span>{{ item.desc }}</span>
       </button>
       <section class="nav-menu" *ngFor="let menu of navMenus">
         <button class="nav-menu-trigger" type="button" [class.active]="isNavMenuActive(menu)" [attr.aria-expanded]="isNavMenuActive(menu)" (click)="selectNavMenu(menu)">
@@ -92,14 +111,6 @@
 
     <p [class.form-error]="!apiMessageIsSuccess" [class.form-notice]="apiMessageIsSuccess" [class.success]="apiMessageIsSuccess" *ngIf="apiMessage">{{ apiMessage }}</p>
     <p class="muted" *ngIf="loading">正在加载运营数据...</p>
-
-    <section class="summary-grid" *ngIf="!networkDetailNetwork">
-      <article><span>客户</span><strong>{{ totalCustomers }}</strong><small>{{ limitedCustomers }} 个客户已限流</small></article>
-      <article><span>设备</span><strong>{{ onlineDeviceCount }}/{{ devices.length }}</strong><small>在线设备 / 总设备</small></article>
-      <article><span>中继节点</span><strong>{{ activeRelayNodes }}/{{ relayNodes.length }}</strong><small>健康节点 / 总节点</small></article>
-      <article><span>打洞节点</span><strong>{{ healthyPunchNodes }}/{{ punchNodes.length }}</strong><small>{{ totalPunchSessions }} 个活跃打洞会话</small></article>
-      <article><span>Relay 月流量</span><strong>{{ totalRelayUsedGb }}GB</strong><small>只统计 relay_udp 与 DERP</small></article>
-    </section>
 
     <ops-overview-page *ngIf="active === 'overview'" [vm]="vm"></ops-overview-page>
 	<ops-operators-page *ngIf="active === 'operators' && operatorRole === 'admin'" [vm]="vm"></ops-operators-page>
@@ -316,7 +327,6 @@
     </div>
     <div class="form-grid two-col">
       <label><span>节点名称</span><input [(ngModel)]="relayNodeForm.name"></label>
-      <label><span>区域</span><input [(ngModel)]="relayNodeForm.region"></label>
       <label>
         <span>协议</span>
         <select [(ngModel)]="relayNodeForm.transport">
@@ -363,7 +373,6 @@
     </div>
     <div class="form-grid two-col">
       <label><span>节点名称</span><input [(ngModel)]="punchNodeForm.name"></label>
-      <label><span>区域</span><input [(ngModel)]="punchNodeForm.region"></label>
       <label><span>公网 UDP IP</span><input [(ngModel)]="punchNodeForm.publicUdpIp" placeholder="47.245.40.231"></label>
       <label><span>公网 UDP 端口</span><input [(ngModel)]="punchNodeForm.publicUdpPort" type="number"></label>
       <label><span>最大会话</span><input [(ngModel)]="punchNodeForm.maxSessions" type="number"></label>

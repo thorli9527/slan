@@ -53,13 +53,13 @@ func (s WireNodeService) DerpMap(ctx context.Context) (WireDerpMapView, error) {
 
 func (s WireNodeService) UpsertRelayNode(ctx context.Context, input WireUpsertNodeInput) (WireNodeView, error) {
 	item, err := s.Ops.UpsertRelayNode(ctx, UpsertNodeInput{
-		NodeID:    normalizeWireNodeID(input.NodeID),
-		Name:      normalizeWireName(input.NodeID, input.Name, "Relay Node"),
-		Region:    normalizeWireRegion(input.RegionID),
-		Endpoint:  wirekit.HostPort(input.Host, firstPositive(input.UDPPort, input.AdminPort)),
-		Transport: "relay_udp",
-		Priority:  input.Priority,
-		Status:    wireNodeStatus(input.Enabled, input.Healthy),
+		NodeID:       normalizeWireNodeID(input.NodeID),
+		Name:         normalizeWireName(input.NodeID, input.Name, "Relay Node"),
+		DERPRegionID: normalizeWireRegion(input.RegionID),
+		Endpoint:     wirekit.HostPort(input.Host, firstPositive(input.UDPPort, input.AdminPort)),
+		Transport:    "relay_udp",
+		Priority:     input.Priority,
+		Status:       wireNodeStatus(input.Enabled, input.Healthy),
 	})
 	if err != nil {
 		return WireNodeView{}, err
@@ -76,13 +76,13 @@ func (s WireNodeService) UpsertRelayNode(ctx context.Context, input WireUpsertNo
 
 func (s WireNodeService) UpsertDerpNode(ctx context.Context, input WireUpsertNodeInput) (WireNodeView, error) {
 	item, err := s.Ops.UpsertRelayNode(ctx, UpsertNodeInput{
-		NodeID:    normalizeWireNodeID(input.NodeID),
-		Name:      normalizeWireName(input.NodeID, input.Name, "DERP Node"),
-		Region:    normalizeWireRegion(input.RegionID),
-		Endpoint:  wirekit.HostPort(input.Host, input.Port),
-		Transport: "derp_tcp_tls_443",
-		Priority:  input.Priority,
-		Status:    wireNodeStatus(input.Enabled, input.Healthy),
+		NodeID:       normalizeWireNodeID(input.NodeID),
+		Name:         normalizeWireName(input.NodeID, input.Name, "DERP Node"),
+		DERPRegionID: normalizeWireRegion(input.RegionID),
+		Endpoint:     wirekit.HostPort(input.Host, input.Port),
+		Transport:    "derp_tcp_tls_443",
+		Priority:     input.Priority,
+		Status:       wireNodeStatus(input.Enabled, input.Healthy),
 	})
 	if err != nil {
 		return WireNodeView{}, err

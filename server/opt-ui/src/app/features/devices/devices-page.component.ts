@@ -10,7 +10,7 @@ import { PaginationState } from '../../shared/pagination';
   imports: [CommonModule, FormsModule, PaginationComponent],
   templateUrl: './devices-page.component.html',
 })
-// 设备管理页面，展示全局设备地址、在线状态、启用状态和流量统计。
+// 设备管理页面，展示全局设备地址、在线状态、启用状态和创建时间。
 export class DevicesPageComponent extends PaginationState {
   // 根组件下发的共享视图模型，包含筛选关键字、设备列表和状态切换动作。
   @Input({ required: true }) vm!: any;

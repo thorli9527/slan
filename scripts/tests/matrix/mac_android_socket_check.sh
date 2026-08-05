@@ -947,10 +947,18 @@ else
   echo "+ skip Android build and reuse existing debug APK"
 fi
 ANDROID_APK="$APP_DIR/build/app/outputs/flutter-apk/app-debug.apk"
-if ! install_output="$("${ADB_ARGS[@]}" install -r "$ANDROID_APK" 2>&1)"; then
-  echo "$install_output" >&2
-  fail "Android APK install failed: $ANDROID_APK"
-fi
+install_output=""
+for install_attempt in 1 2 3; do
+  if install_output="$("${ADB_ARGS[@]}" install -r "$ANDROID_APK" 2>&1)"; then
+    break
+  fi
+  if [[ "$install_output" != *"INSTALL_FAILED_PACKAGE_CHANGED"* || "$install_attempt" == "3" ]]; then
+    echo "$install_output" >&2
+    fail "Android APK install failed: $ANDROID_APK"
+  fi
+  echo "Android package changed during install; retrying ($install_attempt/3)" >&2
+  sleep 2
+done
 echo "$install_output"
 if [[ "${SLAN_ANDROID_CLEAR_APP:-1}" == "1" ]]; then
   if ! clear_output="$("${ADB_ARGS[@]}" shell pm clear dev.slan.slan_client_v2 2>&1)"; then

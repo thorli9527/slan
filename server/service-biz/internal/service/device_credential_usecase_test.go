@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +12,10 @@ import (
 )
 
 type deviceCredentialTestStore struct {
-	items         map[string]model.DeviceCredential
-	revokeOnMark  bool
-	cleanupCutoff int64
+	items                         map[string]model.DeviceCredential
+	revokeOnMark                  bool
+	enforceActiveDeviceUniqueness bool
+	cleanupCutoff                 int64
 }
 
 type deviceCredentialTestAudit struct {
@@ -65,6 +67,13 @@ func (s *deviceCredentialTestStore) BindDeviceCredential(_ context.Context, cred
 	item, ok := s.items[credentialID]
 	if !ok || item.DeviceID != "" || item.Status != model.DeviceCredentialStatusActive {
 		return false, nil
+	}
+	if s.enforceActiveDeviceUniqueness {
+		for id, existing := range s.items {
+			if id != credentialID && existing.DeviceID == deviceID && existing.Status == model.DeviceCredentialStatusActive {
+				return false, errors.New("duplicate active device credential")
+			}
+		}
 	}
 	item.DeviceID, item.UpdatedAt = deviceID, updatedAt
 	s.items[credentialID] = item
@@ -298,7 +307,7 @@ func TestUnboundDeviceCredentialBindingRevokesPreviousActiveCredentialForDevice(
 	devices := &deviceSessionTestDevices{networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
 		"device-1": {DeviceID: "device-1", Name: "gateway", Status: "active", VirtualIP: "10.0.1.1"},
 	}}}
-	credentials := &deviceCredentialTestStore{}
+	credentials := &deviceCredentialTestStore{enforceActiveDeviceUniqueness: true}
 	service := DeviceCredentialService{
 		Devices: devices, Credentials: credentials,
 		Networks: &deviceSessionTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{

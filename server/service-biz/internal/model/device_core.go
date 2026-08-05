@@ -10,7 +10,10 @@ type Device struct {
 	OSVersion     string `json:"osVersion,omitempty"`
 	PublicKey     string `json:"publicKey,omitempty"`
 	DeviceVersion string `json:"deviceVersion,omitempty"`
+	PublicIP      string `json:"publicIp,omitempty"`
 	CountryCode   string `json:"countryCode,omitempty"`
+	CityCode      string `json:"cityCode,omitempty"`
+	GeoUpdatedAt  int64  `json:"geoUpdatedAt,omitempty"`
 	RXBytesTotal  int64  `json:"rxBytesTotal"`
 	TXBytesTotal  int64  `json:"txBytesTotal"`
 	Status        string `json:"status"`

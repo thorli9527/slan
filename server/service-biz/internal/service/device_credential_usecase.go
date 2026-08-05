@@ -161,6 +161,9 @@ func (s DeviceCredentialService) exchangeDeviceCredential(ctx context.Context, i
 		if requested == "" {
 			return DeviceSessionBoundView{}, ErrUnauthorized
 		}
+		if err := s.revokeOtherActiveDeviceCredentials(ctx, requested, credential.CredentialID); err != nil {
+			return DeviceSessionBoundView{}, err
+		}
 		bound, err := s.Credentials.BindDeviceCredential(ctx, credential.CredentialID, requested, now.Unix())
 		if err != nil {
 			return DeviceSessionBoundView{}, err

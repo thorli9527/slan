@@ -1,6 +1,9 @@
 package app
 
-import servicepkg "github.com/slan/service-biz/internal/service"
+import (
+	"github.com/slan/service-biz/internal/geoip"
+	servicepkg "github.com/slan/service-biz/internal/service"
+)
 
 func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 	repos := deps.networkRepositories()
@@ -31,10 +34,18 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 			Now:            deps.now(),
 		},
 		RuntimeControl: servicepkg.NetworkRuntimeService{
-			Devices:   repos.Devices,
-			Networks:  repos.Networks,
-			Ops:       repos.Ops,
+			Devices:  repos.Devices,
+			Networks: repos.Networks,
+			Ops:      repos.Ops,
+			LocateIP: func(ip string) (servicepkg.DeviceLocation, bool) {
+				location, ok := geoip.DefaultLookup(ip)
+				return servicepkg.DeviceLocation{
+					CountryCode: location.CountryCode,
+					CityCode:    location.CityCode,
+				}, ok
+			},
 			NewSessID: ids.NewSessionID,
+			Now:       deps.now(),
 		},
 	}
 }

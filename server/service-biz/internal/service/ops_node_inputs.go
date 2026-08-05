@@ -3,7 +3,7 @@ package service
 type UpsertNodeInput struct {
 	NodeID           string `json:"nodeId"`
 	Name             string `json:"name"`
-	Region           string `json:"region"`
+	DERPRegionID     string `json:"-"`
 	Endpoint         string `json:"endpoint"`
 	Transport        string `json:"transport"`
 	MaxBandwidthMbps int    `json:"maxBandwidthMbps"`

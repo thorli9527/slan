@@ -22,7 +22,7 @@ func (s *GormStore) GetDevice(_ context.Context, deviceID string) (model.Device,
 
 func (s *GormStore) SaveDevice(_ context.Context, device model.Device) error {
 	row := deviceRecordFromModel(device)
-	err := upsertByColumns(s.db, &row, []string{"device_id"}, []string{"virtual_ip", "name", "platform", "alias", "os_name", "os_version", "public_key", "device_version", "country_code", "rx_bytes_total", "tx_bytes_total", "status", "created_at", "updated_at", "last_seen_at"})
+	err := upsertByColumns(s.db, &row, []string{"device_id"}, []string{"virtual_ip", "name", "platform", "alias", "os_name", "os_version", "public_key", "device_version", "public_ip", "country_code", "city_code", "geo_updated_at", "rx_bytes_total", "tx_bytes_total", "status", "created_at", "updated_at", "last_seen_at"})
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return ErrDeviceVirtualIPConflict
 	}

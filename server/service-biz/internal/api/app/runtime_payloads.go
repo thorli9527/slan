@@ -3,21 +3,7 @@ package app
 import servicepkg "github.com/slan/service-biz/internal/service"
 
 func relayCandidateViewPayload(item servicepkg.RelayCandidateView) map[string]any {
-	payload := relayCandidateBasePayload(item)
-	if item.Reachable {
-		payload["reachable"] = true
-	}
-	if item.ObservedRttMs > 0 {
-		payload["rttMs"] = item.ObservedRttMs
-		payload["observedRttMs"] = item.ObservedRttMs
-	}
-	if item.PathScore > 0 {
-		payload["pathScore"] = item.PathScore
-	}
-	if item.Selected {
-		payload["selected"] = true
-	}
-	return payload
+	return relayCandidateBasePayload(item)
 }
 
 func punchConnectSessionPayload(item servicepkg.PunchConnectSessionView) map[string]any {
@@ -54,8 +40,6 @@ func relayTicketPayload(item servicepkg.RelayTicketView) map[string]any {
 		"srcNodeId":          item.SrcNodeID,
 		"dstNodeId":          item.DstNodeID,
 		"derpClusterId":      item.DERPClusterID,
-		"countryCode":        item.CountryCode,
-		"cityCode":           item.CityCode,
 		"allowedDerpNodeIds": item.AllowedDERPNodeIDs,
 		"relayUrl":           item.RelayURL,
 		"expiresAt":          item.ExpiresAt,

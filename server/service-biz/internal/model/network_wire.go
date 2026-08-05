@@ -28,7 +28,6 @@ type RelayNode struct {
 type PunchNode struct {
 	NodeID         string `json:"nodeId"`
 	Name           string `json:"name"`
-	Region         string `json:"region"`
 	Endpoint       string `json:"endpoint"`
 	MaxSessions    int    `json:"maxSessions"`
 	ActiveSessions int    `json:"activeSessions"`
@@ -65,8 +64,6 @@ type RelayTicket struct {
 	SrcNodeID          string   `json:"srcNodeId"`
 	DstNodeID          string   `json:"dstNodeId"`
 	DERPClusterID      string   `json:"derpClusterId,omitempty"`
-	CountryCode        string   `json:"countryCode,omitempty"`
-	CityCode           string   `json:"cityCode,omitempty"`
 	AllowedDERPNodeIDs []string `json:"allowedDerpNodeIds,omitempty"`
 	RelayURL           string   `json:"relayUrl"`
 	ExpiresAt          string   `json:"expiresAt"`

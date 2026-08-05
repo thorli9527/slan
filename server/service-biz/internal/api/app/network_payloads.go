@@ -53,7 +53,7 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 	deviceIDsByIP := buildDeviceIDsByIP(view)
 	deviceIPsByID := buildDeviceIPsByID(view)
 	zoneNamesByID := buildZoneNamesByID(view.DNSZones)
-	orderedRelayCandidates := orderRelayCandidates(view.RuntimePath, resolved.RelayCandidates)
+	relayCandidates := resolved.RelayCandidates
 	aclPolicies := aclPoliciesPayload(view)
 	return map[string]any{
 		"networkId":           view.Network.NetworkID,
@@ -72,14 +72,14 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"peerCount":           len(view.Peers),
 		"dnsRecordCount":      len(view.DNSRecords),
 		"securityRuleCount":   len(view.SecurityRules),
-		"relayCandidateCount": len(orderedRelayCandidates),
+		"relayCandidateCount": len(relayCandidates),
 		"securityGroups":      securityGroupPayloads(view.SecurityGroups),
 		"rules":               securityRulePayloadsForView(view),
 		"aclPolicies":         aclPolicies,
 		"resolverZones":       dnsZonePayloads(view.DNSZones),
 		"resolverRecords":     dnsRecordPayloads(view.DNSRecords, zoneNamesByID, deviceIDsByIP, deviceIPsByID),
 		"peers":               networkPeerPayloads(view.Peers),
-		"relayCandidates":     relayCandidatePayloads(view.RuntimePath, orderedRelayCandidates),
+		"relayCandidates":     relayCandidatePayloads(relayCandidates),
 	}
 }
 
@@ -250,44 +250,22 @@ func compactStrings(values ...string) []string {
 	return out
 }
 
-func relayCandidatePayloads(runtime servicepkg.NetworkRuntimePathView, items []servicepkg.RelayCandidateView) []map[string]any {
+func relayCandidatePayloads(items []servicepkg.RelayCandidateView) []map[string]any {
 	payloads := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		payloads = append(payloads, appRelayCandidatePayload(runtime, item))
+		payloads = append(payloads, relayCandidateBasePayload(item))
 	}
 	return payloads
 }
 
-func appRelayCandidatePayload(runtime servicepkg.NetworkRuntimePathView, item servicepkg.RelayCandidateView) map[string]any {
-	selected := item.Selected || relayCandidateMatchesRuntime(runtime, item)
-	payload := relayCandidateBasePayload(item)
-	payload["selected"] = selected
-	if item.Reachable || selected {
-		payload["reachable"] = true
-	}
-	if item.ObservedRttMs > 0 {
-		payload["rttMs"] = item.ObservedRttMs
-		payload["observedRttMs"] = item.ObservedRttMs
-	} else if selected && runtime.ObservedRttMs > 0 {
-		payload["rttMs"] = runtime.ObservedRttMs
-		payload["observedRttMs"] = runtime.ObservedRttMs
-	}
-	if item.PathScore > 0 {
-		payload["pathScore"] = item.PathScore
-	} else if selected && runtime.PathScore > 0 {
-		payload["pathScore"] = runtime.PathScore
-	}
-	return payload
-}
-
 func relayCandidateBasePayload(item servicepkg.RelayCandidateView) map[string]any {
 	return map[string]any{
-		"endpointId":  item.EndpointID,
-		"transport":   item.Transport,
-		"address":     item.Address,
-		"countryCode": item.CountryCode,
-		"regionId":    item.RegionID,
-		"clusterId":   item.ClusterID,
+		"endpointId": item.EndpointID,
+		"transport":  item.Transport,
+		"address":    item.Address,
+		"regionId":   item.RegionID,
+		"clusterId":  item.ClusterID,
+		"priority":   item.Priority,
 	}
 }
 
@@ -319,51 +297,6 @@ func runtimePathPayload(view servicepkg.NetworkRuntimePathView) any {
 	}
 }
 
-func orderRelayCandidates(runtime servicepkg.NetworkRuntimePathView, items []servicepkg.RelayCandidateView) []servicepkg.RelayCandidateView {
-	if len(items) < 2 {
-		return items
-	}
-	ordered := append([]servicepkg.RelayCandidateView(nil), items...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		left := relayCandidateRank(runtime, ordered[i])
-		right := relayCandidateRank(runtime, ordered[j])
-		if left != right {
-			return left < right
-		}
-		if ordered[i].RegionID != ordered[j].RegionID {
-			return ordered[i].RegionID < ordered[j].RegionID
-		}
-		return ordered[i].EndpointID < ordered[j].EndpointID
-	})
-	return ordered
-}
-
-func relayCandidateRank(runtime servicepkg.NetworkRuntimePathView, item servicepkg.RelayCandidateView) int {
-	if relayCandidateMatchesRuntime(runtime, item) {
-		return 0
-	}
-	if runtime.ActivePath == "relay_udp" && item.Transport == "udp" {
-		return 10
-	}
-	if runtime.ActivePath == "derp_tcp_tls_443" && item.Transport == "derp_tcp_tls_443" {
-		return 10
-	}
-	return 100
-}
-
-func relayCandidateMatchesRuntime(runtime servicepkg.NetworkRuntimePathView, item servicepkg.RelayCandidateView) bool {
-	if strings.TrimSpace(runtime.RelayEndpoint) != "" && strings.TrimSpace(runtime.RelayEndpoint) != strings.TrimSpace(item.Address) {
-		return false
-	}
-	if strings.TrimSpace(runtime.RelayTransport) != "" && strings.TrimSpace(runtime.RelayTransport) != strings.TrimSpace(item.Transport) {
-		return false
-	}
-	if strings.TrimSpace(runtime.DerpNodeID) != "" && strings.TrimSpace(runtime.DerpNodeID) != strings.TrimSpace(item.EndpointID) {
-		return false
-	}
-	return strings.TrimSpace(runtime.RelayEndpoint) != "" || strings.TrimSpace(runtime.DerpNodeID) != ""
-}
-
 func punchNodePayloads(items []servicepkg.PunchNodeView) []map[string]any {
 	payloads := make([]map[string]any, 0, len(items))
 	for _, item := range items {
@@ -376,7 +309,6 @@ func punchNodeViewPayload(item servicepkg.PunchNodeView) map[string]any {
 	return map[string]any{
 		"nodeId":        item.NodeID,
 		"name":          item.Name,
-		"region":        item.Region,
 		"address":       item.Address,
 		"publicUdpIp":   item.PublicUDPIP,
 		"publicUdpPort": item.PublicUDPPort,
@@ -394,6 +326,8 @@ func networkPeerPayloads(items []servicepkg.NetworkConfigPeerView) []map[string]
 			"globalIp":     item.GlobalIP,
 			"globalName":   item.GlobalName,
 			"status":       item.Status,
+			"countryCode":  item.CountryCode,
+			"cityCode":     item.CityCode,
 			"relayAllowed": true,
 			"virtualIps":   compactStrings(item.GlobalIP),
 			"endpoints":    endpoints,

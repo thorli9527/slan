@@ -60,7 +60,6 @@ type gormRelayNodeRecord struct {
 type gormPunchNodeRecord struct {
 	NodeID         string `gorm:"primaryKey;size:64"`
 	Name           string `gorm:"size:255"`
-	Region         string `gorm:"size:64;index"`
 	Endpoint       string `gorm:"size:255"`
 	MaxSessions    int    `gorm:"not null"`
 	ActiveSessions int    `gorm:"not null"`

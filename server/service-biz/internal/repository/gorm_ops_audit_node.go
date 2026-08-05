@@ -63,7 +63,7 @@ func (s *GormStore) GetPunchNode(_ context.Context, nodeID string) (model.PunchN
 
 func (s *GormStore) SavePunchNode(_ context.Context, item model.PunchNode) error {
 	row := punchNodeRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"node_id"}, []string{"name", "region", "endpoint", "max_sessions", "active_sessions", "status", "health", "priority", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"node_id"}, []string{"name", "endpoint", "max_sessions", "active_sessions", "status", "health", "priority", "created_at", "updated_at"})
 }
 
 func (s *GormStore) DeletePunchNode(_ context.Context, nodeID string) error {

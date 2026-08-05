@@ -893,6 +893,8 @@ mod tests {
                 transport: "udp".to_string(),
                 path_kind: "direct_udp".to_string(),
                 address: punch.local_addr().unwrap().to_string(),
+                country_code: String::new(),
+                city_code: String::new(),
                 priority: 100,
             },
             NodeConfig {
@@ -901,6 +903,8 @@ mod tests {
                 transport: "udp".to_string(),
                 path_kind: "relay_udp".to_string(),
                 address: punch.local_addr().unwrap().to_string(),
+                country_code: String::new(),
+                city_code: String::new(),
                 priority: 200,
             },
         ];

@@ -76,6 +76,9 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 			if tt.wantErr == nil && len(tt.repo.savedRelayNodes) != 1 {
 				t.Fatalf("expected relay node to be saved")
 			}
+			if tt.wantErr == nil && tt.repo.savedRelayNodes[0].Region != tt.repo.savedRelayNodes[0].NodeID {
+				t.Fatalf("relay protocol region must be generated from node ID: %+v", tt.repo.savedRelayNodes[0])
+			}
 		})
 	}
 }

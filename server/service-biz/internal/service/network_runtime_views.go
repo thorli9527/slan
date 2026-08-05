@@ -4,12 +4,12 @@ import "github.com/slan/service-biz/internal/model"
 
 func relayCandidateView(item model.RelayNode) RelayCandidateView {
 	return RelayCandidateView{
-		EndpointID:  item.NodeID,
-		Transport:   wireCandidateTransport(item.Transport),
-		Address:     wireCandidateAddress(item.Endpoint),
-		CountryCode: "",
-		RegionID:    item.Region,
-		ClusterID:   item.Region,
+		EndpointID: item.NodeID,
+		Transport:  wireCandidateTransport(item.Transport),
+		Address:    wireCandidateAddress(item.Endpoint),
+		RegionID:   item.Region,
+		ClusterID:  item.Region,
+		Priority:   item.Priority,
 	}
 }
 
@@ -18,7 +18,6 @@ func punchNodeView(item model.PunchNode) PunchNodeView {
 	return PunchNodeView{
 		NodeID:        item.NodeID,
 		Name:          item.Name,
-		Region:        item.Region,
 		Address:       item.Endpoint,
 		PublicUDPIP:   host,
 		PublicUDPPort: port,
@@ -60,8 +59,6 @@ func relayTicketView(item model.RelayTicket) RelayTicketView {
 		SrcNodeID:          item.SrcNodeID,
 		DstNodeID:          item.DstNodeID,
 		DERPClusterID:      item.DERPClusterID,
-		CountryCode:        item.CountryCode,
-		CityCode:           item.CityCode,
 		AllowedDERPNodeIDs: append([]string(nil), item.AllowedDERPNodeIDs...),
 		RelayURL:           item.RelayURL,
 		ExpiresAt:          item.ExpiresAt,

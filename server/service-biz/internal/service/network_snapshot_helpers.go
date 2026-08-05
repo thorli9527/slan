@@ -133,27 +133,24 @@ func networkResolvedSnapshotPayload(resolved NetworkResolvedConfigView) map[stri
 	relayCandidates := make([]map[string]any, 0, len(resolved.RelayCandidates))
 	for _, candidate := range resolved.RelayCandidates {
 		relayCandidates = append(relayCandidates, map[string]any{
-			"endpointId":    candidate.EndpointID,
-			"transport":     candidate.Transport,
-			"address":       candidate.Address,
-			"countryCode":   candidate.CountryCode,
-			"regionId":      candidate.RegionID,
-			"clusterId":     candidate.ClusterID,
-			"reachable":     candidate.Reachable,
-			"observedRttMs": candidate.ObservedRttMs,
-			"pathScore":     candidate.PathScore,
-			"selected":      candidate.Selected,
+			"endpointId": candidate.EndpointID,
+			"transport":  candidate.Transport,
+			"address":    candidate.Address,
+			"regionId":   candidate.RegionID,
+			"clusterId":  candidate.ClusterID,
 		})
 	}
 	peers := make([]map[string]any, 0, len(view.Peers))
 	for _, peer := range view.Peers {
 		peers = append(peers, map[string]any{
-			"deviceId":   peer.DeviceID,
-			"alias":      peer.Alias,
-			"globalIp":   peer.GlobalIP,
-			"globalName": peer.GlobalName,
-			"status":     peer.Status,
-			"endpoints":  peer.Endpoints,
+			"deviceId":    peer.DeviceID,
+			"alias":       peer.Alias,
+			"globalIp":    peer.GlobalIP,
+			"globalName":  peer.GlobalName,
+			"status":      peer.Status,
+			"countryCode": peer.CountryCode,
+			"cityCode":    peer.CityCode,
+			"endpoints":   peer.Endpoints,
 		})
 	}
 	return map[string]any{

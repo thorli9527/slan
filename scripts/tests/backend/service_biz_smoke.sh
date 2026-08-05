@@ -255,8 +255,9 @@ http_call "" -X POST "${APP_BASE_URL}/api/app/devices/${DST_DEVICE_ID}/renew" \
   -d '{"networkEnabled":true,"rxBytesTotal":256,"txBytesTotal":512}' >/dev/null || fail "destination device renew failed"
 http_call "" "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "device network configs failed"
-http_call "" "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/relay-candidates?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "relay candidates failed"
+RELAY_CANDIDATES="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/relay-candidates?deviceId=${DEVICE_ID}" \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}")"
+RELAY_ENDPOINT_ID="$(printf '%s' "${RELAY_CANDIDATES}" | jq -er '.items[0].endpointId')"
 PEER_ID="${NETWORK_ID}:${DEVICE_ID}"
 PEER_AUTHZ_STATUS="$(http_status "${APP_BASE_URL}/internal/wire/peers/${PEER_ID}/authz" \
   -H "X-Slan-Internal-Token: ${WIRE_TOKEN}")"
@@ -292,7 +293,7 @@ fi
 RELAY_TICKET="$(http_json -X POST "${APP_BASE_URL}/api/app/relay/tickets" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"reason\":\"smoke\"}")"
+  -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"relayEndpointId\":\"${RELAY_ENDPOINT_ID}\",\"reason\":\"smoke\"}")"
 RELAY_TICKET_ID="$(printf '%s' "${RELAY_TICKET}" | sed -n 's/.*"ticketId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${RELAY_TICKET_ID}" ]]; then
   fail "relay ticket was not issued: ${RELAY_TICKET}"
@@ -373,7 +374,7 @@ fi
 INGRESS_DENIED_TICKET_STATUS="$(curl --silent --show-error --output /tmp/slan-service-biz-ingress-denied-ticket.json --write-out '%{http_code}' --max-time "${HTTP_TIMEOUT_SECS}" -X POST "${APP_BASE_URL}/api/app/relay/tickets" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"reason\":\"smoke-ingress-denied\"}")"
+  -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"relayEndpointId\":\"${RELAY_ENDPOINT_ID}\",\"reason\":\"smoke-ingress-denied\"}")"
 if [[ "${INGRESS_DENIED_TICKET_STATUS}" == "200" || "${INGRESS_DENIED_TICKET_STATUS}" == "201" ]]; then
   fail "ingress ACL deny still allowed relay ticket: $(cat /tmp/slan-service-biz-ingress-denied-ticket.json)"
 fi
@@ -395,7 +396,7 @@ fi
 DENIED_TICKET_STATUS="$(curl --silent --show-error --output /tmp/slan-service-biz-denied-ticket.json --write-out '%{http_code}' --max-time "${HTTP_TIMEOUT_SECS}" -X POST "${APP_BASE_URL}/api/app/relay/tickets" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"reason\":\"smoke-denied\"}")"
+  -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"relayEndpointId\":\"${RELAY_ENDPOINT_ID}\",\"reason\":\"smoke-denied\"}")"
 if [[ "${DENIED_TICKET_STATUS}" == "200" || "${DENIED_TICKET_STATUS}" == "201" ]]; then
   fail "ACL deny still allowed relay ticket: $(cat /tmp/slan-service-biz-denied-ticket.json)"
 fi

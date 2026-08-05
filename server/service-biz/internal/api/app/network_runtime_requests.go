@@ -6,6 +6,7 @@ type createPunchConnectSessionRequest struct {
 	NetworkID       string `json:"networkId"`
 	RequesterNodeID string `json:"requesterNodeId"`
 	PeerNodeID      string `json:"peerNodeId"`
+	PunchNodeID     string `json:"punchNodeId"`
 	TTLSeconds      uint32 `json:"ttlSeconds"`
 }
 
@@ -24,30 +25,25 @@ func (r createPunchConnectSessionRequest) toInput() servicepkg.CreatePunchConnec
 		NetworkID:       r.NetworkID,
 		RequesterNodeID: r.RequesterNodeID,
 		PeerNodeID:      r.PeerNodeID,
+		PunchNodeID:     r.PunchNodeID,
 		TTLSeconds:      r.TTLSeconds,
 	}
 }
 
 type issueRelayTicketRequest struct {
-	NetworkID                 string   `json:"networkId"`
-	SrcNodeID                 string   `json:"srcNodeId"`
-	DstNodeID                 string   `json:"dstNodeId"`
-	DerpClusterID             string   `json:"derpClusterId"`
-	PreferredDerpNodeIDs      []string `json:"preferredDerpNodeIds"`
-	PreferredRelayEndpointIDs []string `json:"preferredRelayEndpointIds"`
-	Reason                    string   `json:"reason"`
-	RelayRegionID             string   `json:"relayRegionId"`
+	NetworkID       string `json:"networkId"`
+	SrcNodeID       string `json:"srcNodeId"`
+	DstNodeID       string `json:"dstNodeId"`
+	RelayEndpointID string `json:"relayEndpointId"`
+	Reason          string `json:"reason"`
 }
 
 func (r issueRelayTicketRequest) toInput() servicepkg.IssueRelayTicketInput {
 	return servicepkg.IssueRelayTicketInput{
-		NetworkID:                 r.NetworkID,
-		SrcNodeID:                 r.SrcNodeID,
-		DstNodeID:                 r.DstNodeID,
-		DerpClusterID:             r.DerpClusterID,
-		PreferredDerpNodeIDs:      r.PreferredDerpNodeIDs,
-		PreferredRelayEndpointIDs: r.PreferredRelayEndpointIDs,
-		Reason:                    r.Reason,
-		RelayRegionID:             r.RelayRegionID,
+		NetworkID:       r.NetworkID,
+		SrcNodeID:       r.SrcNodeID,
+		DstNodeID:       r.DstNodeID,
+		RelayEndpointID: r.RelayEndpointID,
+		Reason:          r.Reason,
 	}
 }

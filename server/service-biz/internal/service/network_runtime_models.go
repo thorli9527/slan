@@ -1,22 +1,17 @@
 package service
 
 type RelayCandidateView struct {
-	EndpointID    string `json:"endpointId"`
-	Transport     string `json:"transport"`
-	Address       string `json:"address"`
-	CountryCode   string `json:"countryCode"`
-	RegionID      string `json:"regionId"`
-	ClusterID     string `json:"clusterId"`
-	Reachable     bool   `json:"reachable,omitempty"`
-	ObservedRttMs int64  `json:"observedRttMs,omitempty"`
-	PathScore     int64  `json:"pathScore,omitempty"`
-	Selected      bool   `json:"selected,omitempty"`
+	EndpointID string `json:"endpointId"`
+	Transport  string `json:"transport"`
+	Address    string `json:"address"`
+	RegionID   string `json:"regionId"`
+	ClusterID  string `json:"clusterId"`
+	Priority   int    `json:"priority"`
 }
 
 type PunchNodeView struct {
 	NodeID        string `json:"nodeId"`
 	Name          string `json:"name"`
-	Region        string `json:"region"`
 	Address       string `json:"address"`
 	PublicUDPIP   string `json:"publicUdpIp"`
 	PublicUDPPort int    `json:"publicUdpPort"`
@@ -49,8 +44,6 @@ type RelayTicketView struct {
 	SrcNodeID          string   `json:"srcNodeId"`
 	DstNodeID          string   `json:"dstNodeId"`
 	DERPClusterID      string   `json:"derpClusterId"`
-	CountryCode        string   `json:"countryCode"`
-	CityCode           string   `json:"cityCode"`
 	AllowedDERPNodeIDs []string `json:"allowedDerpNodeIds"`
 	RelayURL           string   `json:"relayUrl"`
 	ExpiresAt          string   `json:"expiresAt"`

@@ -29,17 +29,6 @@ func (s NetworkRuntimeService) RelayCandidates(ctx context.Context, input RelayC
 	if err != nil {
 		return nil, err
 	}
-	runtimePath, ok, err := runtimePathForDevice(ctx, s.Networks, input.NetworkID, input.DeviceID)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return items, nil
-	}
-	items = orderRelayCandidatesByRuntime(runtimePath, items)
-	for i := range items {
-		applyRuntimeSelection(&items[i], runtimePath)
-	}
 	return items, nil
 }
 
@@ -53,7 +42,7 @@ func (s NetworkRuntimeService) ListPunchNodes(ctx context.Context) ([]PunchNodeV
 
 func (s NetworkRuntimeService) CreatePunchConnectSession(ctx context.Context, input CreatePunchConnectSessionInput) (PunchConnectSessionView, error) {
 	input = normalizeCreatePunchConnectSessionInput(input)
-	if input.NetworkID == "" || input.RequesterNodeID == "" || input.PeerNodeID == "" {
+	if input.NetworkID == "" || input.RequesterNodeID == "" || input.PeerNodeID == "" || input.PunchNodeID == "" {
 		return PunchConnectSessionView{}, ErrInvalidArgument
 	}
 	network, err := requireManagedNetwork(ctx, s.Networks, input.NetworkID)
@@ -74,19 +63,17 @@ func (s NetworkRuntimeService) CreatePunchConnectSession(ctx context.Context, in
 	if err != nil {
 		return PunchConnectSessionView{}, err
 	}
-	endpointAddress := "0.0.0.0:0"
-	punchNodeID := ""
-	if len(punchNodes) > 0 {
-		endpointAddress = punchNodes[0].Endpoint
-		punchNodeID = punchNodes[0].NodeID
+	punchNode, found := punchNodeByID(punchNodes, input.PunchNodeID)
+	if !found {
+		return PunchConnectSessionView{}, ErrNotFound
 	}
-	item := newPunchConnectSession(newNetworkSessionID(s.NewSessID, "punch"), input, punchNodeID, endpointAddress)
+	item := newPunchConnectSession(newNetworkSessionID(s.NewSessID, "punch"), input, punchNode.NodeID, punchNode.Endpoint)
 	return punchConnectSessionView(item), nil
 }
 
 func (s NetworkRuntimeService) IssueRelayTicket(ctx context.Context, input IssueRelayTicketInput) (RelayTicketView, error) {
 	input = normalizeIssueRelayTicketInput(input)
-	if input.NetworkID == "" || input.SrcNodeID == "" || input.DstNodeID == "" {
+	if input.NetworkID == "" || input.SrcNodeID == "" || input.DstNodeID == "" || input.RelayEndpointID == "" {
 		return RelayTicketView{}, ErrInvalidArgument
 	}
 	network, err := requireManagedNetwork(ctx, s.Networks, input.NetworkID)
@@ -101,24 +88,15 @@ func (s NetworkRuntimeService) IssueRelayTicket(ctx context.Context, input Issue
 		return RelayTicketView{}, err
 	}
 	candidates := relayCandidatesFromNodes(relayNodes)
-	runtimePath, ok, err := runtimePathForNode(ctx, s.Networks, input.NetworkID, input.SrcNodeID)
-	if err != nil {
-		return RelayTicketView{}, err
+	candidate, found := relayCandidateByEndpointID(candidates, input.RelayEndpointID)
+	if !found {
+		return RelayTicketView{}, ErrNotFound
 	}
-	candidates, input.PreferredRelayEndpointIDs = prepareRelayTicketCandidates(candidates, input.PreferredRelayEndpointIDs, runtimePath, ok)
 	sessionKey, err := randomHex(16)
 	if err != nil {
 		return RelayTicketView{}, err
 	}
 	now := networkNow(s.Now).UTC()
-	sessionSeed := stableRelaySessionSeed(input.NetworkID, input.SrcNodeID, input.DstNodeID)
-	candidate, found := chooseWireRelayCandidate(candidates, input.PreferredRelayEndpointIDs, sessionSeed)
-	if !found {
-		return RelayTicketView{}, ErrNotFound
-	}
-	if ok {
-		applyRuntimeSelection(&candidate, runtimePath)
-	}
 	sessionID := stableRelaySessionID(input.NetworkID, input.SrcNodeID, input.DstNodeID, candidate)
 	expiresAt := now.Add(10 * time.Minute).Format(time.RFC3339)
 	ticketID := newNetworkSessionID(s.NewSessID, "relay-ticket")

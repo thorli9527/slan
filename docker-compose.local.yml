@@ -57,6 +57,7 @@ services:
       SLAN_OPS_DEFAULT_ADMIN_PASSWORD: "${SLAN_OPS_DEFAULT_ADMIN_PASSWORD:-admin1}"
       SLAN_AUDIT_RETENTION_DAYS: "${SLAN_AUDIT_RETENTION_DAYS:-0}"
       SLAN_TRUSTED_PROXY_CIDRS: "${SLAN_TRUSTED_PROXY_CIDRS:-}"
+      SLAN_GEOIP_CITY_DB: "/opt/slan/geoip/GeoLite2-City.mmdb"
       SLAN_DEVICE_ACCESS_TOKEN_TTL: "${SLAN_DEVICE_ACCESS_TOKEN_TTL:-2h}"
       SLAN_DEVICE_REFRESH_SHORT_TTL: "${SLAN_DEVICE_REFRESH_SHORT_TTL:-720h}"
       SLAN_DEVICE_REFRESH_LONG_TTL: "${SLAN_DEVICE_REFRESH_LONG_TTL:-4320h}"
@@ -86,6 +87,7 @@ services:
       - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
     volumes:
       - slan-client-logs:/var/lib/slan/client-logs
+      - ./deploy/geoip:/opt/slan/geoip:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,6 +104,7 @@ services:
       SLAN_OPS_DEFAULT_ADMIN_PASSWORD: "${SLAN_OPS_DEFAULT_ADMIN_PASSWORD:-admin1}"
       SLAN_AUDIT_RETENTION_DAYS: "${SLAN_AUDIT_RETENTION_DAYS:-0}"
       SLAN_TRUSTED_PROXY_CIDRS: "${SLAN_TRUSTED_PROXY_CIDRS:-}"
+      SLAN_GEOIP_CITY_DB: "/opt/slan/geoip/GeoLite2-City.mmdb"
       SLAN_DEVICE_ACCESS_TOKEN_TTL: "${SLAN_DEVICE_ACCESS_TOKEN_TTL:-2h}"
       SLAN_DEVICE_REFRESH_SHORT_TTL: "${SLAN_DEVICE_REFRESH_SHORT_TTL:-720h}"
       SLAN_DEVICE_REFRESH_LONG_TTL: "${SLAN_DEVICE_REFRESH_LONG_TTL:-4320h}"
@@ -128,6 +131,8 @@ services:
       SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
     ports:
       - "${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}:8080"
+    volumes:
+      - ./deploy/geoip:/opt/slan/geoip:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,6 +238,40 @@ services:
     ports:
       - "${SLAN_WIRE_PUNCH_PORT:-29130}:29130/udp"
       - "${SLAN_WIRE_PUNCH_HTTP_PORT:-29131}:29131"
+    depends_on:
+      server-biz:
+        condition: service_started
+
+  server-wire-punch-b:
+    build:
+      context: ./server/server-wire-punch
+      dockerfile: Dockerfile
+    environment:
+      SLAN_WIRE_PUNCH_LISTEN_ADDR: ":29130"
+      SLAN_WIRE_PUNCH_HTTP_LISTEN_ADDR: ":29131"
+      SLAN_WIRE_PUNCH_PUBLIC_HOST: "${SLAN_WIRE_PUNCH_B_PUBLIC_HOST:-47.245.40.231}"
+      SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT: "${SLAN_WIRE_PUNCH_B_PORT:-29132}"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+    ports:
+      - "${SLAN_WIRE_PUNCH_B_PORT:-29132}:29130/udp"
+      - "${SLAN_WIRE_PUNCH_B_HTTP_PORT:-29133}:29131"
+    depends_on:
+      server-biz:
+        condition: service_started
+
+  server-wire-punch-c:
+    build:
+      context: ./server/server-wire-punch
+      dockerfile: Dockerfile
+    environment:
+      SLAN_WIRE_PUNCH_LISTEN_ADDR: ":29130"
+      SLAN_WIRE_PUNCH_HTTP_LISTEN_ADDR: ":29131"
+      SLAN_WIRE_PUNCH_PUBLIC_HOST: "${SLAN_WIRE_PUNCH_C_PUBLIC_HOST:-47.245.40.231}"
+      SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT: "${SLAN_WIRE_PUNCH_C_PORT:-29134}"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+    ports:
+      - "${SLAN_WIRE_PUNCH_C_PORT:-29134}:29130/udp"
+      - "${SLAN_WIRE_PUNCH_C_HTTP_PORT:-29135}:29131"
     depends_on:
       server-biz:
         condition: service_started

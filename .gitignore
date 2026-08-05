@@ -16,6 +16,7 @@ artifacts/
 .env.local
 .env.prod
 .env.*.local
+deploy/geoip/*.mmdb
 
 # Rust / Cargo build outputs
 **/target/

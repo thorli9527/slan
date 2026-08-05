@@ -51,7 +51,9 @@ use crate::{
     },
     network_runtime_state::runtime_network_state_store,
     platform_runtime_report::{platform_traffic_stats_payload, report_platform_runtime},
-    relay_candidates::{runtime_relay_candidates, select_relay_candidates},
+    relay_candidates::{
+        relay_candidates_for_peer, runtime_relay_candidates, select_relay_candidates,
+    },
     relay_models::{PersistedRelayCandidate, RelayCandidateListResponse},
     relay_store::relay_only_path_policy_enabled,
     resolver_authority::{resolve_authoritative, resolve_authoritative_result_json},
@@ -262,12 +264,12 @@ fn embedded_persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRe
         transport: candidate.transport.clone(),
         address: candidate.address.clone(),
         country_code: candidate.country_code.clone(),
+        city_code: candidate.city_code.clone(),
         region_id: candidate.region_id.clone(),
         cluster_id: candidate.cluster_id.clone(),
-        reachable_hint: candidate.reachable,
-        observed_rtt_ms_hint: candidate.observed_rtt_ms,
-        path_score_hint: candidate.path_score,
-        selected_hint: candidate.selected,
+        reachable_hint: false,
+        observed_rtt_ms_hint: None,
+        path_score_hint: Some(candidate.priority.into()),
     }
 }
 
@@ -281,12 +283,10 @@ fn embedded_relay_candidate_from_selection(
         transport: selection.transport.clone(),
         address: relay_address_for_transport(transport, selection.address.as_str()),
         country_code: selection.country_code.clone(),
+        city_code: selection.city_code.clone(),
         region_id: selection.region_id.clone(),
         cluster_id: selection.cluster_id.clone(),
-        reachable: selection.reachable,
-        observed_rtt_ms: selection.rtt_ms,
-        path_score: Some(selection.path_score),
-        selected: selection.selected,
+        priority: u16::try_from(selection.path_score).unwrap_or(u16::MAX),
     }
 }
 
@@ -715,6 +715,7 @@ fn platform_network_config() -> Result<Value> {
         activation.self_node_id.as_deref(),
         &activation.peers,
         best_relay.as_ref(),
+        &relay_candidates,
         &all_acl_policies,
     ) {
         Ok(config) => (Some(config), None),
@@ -908,6 +909,7 @@ fn build_embedded_relay_data_plane_config(
     self_node_id: Option<&str>,
     peers: &[crate::control_plane::ControlPeer],
     relay: Option<&crate::control_plane::RelayCandidate>,
+    relay_candidates: &[crate::relay_models::RelayCandidateSelection],
     acl_policies: &[PlatformAclPolicy],
 ) -> Result<RelayDataPlaneConfig> {
     let relay = relay.ok_or_else(|| anyhow::anyhow!("no relay candidate is available"))?;
@@ -928,25 +930,22 @@ fn build_embedded_relay_data_plane_config(
         .collect::<Vec<_>>();
     let mut sessions = Vec::with_capacity(eligible_peers.len());
     let mut ticket_errors = Vec::new();
-    let relay_transport =
-        client_core::normalize_relay_transport(relay.transport.as_str()).unwrap_or("udp");
-    let preferred_derp_node_id =
-        (relay_transport == "derp_tcp_tls_443").then_some(relay.endpoint_id.as_str());
-    let preferred_relay_endpoint_id =
-        (relay_transport != "derp_tcp_tls_443").then_some(relay.endpoint_id.as_str());
     for peer in eligible_peers {
+        let peer_relay =
+            relay_candidates_for_peer(relay_candidates, &peer.country_code, &peer.city_code)
+                .into_iter()
+                .find(|candidate| candidate.reachable)
+                .map(|candidate| embedded_relay_candidate_from_selection(&candidate))
+                .unwrap_or_else(|| relay.clone());
         match client.issue_relay_ticket(
             access_token,
             network_id,
             local_node_id,
             peer.node_id.as_str(),
-            relay.cluster_id.as_deref(),
-            preferred_derp_node_id,
-            preferred_relay_endpoint_id,
-            relay.region_id.as_deref(),
+            peer_relay.endpoint_id.as_str(),
         ) {
             Ok(mut ticket) => {
-                normalize_embedded_relay_ticket_for_candidate(&mut ticket, relay);
+                normalize_embedded_relay_ticket_for_candidate(&mut ticket, &peer_relay);
                 sessions.push(RelayPeerSession {
                     session_id: ticket.session_id.clone(),
                     peer_node_id: peer.node_id.clone(),
@@ -2845,6 +2844,8 @@ mod tests {
     fn embedded_peer_paths_prefer_lan_then_public_udp() {
         let peer = crate::control_plane::ControlPeer {
             node_id: "node-peer".to_string(),
+            country_code: String::new(),
+            city_code: String::new(),
             relay_allowed: true,
             virtual_ips: vec!["10.0.0.2".to_string()],
             endpoints: vec![
@@ -2865,12 +2866,10 @@ mod tests {
             transport: "udp".to_string(),
             address: "relay.example:3478".to_string(),
             country_code: None,
+            city_code: None,
             region_id: None,
             cluster_id: None,
-            reachable: true,
-            observed_rtt_ms: None,
-            path_score: None,
-            selected: true,
+            priority: 100,
         };
 
         let paths = super::embedded_peer_path_configs(

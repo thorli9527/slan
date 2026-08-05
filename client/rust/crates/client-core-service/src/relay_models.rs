@@ -10,6 +10,8 @@ pub(crate) struct PersistedRelayCandidate {
     #[serde(default)]
     pub(crate) country_code: Option<String>,
     #[serde(default)]
+    pub(crate) city_code: Option<String>,
+    #[serde(default)]
     pub(crate) region_id: Option<String>,
     #[serde(default)]
     pub(crate) cluster_id: Option<String>,
@@ -19,8 +21,6 @@ pub(crate) struct PersistedRelayCandidate {
     pub(crate) observed_rtt_ms_hint: Option<u32>,
     #[serde(default)]
     pub(crate) path_score_hint: Option<u32>,
-    #[serde(default)]
-    pub(crate) selected_hint: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,9 +32,12 @@ pub(crate) struct RelayCandidateSelection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) country_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) city_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) region_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cluster_id: Option<String>,
+    pub(crate) configured_priority: u32,
     pub(crate) reachable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) rtt_ms: Option<u32>,

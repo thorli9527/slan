@@ -7,7 +7,6 @@ import servicepkg "github.com/slan/service-biz/internal/service"
 type upsertNodeRequest struct {
 	NodeID           string `json:"nodeId"`
 	Name             string `json:"name"`
-	Region           string `json:"region"`
 	Endpoint         string `json:"endpoint"`
 	Transport        string `json:"transport"`
 	PublicAddr       string `json:"publicAddr"`
@@ -35,7 +34,6 @@ func (r upsertNodeRequest) toInput() servicepkg.UpsertNodeInput {
 	return servicepkg.UpsertNodeInput{
 		NodeID:           r.NodeID,
 		Name:             r.Name,
-		Region:           r.Region,
 		Endpoint:         endpoint,
 		Transport:        r.Transport,
 		MaxBandwidthMbps: r.MaxBandwidthMbps,

@@ -592,12 +592,12 @@ fn relay_selection_prefers_reachable_low_score_candidate() {
         transport: "udp".to_string(),
         address,
         country_code: Some("CN".to_string()),
+        city_code: None,
         region_id: None,
         cluster_id: None,
         reachable_hint: false,
         observed_rtt_ms_hint: None,
         path_score_hint: None,
-        selected_hint: false,
     }]);
     assert_eq!(selections[0].endpoint_id, "relay-udp");
     assert!(selections[0].selected);
@@ -610,12 +610,12 @@ fn android_data_plane_does_not_select_non_udp_relay() {
         transport: "tcp".to_string(),
         address: "127.0.0.1:9001".to_string(),
         country_code: Some("CN".to_string()),
+        city_code: None,
         region_id: None,
         cluster_id: None,
         reachable_hint: false,
         observed_rtt_ms_hint: None,
         path_score_hint: None,
-        selected_hint: false,
     }]);
 
     assert!(selected.is_none());
@@ -630,12 +630,12 @@ fn android_data_plane_selects_derp_when_udp_is_unavailable() {
         transport: "derp_tcp_tls_443".to_string(),
         address: format!("derp://{address}"),
         country_code: Some("CN".to_string()),
+        city_code: None,
         region_id: Some("dev".to_string()),
         cluster_id: Some("dev".to_string()),
         reachable_hint: false,
         observed_rtt_ms_hint: None,
         path_score_hint: None,
-        selected_hint: false,
     }]);
 
     assert_eq!(
@@ -651,12 +651,12 @@ fn macos_data_plane_uses_derp_candidate_when_probe_fails() {
         transport: "derp_tcp_tls_443".to_string(),
         address: "derp://203.0.113.10:29120".to_string(),
         country_code: Some("CN".to_string()),
+        city_code: None,
         region_id: Some("dev".to_string()),
         cluster_id: Some("dev".to_string()),
         reachable_hint: false,
         observed_rtt_ms_hint: None,
         path_score_hint: None,
-        selected_hint: false,
     }]);
 
     let selected = selected.expect("DERP candidate should be retained after probe failure");
@@ -667,31 +667,31 @@ fn macos_data_plane_uses_derp_candidate_when_probe_fails() {
 }
 
 #[test]
-fn relay_selection_preserves_server_selected_hint_when_candidates_are_not_probeable() {
+fn relay_selection_uses_local_quality_when_candidates_are_not_probeable() {
     let selections = select_relay_candidates(&[
         PersistedRelayCandidate {
             endpoint_id: "relay-selected".to_string(),
             transport: "udp".to_string(),
             address: "203.0.113.10:29110".to_string(),
             country_code: Some("CN".to_string()),
+            city_code: None,
             region_id: Some("sha".to_string()),
             cluster_id: Some("cn-a".to_string()),
             reachable_hint: true,
             observed_rtt_ms_hint: Some(18),
             path_score_hint: Some(48),
-            selected_hint: true,
         },
         PersistedRelayCandidate {
             endpoint_id: "relay-other".to_string(),
             transport: "udp".to_string(),
             address: "203.0.113.11:29110".to_string(),
             country_code: Some("CN".to_string()),
+            city_code: None,
             region_id: Some("pek".to_string()),
             cluster_id: Some("cn-b".to_string()),
             reachable_hint: true,
             observed_rtt_ms_hint: Some(20),
             path_score_hint: Some(50),
-            selected_hint: false,
         },
     ]);
 
@@ -1787,6 +1787,8 @@ fn diagnostic_connect_plan_summary_redacts_ticket_secret_fields() {
 fn test_peer(node_id: &str, virtual_ips: &[&str]) -> ControlPeer {
     ControlPeer {
         node_id: node_id.to_string(),
+        country_code: String::new(),
+        city_code: String::new(),
         virtual_ips: virtual_ips.iter().map(|value| value.to_string()).collect(),
         relay_allowed: true,
         endpoints: Vec::new(),
@@ -1852,8 +1854,10 @@ fn test_relay_selection(
         transport: transport.to_string(),
         address: address.to_string(),
         country_code: None,
+        city_code: None,
         region_id: None,
         cluster_id: None,
+        configured_priority: 0,
         reachable: true,
         rtt_ms: None,
         path_score: 0,

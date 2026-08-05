@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +14,22 @@ type NetworkRuntimeHandler struct {
 	NetworkRuntime    servicepkg.NetworkRuntimeUseCase
 	DeviceSessions    servicepkg.DeviceSessionUseCase
 	NetworkConfigView servicepkg.NetworkCoreUseCase
+}
+
+type deviceLocationObserver interface {
+	ObserveDeviceLocation(context.Context, string, string) error
+}
+
+type deviceLocationProvider interface {
+	CurrentDeviceLocation(context.Context, string) (servicepkg.DeviceLocation, bool, error)
+}
+
+func (h NetworkRuntimeHandler) observeDeviceLocation(r *http.Request, deviceID string) {
+	observer, ok := h.NetworkRuntime.(deviceLocationObserver)
+	if !ok {
+		return
+	}
+	_ = observer.ObserveDeviceLocation(r.Context(), deviceID, serviceapi.RemoteIP(r))
 }
 
 func (h NetworkRuntimeHandler) Routes() []serviceapi.Route {
@@ -30,16 +47,24 @@ func (h NetworkRuntimeHandler) RuntimeEndpoints(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	h.observeDeviceLocation(r, deviceID)
 	items, err := h.NetworkRuntime.ListPunchNodes(r.Context())
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
 	}
 	networkConfigs := buildDeviceNetworkConfigPayloads(r.Context(), h.NetworkConfigView, deviceID)
-	serviceapi.WriteJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"nodeConfigs": runtimeNodeConfigs(items, networkConfigs),
 		"refreshedAt": time.Now().UTC().Unix(),
-	})
+	}
+	if provider, ok := h.NetworkRuntime.(deviceLocationProvider); ok {
+		if location, found, locationErr := provider.CurrentDeviceLocation(r.Context(), deviceID); locationErr == nil && found {
+			payload["countryCode"] = location.CountryCode
+			payload["cityCode"] = location.CityCode
+		}
+	}
+	serviceapi.WriteJSON(w, http.StatusOK, payload)
 }
 
 func (h NetworkRuntimeHandler) RelayCandidates(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +87,7 @@ func (h NetworkRuntimeHandler) RelayCandidates(w http.ResponseWriter, r *http.Re
 		return
 	}
 	input.DeviceID = deviceID
+	h.observeDeviceLocation(r, deviceID)
 	items, err := h.NetworkRuntime.RelayCandidates(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
@@ -81,6 +107,7 @@ func (h NetworkRuntimeHandler) CreatePunchConnectSession(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
+	h.observeDeviceLocation(r, deviceID)
 	if strings.TrimSpace(input.RequesterNodeID) != "node-"+deviceID {
 		serviceapi.WriteError(w, servicepkg.ErrUnauthorized)
 		return
@@ -103,6 +130,7 @@ func (h NetworkRuntimeHandler) IssueRelayTicket(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	h.observeDeviceLocation(r, deviceID)
 	if strings.TrimSpace(input.SrcNodeID) != "node-"+deviceID {
 		serviceapi.WriteError(w, servicepkg.ErrUnauthorized)
 		return

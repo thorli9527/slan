@@ -10,7 +10,10 @@ type gormDeviceRecord struct {
 	OSVersion     string `gorm:"size:255"`
 	PublicKey     string `gorm:"size:1024"`
 	DeviceVersion string `gorm:"size:255"`
+	PublicIP      string `gorm:"size:128;index"`
 	CountryCode   string `gorm:"size:32;index"`
+	CityCode      string `gorm:"size:32;index"`
+	GeoUpdatedAt  int64  `gorm:"not null;default:0"`
 	RXBytesTotal  int64  `gorm:"not null"`
 	TXBytesTotal  int64  `gorm:"not null"`
 	Status        string `gorm:"size:64;index"`

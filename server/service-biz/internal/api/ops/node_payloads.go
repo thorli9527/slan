@@ -6,7 +6,6 @@ func relayNodePayload(view servicepkg.OpsRelayNodeView) map[string]any {
 	return map[string]any{
 		"nodeId":            view.NodeID,
 		"name":              view.Name,
-		"region":            view.Region,
 		"transport":         view.Transport,
 		"publicAddr":        view.PublicAddr,
 		"priority":          view.Priority,
@@ -28,7 +27,6 @@ func punchNodePayload(view servicepkg.OpsPunchNodeView) map[string]any {
 	return map[string]any{
 		"nodeId":         view.NodeID,
 		"name":           view.Name,
-		"region":         view.Region,
 		"publicUdpIp":    view.PublicUDPIP,
 		"publicUdpPort":  view.PublicUDPPort,
 		"maxSessions":    view.MaxSessions,

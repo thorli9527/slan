@@ -51,7 +51,6 @@ func opsRelayNodeViewFromModel(item model.RelayNode) OpsRelayNodeView {
 	return OpsRelayNodeView{
 		NodeID:            item.NodeID,
 		Name:              item.Name,
-		Region:            item.Region,
 		Endpoint:          item.Endpoint,
 		Status:            item.Status,
 		CreatedAt:         item.CreatedAt,
@@ -74,7 +73,6 @@ func opsPunchNodeViewFromModel(item model.PunchNode) OpsPunchNodeView {
 	return OpsPunchNodeView{
 		NodeID:         item.NodeID,
 		Name:           item.Name,
-		Region:         item.Region,
 		Endpoint:       item.Endpoint,
 		Status:         item.Status,
 		CreatedAt:      item.CreatedAt,

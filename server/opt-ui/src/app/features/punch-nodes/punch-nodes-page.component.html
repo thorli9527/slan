@@ -19,7 +19,6 @@
       <thead>
         <tr>
           <th>节点</th>
-          <th>区域</th>
           <th>公网 UDP</th>
           <th>HTTP 管理</th>
           <th>会话</th>
@@ -33,7 +32,6 @@
       <tbody>
         <tr *ngFor="let node of pagedPunchNodes">
           <td><strong>{{ node.name }}</strong><br><code>{{ node.nodeId }}</code></td>
-          <td>{{ node.region }}</td>
           <td><code>{{ node.publicUdpIp }}:{{ node.publicUdpPort }}</code></td>
           <td><code>{{ node.publicUdpIp }}:{{ node.publicUdpPort + 1 }}</code></td>
           <td>
@@ -59,7 +57,7 @@
           </td>
         </tr>
         <tr *ngIf="vm.punchNodes.length === 0">
-          <td colspan="10" class="empty-cell">暂无打洞节点。</td>
+          <td colspan="9" class="empty-cell">暂无打洞节点。</td>
         </tr>
       </tbody>
     </table>

@@ -11,10 +11,6 @@ func (s NetworkCoreService) ResolvedNetworkConfig(ctx context.Context, networkID
 	if err != nil {
 		return NetworkResolvedConfigView{}, err
 	}
-	relayCandidates = orderRelayCandidatesByRuntime(config.RuntimePath, relayCandidates)
-	for i := range relayCandidates {
-		applyRuntimeSelection(&relayCandidates[i], config.RuntimePath)
-	}
 	return NetworkResolvedConfigView{
 		Config:          config,
 		RelayCandidates: relayCandidates,

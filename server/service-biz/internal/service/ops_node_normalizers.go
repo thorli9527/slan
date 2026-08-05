@@ -5,7 +5,7 @@ import "strings"
 func normalizeUpsertNodeInput(input UpsertNodeInput) UpsertNodeInput {
 	input.NodeID = strings.TrimSpace(input.NodeID)
 	input.Name = strings.TrimSpace(input.Name)
-	input.Region = strings.TrimSpace(input.Region)
+	input.DERPRegionID = strings.TrimSpace(input.DERPRegionID)
 	input.Endpoint = normalizeNodeEndpoint(input.Endpoint)
 	input.Transport = strings.TrimSpace(input.Transport)
 	input.Status = strings.TrimSpace(input.Status)

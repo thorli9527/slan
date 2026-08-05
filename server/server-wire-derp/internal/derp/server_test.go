@@ -225,6 +225,36 @@ func TestOldPeerConnectionCloseDoesNotDisconnectNewerConnection(t *testing.T) {
 	}
 }
 
+func TestForwardReachesNewPeerConnectionAfterOldConnectionCloses(t *testing.T) {
+	store := state.NewStore()
+	server := &Server{
+		store:   store,
+		writers: make(map[string]*peerWriter),
+	}
+	aEncoder, _, closeA := connectDerpTestPeer(t, server, "peer-a", "peer-b")
+	defer closeA()
+	_, _, closeOldB := connectDerpTestPeer(t, server, "peer-b", "peer-a")
+	_, newBReader, closeNewB := connectDerpTestPeer(t, server, "peer-b", "peer-a")
+	defer closeNewB()
+
+	closeOldB()
+	time.Sleep(20 * time.Millisecond)
+
+	payload := []byte("forward after reconnect")
+	if err := aEncoder.Encode(protocol.ClientMessage{
+		Kind:         "send",
+		SessionID:    "relay-session-1",
+		TargetPeerID: "peer-b",
+		Payload:      payload,
+	}); err != nil {
+		t.Fatalf("encode send after reconnect: %v", err)
+	}
+	recv := readDerpTestMessage(t, newBReader)
+	if recv.Kind != "recv" || recv.SourcePeerID != "peer-a" || !bytes.Equal(recv.Payload, payload) {
+		t.Fatalf("unexpected message on new connection: %#v", recv)
+	}
+}
+
 func TestSupersededPeerConnectionCannotSend(t *testing.T) {
 	store := state.NewStore()
 	server := &Server{

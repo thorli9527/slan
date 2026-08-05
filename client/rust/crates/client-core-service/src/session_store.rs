@@ -610,6 +610,10 @@ fn node_configs_from_device_session_response(response: &DeviceSessionResponse) -
 fn node_configs_from_runtime_endpoints(
     runtime: &crate::control_plane::RuntimeEndpointsResponse,
 ) -> Vec<NodeConfig> {
+    crate::relay_candidates::update_runtime_device_location(
+        &runtime.country_code,
+        &runtime.city_code,
+    );
     let mut nodes: Vec<_> = runtime
         .node_configs
         .iter()
@@ -620,6 +624,8 @@ fn node_configs_from_runtime_endpoints(
                 transport: node.transport.trim().to_string(),
                 path_kind: node.path_kind.trim().to_string(),
                 address: node.address.trim().to_string(),
+                country_code: node.country_code.trim().to_uppercase(),
+                city_code: node.city_code.trim().to_string(),
                 priority: node.priority,
             };
             config.is_valid().then_some(config)
@@ -733,13 +739,13 @@ fn relay_candidates_from_device_session_response(
                     value => value.to_string(),
                 },
                 address: node.address.clone(),
-                country_code: None,
+                country_code: (!node.country_code.trim().is_empty())
+                    .then(|| node.country_code.trim().to_uppercase()),
+                city_code: (!node.city_code.trim().is_empty())
+                    .then(|| node.city_code.trim().to_string()),
                 region_id: None,
                 cluster_id: None,
-                reachable: false,
-                observed_rtt_ms: None,
-                path_score: Some(node.priority.into()),
-                selected: false,
+                priority: node.priority,
             })
         }));
     }
@@ -766,12 +772,12 @@ fn dedupe_relay_candidates(candidates: Vec<RelayCandidate>) -> Vec<PersistedRela
                 transport,
                 address,
                 country_code: candidate.country_code,
+                city_code: candidate.city_code,
                 region_id: candidate.region_id,
                 cluster_id: candidate.cluster_id,
-                reachable_hint: candidate.reachable,
-                observed_rtt_ms_hint: candidate.observed_rtt_ms,
-                path_score_hint: candidate.path_score,
-                selected_hint: candidate.selected,
+                reachable_hint: false,
+                observed_rtt_ms_hint: None,
+                path_score_hint: Some(candidate.priority.into()),
             })
         })
         .collect()
@@ -1366,6 +1372,8 @@ mod tests {
             transport: "udp".to_string(),
             path_kind: "direct_udp".to_string(),
             address: "192.0.2.1:29130".to_string(),
+            country_code: "US".to_string(),
+            city_code: "".to_string(),
             priority: 100,
         });
         let response: DeviceSessionResponse = serde_json::from_value(serde_json::json!({

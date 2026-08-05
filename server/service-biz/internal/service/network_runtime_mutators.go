@@ -43,7 +43,7 @@ func newRelayTicket(
 		SessionID:          sessionID,
 		SrcNodeID:          input.SrcNodeID,
 		DstNodeID:          input.DstNodeID,
-		DERPClusterID:      input.DerpClusterID,
+		DERPClusterID:      candidate.ClusterID,
 		AllowedDERPNodeIDs: []string{candidate.EndpointID},
 		RelayURL:           wireRelayURL(candidate.Transport, candidate.Address),
 		ExpiresAt:          expiresAt,

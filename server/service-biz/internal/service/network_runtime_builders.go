@@ -44,7 +44,7 @@ func buildActiveRelayNodes(items []model.RelayNode, nowUnix int64) []model.Relay
 		nodes = append(nodes, model.RelayNode{
 			NodeID:    item.NodeID,
 			Name:      item.Name,
-			Region:    item.Region,
+			Region:    firstNonEmpty(item.Region, item.NodeID),
 			Endpoint:  item.Endpoint,
 			Transport: transport,
 			Priority:  item.Priority,
@@ -122,7 +122,6 @@ func buildActivePunchNodes(items []model.PunchNode) []model.PunchNode {
 		nodes = append(nodes, model.PunchNode{
 			NodeID:    item.NodeID,
 			Name:      item.Name,
-			Region:    item.Region,
 			Endpoint:  item.Endpoint,
 			Status:    item.Status,
 			Health:    item.Health,
@@ -144,7 +143,6 @@ func defaultPunchNodes(nowFn func() time.Time) []model.PunchNode {
 	return []model.PunchNode{{
 		NodeID:    "punch-default",
 		Name:      "Default Punch",
-		Region:    "global",
 		Endpoint:  endpoint,
 		Status:    "active",
 		Health:    "healthy",
@@ -161,9 +159,6 @@ func sortPunchNodes(nodes []model.PunchNode) {
 		if left != right {
 			return left < right
 		}
-		if nodes[i].Region != nodes[j].Region {
-			return nodes[i].Region < nodes[j].Region
-		}
 		return nodes[i].NodeID < nodes[j].NodeID
 	})
 }
@@ -174,4 +169,22 @@ func punchNodeViews(items []model.PunchNode) []PunchNodeView {
 		views = append(views, punchNodeView(item))
 	}
 	return views
+}
+
+func punchNodeByID(items []model.PunchNode, nodeID string) (model.PunchNode, bool) {
+	for _, item := range items {
+		if item.NodeID == nodeID {
+			return item, true
+		}
+	}
+	return model.PunchNode{}, false
+}
+
+func relayCandidateByEndpointID(items []RelayCandidateView, endpointID string) (RelayCandidateView, bool) {
+	for _, item := range items {
+		if item.EndpointID == endpointID {
+			return item, true
+		}
+	}
+	return RelayCandidateView{}, false
 }

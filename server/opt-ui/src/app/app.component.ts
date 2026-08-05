@@ -17,6 +17,7 @@ type NavId = 'overview' | 'operators' | 'auditEvents' | 'relayNodes' | 'punchNod
 type NavItem = { id: NavId; label: string; desc: string };
 type NavMenu = { id: string; label: string; defaultId: NavId; items: NavItem[] };
 type QuickRenameKind = 'device' | 'network' | 'deviceGroup' | 'securityGroup';
+type ConfirmationDialog = { title: string; message: string; confirmLabel: string };
 
 // 后台操作员账号模型，用于登录后权限展示和账号维护。
 type OperatorUser = {
@@ -37,7 +38,6 @@ type OperatorForm = Partial<OperatorUser> & {
 type RelayNode = {
   nodeId: string;
   name: string;
-  region: string;
   transport: 'relay_udp' | 'derp_tcp_tls_443';
   publicAddr: string;
   maxBandwidthMbps: number;
@@ -58,7 +58,6 @@ type RelayNodeForm = Partial<Omit<RelayNode, 'publicAddr'>> & {
 type PunchNode = {
   nodeId: string;
   name: string;
-  region: string;
   publicUdpIp: string;
   publicUdpPort: number;
   maxSessions: number;
@@ -172,23 +171,18 @@ type NetworkPolicyDetail = {
 export class AppComponent implements OnInit, OnDestroy {
   constructor(private readonly changeDetector: ChangeDetectorRef) {}
 
-  // 独立页面与业务菜单分开定义，父菜单始终进入其默认业务页面。
+  // 一级页面、一级资源菜单与分组菜单分开定义。
   readonly navItems: NavItem[] = [
     { id: 'overview', label: '运营概览', desc: '平台指标与待处理事项' },
     { id: 'auditEvents', label: '安全审计', desc: '登录、凭据与异常来源' },
     { id: 'operators', label: '运营账号', desc: '后台账号与角色' },
   ];
+  readonly resourceNavItems: NavItem[] = [
+    { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
+    { id: 'deviceGroups', label: '设备组管理', desc: '全局设备分组与成员' },
+    { id: 'networks', label: '网络管理', desc: '网络、成员与策略' },
+  ];
   readonly navMenus: NavMenu[] = [
-    {
-      id: 'resources',
-      label: '资源管理',
-      defaultId: 'devices',
-      items: [
-        { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
-        { id: 'deviceGroups', label: '设备组管理', desc: '全局设备分组与成员' },
-        { id: 'networks', label: '网络管理', desc: '网络、成员与策略' },
-      ],
-    },
     {
       id: 'nodes',
       label: '节点管理',
@@ -253,6 +247,7 @@ export class AppComponent implements OnInit, OnDestroy {
   createdCredentialKey = '';
   selectedNetwork: OpsNetwork | null = null;
   networkDetailId: string | null = null;
+  dnsZoneDetailId: string | null = null;
   securityGroupDetailId: string | null = null;
   networkForm = { name: '', intraGroupPolicy: 'allow', status: 'active' };
   networkBindingIds: string[] = [];
@@ -286,6 +281,8 @@ export class AppComponent implements OnInit, OnDestroy {
   quickRenameValue = '';
   quickRenameError = '';
   quickRenameSaving = false;
+  confirmationDialog: ConfirmationDialog | null = null;
+  private confirmationResolver: ((confirmed: boolean) => void) | null = null;
 
   // 传给 feature 子页面的视图模型，保持子页面只负责模板渲染。
   get vm(): this {
@@ -308,6 +305,23 @@ export class AppComponent implements OnInit, OnDestroy {
       case 'securityGroup': return '安全组';
       default: return '资源';
     }
+  }
+
+  private requestConfirmation(title: string, message: string, confirmLabel: string): Promise<boolean> {
+    this.confirmationResolver?.(false);
+    return new Promise((resolve) => {
+      this.confirmationResolver = resolve;
+      this.confirmationDialog = { title, message, confirmLabel };
+      this.notifyStateChanged();
+    });
+  }
+
+  resolveConfirmation(confirmed: boolean): void {
+    const resolve = this.confirmationResolver;
+    this.confirmationResolver = null;
+    this.confirmationDialog = null;
+    resolve?.(confirmed);
+    this.notifyStateChanged();
   }
 
   ngOnInit(): void {
@@ -522,7 +536,7 @@ export class AppComponent implements OnInit, OnDestroy {
 	  const standalone = this.operatorRole === 'admin'
       ? this.navItems
       : this.navItems.filter((item) => item.id !== 'operators');
-    return [...standalone, ...this.navMenus.flatMap((menu) => menu.items)];
+    return [...standalone, ...this.resourceNavItems, ...this.navMenus.flatMap((menu) => menu.items)];
 	}
 
   get activeNavMenu(): NavMenu | undefined {
@@ -535,10 +549,6 @@ export class AppComponent implements OnInit, OnDestroy {
 
   selectNavMenu(menu: NavMenu): void {
     this.setActive(menu.defaultId);
-  }
-
-  get totalCustomers(): number {
-    return this.customers.length;
   }
 
   get filteredDevices(): OpsDevice[] {
@@ -578,14 +588,6 @@ export class AppComponent implements OnInit, OnDestroy {
 
   get warningAuditEventCount(): number {
     return this.auditEvents.filter((item) => item.status === 'warning').length;
-  }
-
-  get onlineDeviceCount(): number {
-    return this.devices.filter((device) => device.heartbeatOnline).length;
-  }
-
-  get totalRelayUsedGb(): number {
-    return this.relayNodes.reduce((sum, node) => sum + node.usedTrafficGb, 0);
   }
 
   get limitedCustomers(): number {
@@ -704,6 +706,10 @@ export class AppComponent implements OnInit, OnDestroy {
       return;
     }
     const isEdit = Boolean(this.selectedOperator);
+    if (this.selectedOperator?.status === 'active' && this.operatorForm.status === 'disabled' &&
+        !await this.requestConfirmation('停用运营账号', `停用后，${this.selectedOperator.email} 将无法登录运营后台。`, '确认停用')) {
+      return;
+    }
     if (!isEdit) {
       const password = this.operatorForm.password?.trim() ?? '';
       const confirmPassword = this.operatorForm.confirmPassword?.trim() ?? '';
@@ -757,7 +763,6 @@ export class AppComponent implements OnInit, OnDestroy {
       ...this.parseRelayPublicAddress(node.publicAddr, node.transport),
     } : {
       name: '',
-      region: 'ap-east-1',
       transport: 'relay_udp',
       publicIp: '',
       publicPort: 29110,
@@ -801,13 +806,16 @@ export class AppComponent implements OnInit, OnDestroy {
       this.relayNodeMessage = '公网地址已存在，不能重复配置到多个中继节点';
       return;
     }
+    if (this.selectedRelayNode?.status === 'active' && this.relayNodeForm.status !== 'active' &&
+        !await this.requestConfirmation('变更中继节点状态', `节点 ${this.selectedRelayNode.name} 将停止承载新的中继连接。`, '确认变更')) {
+      return;
+    }
     try {
       const isEdit = Boolean(this.selectedRelayNode);
       const path = isEdit ? OPS_API.relayNode(this.selectedRelayNode!.nodeId) : OPS_API.relayNodes;
       const node = await this.request<RelayNode>(isEdit ? 'PATCH' : 'POST', path, {
         nodeId: this.selectedRelayNode?.nodeId,
         name: this.relayNodeForm.name,
-        region: this.relayNodeForm.region,
         transport,
         publicAddr,
         maxBandwidthMbps: this.relayNodeForm.maxBandwidthMbps,
@@ -856,7 +864,6 @@ export class AppComponent implements OnInit, OnDestroy {
     this.punchNodeMessage = '';
     this.punchNodeForm = node ? { ...node } : {
       name: '',
-      region: 'default',
       publicUdpIp: '',
       publicUdpPort: 29130,
       maxSessions: 10000,
@@ -899,13 +906,16 @@ export class AppComponent implements OnInit, OnDestroy {
       this.punchNodeMessage = '公网 UDP IP 和端口已存在，不能重复配置到多个打洞节点';
       return;
     }
+    if (this.selectedPunchNode?.status === 'active' && this.punchNodeForm.status !== 'active' &&
+        !await this.requestConfirmation('变更打洞节点状态', `节点 ${this.selectedPunchNode.name} 将停止承载新的打洞会话。`, '确认变更')) {
+      return;
+    }
     try {
       const isEdit = Boolean(this.selectedPunchNode);
       const path = isEdit ? OPS_API.punchNode(this.selectedPunchNode!.nodeId) : OPS_API.punchNodes;
       const node = await this.request<PunchNode>(isEdit ? 'PATCH' : 'POST', path, {
         nodeId: this.selectedPunchNode?.nodeId,
         name: this.punchNodeForm.name,
-        region: this.punchNodeForm.region,
         publicUdpIp,
         publicUdpPort,
         maxSessions: Number(this.punchNodeForm.maxSessions ?? 0),
@@ -945,6 +955,10 @@ export class AppComponent implements OnInit, OnDestroy {
       this.apiMessage = '请输入客户邮箱';
       return;
     }
+    if (this.selectedCustomer?.status === 'active' && this.customerForm.status !== 'active' &&
+        !await this.requestConfirmation('限制客户账号', `客户 ${this.selectedCustomer.email} 的服务状态将被限制或停用。`, '确认变更')) {
+      return;
+    }
     try {
       const editing = Boolean(this.selectedCustomer);
       const path = editing ? OPS_API.customer(this.selectedCustomer!.customerId) : OPS_API.customers;
@@ -970,6 +984,11 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   async saveDeviceDialog(): Promise<void> {
+    if (this.selectedDevice?.status === 'active' &&
+        (this.deviceForm.status === 'disabled' || this.deviceForm.deviceEnabled === false) &&
+        !await this.requestConfirmation('停用设备', `停用后，设备 ${this.selectedDevice.name || this.selectedDevice.deviceId} 将无法接入网络。`, '确认停用')) {
+      return;
+    }
     try {
       const editing = Boolean(this.selectedDevice);
       const updated = await this.request<OpsDevice>(editing ? 'PATCH' : 'POST', editing ? OPS_API.device(this.selectedDevice!.deviceId) : OPS_API.devices, editing ? {
@@ -1046,6 +1065,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async toggleOperator(operator: OperatorUser): Promise<void> {
     const nextStatus = operator.status === 'active' ? 'disabled' : 'active';
+    if (nextStatus === 'disabled' &&
+        !await this.requestConfirmation('停用运营账号', `停用后，${operator.email} 将无法登录运营后台。`, '确认停用')) {
+      return;
+    }
     try {
       const updated = await this.request<OperatorUser>('PATCH', OPS_API.operator(operator.operatorId), {
         name: operator.name,
@@ -1139,6 +1162,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async toggleRelayNode(node: RelayNode): Promise<void> {
     const enabled = node.status !== 'active';
+    if (!enabled &&
+        !await this.requestConfirmation('停用中继节点', `停用 ${node.name} 后，该节点将不再承载新的中继连接。`, '确认停用')) {
+      return;
+    }
     try {
       const updated = await this.request<RelayNode>('PATCH', OPS_API.relayNodeStatus(node.nodeId), {
         enabled,
@@ -1153,6 +1180,9 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   async deleteRelayNode(node: RelayNode): Promise<void> {
+    if (!await this.requestConfirmation('删除中继节点', `删除 ${node.name} 后无法恢复，请确认该节点已不再承载业务。`, '确认删除')) {
+      return;
+    }
     try {
       await this.request('DELETE', OPS_API.relayNode(node.nodeId));
       this.relayNodes = this.relayNodes.filter((item) => item.nodeId !== node.nodeId);
@@ -1166,6 +1196,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async togglePunchNode(node: PunchNode): Promise<void> {
     const enabled = node.status !== 'active';
+    if (!enabled &&
+        !await this.requestConfirmation('停用打洞节点', `停用 ${node.name} 后，该节点将不再承载新的打洞会话。`, '确认停用')) {
+      return;
+    }
     try {
       const updated = await this.request<PunchNode>('PATCH', OPS_API.punchNodeStatus(node.nodeId), {
         enabled,
@@ -1184,6 +1218,9 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   async deletePunchNode(node: PunchNode): Promise<void> {
+    if (!await this.requestConfirmation('删除打洞节点', `删除 ${node.name} 后无法恢复，请确认该节点已不再承载业务。`, '确认删除')) {
+      return;
+    }
     try {
       await this.request('DELETE', OPS_API.punchNode(node.nodeId));
       this.punchNodes = this.punchNodes.filter((item) => item.nodeId !== node.nodeId);
@@ -1197,6 +1234,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async toggleDevice(device: OpsDevice): Promise<void> {
     const enabled = !device.deviceEnabled;
+    if (!enabled &&
+        !await this.requestConfirmation('停用设备', `停用后，设备 ${device.name || device.deviceId} 将无法接入网络。`, '确认停用')) {
+      return;
+    }
     try {
       const updated = await this.request<OpsDevice>('PATCH', OPS_API.device(device.deviceId), {
         status: enabled ? 'active' : 'disabled',
@@ -1211,7 +1252,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   async deleteDevice(device: OpsDevice): Promise<void> {
-    if (!confirm(`确认删除设备 ${device.deviceId}？`)) {
+    if (!await this.requestConfirmation('删除设备', `删除 ${device.name || device.deviceId} 后，相关授权和网络关系将同时失效。`, '确认删除')) {
       return;
     }
     try {
@@ -1279,6 +1320,10 @@ export class AppComponent implements OnInit, OnDestroy {
     const desired = new Set(this.deviceGroupAssignmentIds);
     const removals = [...current].filter((groupId) => !desired.has(groupId));
     const additions = [...desired].filter((groupId) => !current.has(groupId));
+    if (removals.length > 0 &&
+        !await this.requestConfirmation('解除设备组绑定', `将从设备 ${device.name || device.deviceId} 解除 ${removals.length} 个设备组，相关网络权限可能立即变化。`, '确认解除')) {
+      return;
+    }
     this.deviceGroupAssignmentSaving = true;
     this.deviceGroupAssignmentError = '';
     try {
@@ -1353,6 +1398,10 @@ export class AppComponent implements OnInit, OnDestroy {
   }
   closeNetworkDialog(): void { this.showNetworkDialog = false; this.selectedNetwork = null; }
   async saveNetwork(): Promise<void> {
+    if (this.selectedNetwork?.status === 'active' && this.networkForm.status === 'disabled' &&
+        !await this.requestConfirmation('停用网络', `停用 ${this.selectedNetwork.name} 后，网络内设备将无法继续通信。`, '确认停用')) {
+      return;
+    }
     try {
 	  const editing = Boolean(this.selectedNetwork);
       const path = editing ? OPS_API.network(this.selectedNetwork!.networkId) : OPS_API.networks;
@@ -1363,7 +1412,7 @@ export class AppComponent implements OnInit, OnDestroy {
     } catch (error) { this.apiMessage = this.errorMessage(error); } finally { this.notifyStateChanged(); }
   }
   async deleteNetwork(network: OpsNetwork): Promise<void> {
-    if (!confirm(`确认删除网络 ${network.name}？`)) return;
+    if (!await this.requestConfirmation('删除网络', `删除 ${network.name} 后，设备组、域名和安全策略关系将失效且无法恢复。`, '确认删除')) return;
     try { await this.request('DELETE', OPS_API.network(network.networkId)); this.networks = this.networks.filter((item) => item.networkId !== network.networkId); this.apiMessage = '网络已删除'; }
     catch (error) { this.apiMessage = this.errorMessage(error); } finally { this.notifyStateChanged(); }
   }
@@ -1407,6 +1456,10 @@ export class AppComponent implements OnInit, OnDestroy {
     const desired = new Set(this.networkBindingIds);
     const removals = [...current].filter((groupId) => !desired.has(groupId));
     const additions = [...desired].filter((groupId) => !current.has(groupId));
+    if (removals.length > 0 &&
+        !await this.requestConfirmation('移除网络设备组', `将从网络 ${network.name} 移除 ${removals.length} 个设备组，组内设备会失去该网络访问权限。`, '确认移除')) {
+      return;
+    }
     this.networkBindingSaving = true;
     this.networkBindingError = '';
     try {
@@ -1446,8 +1499,21 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.securityGroups.find((group) => group.securityGroupId === this.securityGroupDetailId) ?? null;
   }
 
+  get dnsZoneDetail(): DNSZone | null {
+    if (!this.dnsZoneDetailId) return null;
+    return this.dnsZones.find((zone) => zone.zoneId === this.dnsZoneDetailId) ?? null;
+  }
+
   networkDetailPath(network: OpsNetwork): string {
-    return `/networks/${encodeURIComponent(network.networkId)}`;
+    return this.domainManagementPath(network);
+  }
+
+  domainManagementPath(network: OpsNetwork): string {
+    return `/networks/${encodeURIComponent(network.networkId)}/domains`;
+  }
+
+  domainRecordsPath(network: OpsNetwork, zone: DNSZone): string {
+    return `${this.domainManagementPath(network)}/${encodeURIComponent(zone.zoneId)}/records`;
   }
 
   securityGroupRulesPath(network: OpsNetwork, group: SecurityGroup): string {
@@ -1455,13 +1521,14 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   securityGroupsPath(network: OpsNetwork): string {
-    return `${this.networkDetailPath(network)}/security-groups`;
+    return `/networks/${encodeURIComponent(network.networkId)}/security-groups`;
   }
 
   openNetworkPolicyTab(tab: 'dns' | 'security'): void {
     const network = this.networkDetailNetwork;
     if (!network) return;
     this.networkPolicyTab = tab;
+    this.dnsZoneDetailId = null;
     this.securityGroupDetailId = null;
     const path = tab === 'security' ? this.securityGroupsPath(network) : this.networkDetailPath(network);
     if (window.location.pathname !== path) window.history.pushState({}, '', path);
@@ -1485,6 +1552,7 @@ export class AppComponent implements OnInit, OnDestroy {
     const network = this.networkDetailNetwork;
     if (!network) return;
     this.securityGroupDetailId = group.securityGroupId;
+    this.dnsZoneDetailId = null;
     this.networkPolicyTab = 'security';
     this.securityRuleForm.securityGroupId = group.securityGroupId;
     window.history.pushState({}, '', this.securityGroupRulesPath(network, group));
@@ -1499,8 +1567,28 @@ export class AppComponent implements OnInit, OnDestroy {
     this.notifyStateChanged();
   }
 
+  openDNSZoneRecords(zone: DNSZone): void {
+    const network = this.networkDetailNetwork;
+    if (!network) return;
+    this.dnsZoneDetailId = zone.zoneId;
+    this.securityGroupDetailId = null;
+    this.networkPolicyTab = 'dns';
+    this.dnsRecordForm.zoneId = zone.zoneId;
+    window.history.pushState({}, '', this.domainRecordsPath(network, zone));
+    this.notifyStateChanged();
+  }
+
+  closeDNSZoneRecords(): void {
+    const network = this.networkDetailNetwork;
+    this.dnsZoneDetailId = null;
+    this.selectedDNSRecord = null;
+    if (network) window.history.pushState({}, '', this.domainManagementPath(network));
+    this.notifyStateChanged();
+  }
+
   private clearNetworkDetail(): void {
     this.networkDetailId = null;
+    this.dnsZoneDetailId = null;
     this.securityGroupDetailId = null;
     this.selectedNetwork = null;
     this.networkPolicyTab = 'dns';
@@ -1508,7 +1596,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   private async syncNetworkRouteFromLocation(): Promise<void> {
     const match = window.location.pathname.match(
-      /^\/networks\/([^/]+)(?:\/(security-groups)(?:\/([^/]+)\/rules)?)?\/?$/,
+      /^\/networks\/([^/]+)\/(domains|security-groups)(?:\/([^/]+)\/(records|rules))?\/?$/,
     );
     if (!match) {
       if (this.networkDetailId) this.clearNetworkDetail();
@@ -1522,20 +1610,34 @@ export class AppComponent implements OnInit, OnDestroy {
       this.apiMessage = '网络不存在或已被删除';
       return;
     }
-    const policyTab = match[2] === 'security-groups' ? 'security' : 'dns';
-    const securityGroupId = match[3] ? decodeURIComponent(match[3]) : null;
-    await this.activateNetworkDetail(network, policyTab, securityGroupId);
+    const resource = match[2];
+    const resourceId = match[3] ? decodeURIComponent(match[3]) : null;
+    const child = match[4] ?? null;
+    const validChild = (!resourceId && !child)
+      || (resource === 'domains' && child === 'records')
+      || (resource === 'security-groups' && child === 'rules');
+    if (!validChild) {
+      window.history.replaceState({}, '', this.domainManagementPath(network));
+      await this.activateNetworkDetail(network);
+      return;
+    }
+    const policyTab = resource === 'security-groups' ? 'security' : 'dns';
+    const dnsZoneId = resource === 'domains' ? resourceId : null;
+    const securityGroupId = resource === 'security-groups' ? resourceId : null;
+    await this.activateNetworkDetail(network, policyTab, securityGroupId, dnsZoneId);
   }
 
   private async activateNetworkDetail(
     network: OpsNetwork,
     policyTab: 'dns' | 'security' = 'dns',
     securityGroupId: string | null = null,
+    dnsZoneId: string | null = null,
   ): Promise<void> {
     this.active = 'networks';
     this.selectedNetwork = network;
     this.networkDetailId = network.networkId;
     this.securityGroupDetailId = securityGroupId;
+    this.dnsZoneDetailId = dnsZoneId;
     this.networkPolicyTab = policyTab;
     this.resetNetworkPolicyForms();
     await this.loadNetworkPolicies();
@@ -1543,6 +1645,11 @@ export class AppComponent implements OnInit, OnDestroy {
       this.securityGroupDetailId = null;
       window.history.replaceState({}, '', this.securityGroupsPath(network));
       this.apiMessage = '安全组不存在或已被删除';
+    }
+    if (dnsZoneId && !this.dnsZoneDetail) {
+      this.dnsZoneDetailId = null;
+      window.history.replaceState({}, '', this.domainManagementPath(network));
+      this.apiMessage = '域名不存在或已被删除';
     }
   }
   async loadNetworkPolicies(): Promise<void> {
@@ -1568,14 +1675,14 @@ export class AppComponent implements OnInit, OnDestroy {
   editDNSZone(item: DNSZone): void { this.selectedDNSZone = item; this.dnsZoneForm = { name: item.name, status: item.status }; }
   editDNSRecord(item: DNSRecord): void { this.selectedDNSRecord = item; this.dnsRecordForm = { zoneId: item.zoneId, name: item.name, type: item.type, value: item.value, port: item.port, ttl: item.ttl }; }
   editSecurityRule(item: SecurityRule): void { this.selectedSecurityRule = item; this.securityRuleForm = { securityGroupId: item.securityGroupId, direction: item.direction, protocol: item.protocol, portRange: item.portRange, peerType: item.peerType, peerValue: item.peerValue, action: item.action, priority: item.priority, description: item.description, enabled: item.enabled }; }
-  async saveDNSZone(): Promise<void> { if (!this.selectedNetwork || !this.dnsZoneForm.name.trim()) return; const editing = this.selectedDNSZone; try { await this.request(editing ? 'PATCH' : 'POST', editing ? OPS_API.dnsZone(editing.zoneId) : OPS_API.networkDNSZones(this.selectedNetwork.networkId), this.dnsZoneForm); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = 'DNS 区域已保存'; } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  async saveDNSZone(): Promise<void> { if (!this.selectedNetwork || !this.dnsZoneForm.name.trim()) return; const editing = this.selectedDNSZone; if (editing?.status === 'active' && this.dnsZoneForm.status === 'disabled' && !await this.requestConfirmation('停用域名', `停用 ${editing.name} 后，该域名的解析记录将不再生效。`, '确认停用')) return; try { await this.request(editing ? 'PATCH' : 'POST', editing ? OPS_API.dnsZone(editing.zoneId) : OPS_API.networkDNSZones(this.selectedNetwork.networkId), this.dnsZoneForm); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = 'DNS 区域已保存'; } catch (error) { this.apiMessage = this.errorMessage(error); } }
   async saveDNSRecord(): Promise<void> { if (!this.selectedNetwork || !this.dnsRecordForm.name.trim() || !this.dnsRecordForm.value.trim()) return; const editing = this.selectedDNSRecord; try { await this.request(editing ? 'PATCH' : 'POST', editing ? OPS_API.dnsRecord(editing.recordId) : OPS_API.networkDNSRecords(this.selectedNetwork.networkId), this.dnsRecordForm); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = 'DNS 记录已保存'; } catch (error) { this.apiMessage = this.errorMessage(error); } }
   async saveSecurityGroup(): Promise<void> { if (!this.selectedNetwork || !this.securityGroupForm.name.trim()) return; try { await this.request('POST', OPS_API.networkSecurityGroups(this.selectedNetwork.networkId), this.securityGroupForm); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = '安全组已保存'; } catch (error) { this.apiMessage = this.errorMessage(error); } }
-  async saveSecurityRule(): Promise<void> { if (!this.securityRuleForm.securityGroupId) return; const editing = this.selectedSecurityRule; try { const body = { ...this.securityRuleForm }; delete (body as Partial<typeof body>).securityGroupId; await this.request(editing ? 'PATCH' : 'POST', editing ? OPS_API.securityRule(editing.ruleId) : OPS_API.securityGroupRules(this.securityRuleForm.securityGroupId), body); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = '访问规则已保存'; } catch (error) { this.apiMessage = this.errorMessage(error); } }
-  async deleteDNSZone(item: DNSZone): Promise<void> { if (!confirm(`确认删除 DNS 区域 ${item.name}？`)) return; await this.deleteNetworkPolicy(OPS_API.dnsZone(item.zoneId), 'DNS 区域已删除'); }
-  async deleteDNSRecord(item: DNSRecord): Promise<void> { if (!confirm(`确认删除 DNS 记录 ${item.name}？`)) return; await this.deleteNetworkPolicy(OPS_API.dnsRecord(item.recordId), 'DNS 记录已删除'); }
-  async deleteSecurityGroup(item: SecurityGroup): Promise<void> { if (!confirm(`确认删除安全组 ${item.name}？`)) return; const wasOpen = this.securityGroupDetailId === item.securityGroupId; await this.deleteNetworkPolicy(OPS_API.securityGroup(item.securityGroupId), '安全组已删除'); if (wasOpen) this.closeSecurityGroupRules(); }
-  async deleteSecurityRule(item: SecurityRule): Promise<void> { if (!confirm('确认删除该访问规则？')) return; await this.deleteNetworkPolicy(OPS_API.securityRule(item.ruleId), '访问规则已删除'); }
+  async saveSecurityRule(): Promise<void> { if (!this.securityRuleForm.securityGroupId) return; const editing = this.selectedSecurityRule; if (editing?.enabled && !this.securityRuleForm.enabled && !await this.requestConfirmation('停用访问规则', '停用后，该规则将不再参与网络访问控制。', '确认停用')) return; try { const body = { ...this.securityRuleForm }; delete (body as Partial<typeof body>).securityGroupId; await this.request(editing ? 'PATCH' : 'POST', editing ? OPS_API.securityRule(editing.ruleId) : OPS_API.securityGroupRules(this.securityRuleForm.securityGroupId), body); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = '访问规则已保存'; } catch (error) { this.apiMessage = this.errorMessage(error); } }
+  async deleteDNSZone(item: DNSZone): Promise<void> { if (!await this.requestConfirmation('删除域名', `删除 ${item.name} 后，其全部解析记录也将失效且无法恢复。`, '确认删除')) return; await this.deleteNetworkPolicy(OPS_API.dnsZone(item.zoneId), 'DNS 区域已删除'); }
+  async deleteDNSRecord(item: DNSRecord): Promise<void> { if (!await this.requestConfirmation('删除解析记录', `删除主机记录 ${item.name} 后，客户端将无法再通过该记录解析目标。`, '确认删除')) return; await this.deleteNetworkPolicy(OPS_API.dnsRecord(item.recordId), 'DNS 记录已删除'); }
+  async deleteSecurityGroup(item: SecurityGroup): Promise<void> { if (!await this.requestConfirmation('删除安全组', `删除 ${item.name} 后，其访问规则将一并失效且无法恢复。`, '确认删除')) return; const wasOpen = this.securityGroupDetailId === item.securityGroupId; await this.deleteNetworkPolicy(OPS_API.securityGroup(item.securityGroupId), '安全组已删除'); if (wasOpen) this.closeSecurityGroupRules(); }
+  async deleteSecurityRule(item: SecurityRule): Promise<void> { if (!await this.requestConfirmation('删除访问规则', `删除该${item.direction === 'ingress' ? '入方向' : '出方向'}规则后无法恢复。`, '确认删除')) return; await this.deleteNetworkPolicy(OPS_API.securityRule(item.ruleId), '访问规则已删除'); }
   private async deleteNetworkPolicy(path: string, message: string): Promise<void> { try { await this.request('DELETE', path); this.resetNetworkPolicyForms(); await this.loadNetworkPolicies(); this.apiMessage = message; } catch (error) { this.apiMessage = this.errorMessage(error); } }
 
   membersForGroup(groupId: string): OpsDeviceGroupMember[] { return this.deviceGroupMembers.filter((item) => item.groupId === groupId); }
@@ -1609,7 +1716,7 @@ export class AppComponent implements OnInit, OnDestroy {
     } catch (error) { this.apiMessage = this.errorMessage(error); } finally { this.notifyStateChanged(); }
   }
   async deleteDeviceGroup(group: OpsDeviceGroup): Promise<void> {
-    if (!confirm(`确认删除设备组 ${group.name}？`)) return;
+    if (!await this.requestConfirmation('删除设备组', `删除 ${group.name} 后，设备成员关系和网络引用将失效且无法恢复。`, '确认删除')) return;
     try { await this.request('DELETE', OPS_API.deviceGroup(group.groupId)); await this.reloadOpsResources(); this.apiMessage = '设备组已删除'; }
     catch (error) { this.apiMessage = this.errorMessage(error); } finally { this.notifyStateChanged(); }
   }
@@ -1633,6 +1740,10 @@ export class AppComponent implements OnInit, OnDestroy {
     const desired = new Set(this.deviceGroupBindingDeviceIds);
     const removals = [...current].filter((deviceId) => !desired.has(deviceId));
     const additions = [...desired].filter((deviceId) => !current.has(deviceId));
+    if (removals.length > 0 &&
+        !await this.requestConfirmation('移除设备组成员', `将从设备组 ${group.name} 移除 ${removals.length} 台设备，相关网络权限可能立即变化。`, '确认移除')) {
+      return;
+    }
     this.deviceGroupBindingSaving = true;
     this.deviceGroupBindingError = '';
     try {

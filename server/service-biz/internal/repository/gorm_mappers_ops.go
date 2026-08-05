@@ -90,7 +90,6 @@ func punchNodeRecordFromModel(item model.PunchNode) gormPunchNodeRecord {
 	return gormPunchNodeRecord{
 		NodeID:         item.NodeID,
 		Name:           item.Name,
-		Region:         item.Region,
 		Endpoint:       item.Endpoint,
 		MaxSessions:    item.MaxSessions,
 		ActiveSessions: item.ActiveSessions,
@@ -106,7 +105,6 @@ func (r gormPunchNodeRecord) model() model.PunchNode {
 	return model.PunchNode{
 		NodeID:         r.NodeID,
 		Name:           r.Name,
-		Region:         r.Region,
 		Endpoint:       r.Endpoint,
 		MaxSessions:    r.MaxSessions,
 		ActiveSessions: r.ActiveSessions,

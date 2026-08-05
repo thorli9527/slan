@@ -21,12 +21,14 @@ type NetworkSummaryView struct {
 }
 
 type NetworkConfigPeerView struct {
-	DeviceID   string               `json:"deviceId"`
-	Alias      string               `json:"alias"`
-	GlobalIP   string               `json:"globalIp"`
-	GlobalName string               `json:"globalName"`
-	Status     string               `json:"status"`
-	Endpoints  []DeviceEndpointView `json:"endpoints"`
+	DeviceID    string               `json:"deviceId"`
+	Alias       string               `json:"alias"`
+	GlobalIP    string               `json:"globalIp"`
+	GlobalName  string               `json:"globalName"`
+	Status      string               `json:"status"`
+	CountryCode string               `json:"countryCode"`
+	CityCode    string               `json:"cityCode"`
+	Endpoints   []DeviceEndpointView `json:"endpoints"`
 }
 
 type DeviceEndpointView struct {

@@ -244,12 +244,14 @@ func buildNetworkConfigPeerViews(
 			continue
 		}
 		peers = append(peers, NetworkConfigPeerView{
-			DeviceID:   peerDevice.DeviceID,
-			Alias:      peerDevice.Alias,
-			GlobalIP:   globalIPs[peerDevice.DeviceID],
-			GlobalName: networkGlobalName(peerDevice.DeviceID, peerDevice.Alias, peerDevice.Name),
-			Status:     peerDevice.Status,
-			Endpoints:  deviceEndpointViews(membership.Endpoints),
+			DeviceID:    peerDevice.DeviceID,
+			Alias:       peerDevice.Alias,
+			GlobalIP:    globalIPs[peerDevice.DeviceID],
+			GlobalName:  networkGlobalName(peerDevice.DeviceID, peerDevice.Alias, peerDevice.Name),
+			Status:      peerDevice.Status,
+			CountryCode: strings.ToUpper(strings.TrimSpace(peerDevice.CountryCode)),
+			CityCode:    strings.TrimSpace(peerDevice.CityCode),
+			Endpoints:   deviceEndpointViews(membership.Endpoints),
 		})
 	}
 	return peers, nil

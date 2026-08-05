@@ -61,10 +61,10 @@ use anyhow::{Context, Result};
 use client_core::{
     assess_signal_quality, normalize_relay_transport, normalize_virtual_ip,
     relay_path_kind_for_transport, AssignedIpPayload, ClientCommand, ClientRuntime,
-    ClientViewState, NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathConfig,
-    PlatformAclPolicy, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
-    PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig, RelayPeerSession,
-    RelayTicket, SLAN_DNS_SERVICE_IP,
+    ClientViewState, NetworkRuntimeState, NodeConfig, PathCandidate, PathKind, PathState,
+    PeerPathConfig, PlatformAclPolicy, PlatformNetwork, PlatformNetworkDiagnostics,
+    PlatformResolverConfig, PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig,
+    RelayPeerSession, RelayTicket, SLAN_DNS_SERVICE_IP,
 };
 use client_core_platform::direct_udp::configured_direct_udp_port;
 use client_core_platform::PlatformNetworkImpl;
@@ -113,9 +113,9 @@ use crate::platform_runtime_report::{platform_traffic_stats_payload, report_plat
 use crate::platform_transition::PlatformNetworkActivation;
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
-    extract_persisted_relay_candidates_from_control_map, normalize_relay_candidate_address,
-    relay_candidate_probe_fallback, replace_runtime_relay_candidates, runtime_relay_candidates,
-    select_relay_candidates,
+    extract_persisted_relay_candidates_from_control_map, infrastructure_location_rank,
+    normalize_relay_candidate_address, relay_candidate_probe_fallback, relay_candidates_for_peer,
+    replace_runtime_relay_candidates, runtime_relay_candidates, select_relay_candidates,
 };
 use crate::relay_models::{
     PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu, PathDiagnosePathCount,
@@ -4377,7 +4377,6 @@ fn build_relay_data_plane_config(
     );
 
     let relay_candidates = select_relay_candidates(&runtime_relay_candidates());
-    let relay_targets = relay_session_targets(best_relay, &relay_candidates, single_target_only);
     let sessions = peers
         .iter()
         .filter(|peer| peer.relay_allowed)
@@ -4385,6 +4384,17 @@ fn build_relay_data_plane_config(
         .flat_map(|peer| {
             let mut sessions = Vec::new();
             let peer_network_id = peer_network_id(network_id, peer, network_configs);
+            let peer_candidates = relay_candidates_for_peer(
+                &relay_candidates,
+                &peer.country_code,
+                &peer.city_code,
+            );
+            let peer_best_relay = peer_candidates.first().filter(|candidate| candidate.reachable);
+            let relay_targets = relay_session_targets(
+                peer_best_relay.or(best_relay),
+                &peer_candidates,
+                single_target_only,
+            );
             if let Some(session) = connect_plans.get(&peer.node_id).and_then(|plan| {
                 relay_session_from_connect_plan_ticket(
                     plan,
@@ -4407,20 +4417,12 @@ fn build_relay_data_plane_config(
                 {
                     continue;
                 }
-                let transport = normalize_relay_transport(target.transport.as_str()).unwrap_or("udp");
-                let preferred_derp_node_id =
-                    (transport == "derp_tcp_tls_443").then_some(target.endpoint_id.as_str());
-                let preferred_relay_endpoint_id =
-                    (transport != "derp_tcp_tls_443").then_some(target.endpoint_id.as_str());
                 match client.issue_relay_ticket(
                     session_device_api_token(session),
                     peer_network_id,
                     local_node_id,
                     peer.node_id.as_str(),
-                    target.cluster_id.as_deref(),
-                    preferred_derp_node_id,
-                    preferred_relay_endpoint_id,
-                    target.region_id.as_deref(),
+                    target.endpoint_id.as_str(),
                 ) {
                     Ok(ticket) => sessions.push(RelayPeerSession {
                         session_id: ticket.session_id.clone(),
@@ -4832,6 +4834,7 @@ fn create_punch_connect_sessions(
         .filter(|peer| peer.node_id != local_node_id)
         .filter_map(|peer| {
             let peer_network_id = peer_network_id(network_id, peer, network_configs);
+            let punch_node = select_punch_node(&session.node_configs, peer)?;
             match client.create_punch_connect_session(
                 session_device_api_token(session),
                 device_id,
@@ -4839,6 +4842,7 @@ fn create_punch_connect_sessions(
                 peer_network_id,
                 local_node_id,
                 peer.node_id.as_str(),
+                punch_node.node_id.as_str(),
             ) {
                 Ok(session) => Some((peer.node_id.clone(), session)),
                 Err(error) => {
@@ -4851,6 +4855,24 @@ fn create_punch_connect_sessions(
             }
         })
         .collect()
+}
+
+fn select_punch_node<'a>(nodes: &'a [NodeConfig], peer: &ControlPeer) -> Option<&'a NodeConfig> {
+    nodes
+        .iter()
+        .filter(|node| node.is_direct_udp_discovery())
+        .min_by_key(|node| {
+            (
+                infrastructure_location_rank(
+                    &node.country_code,
+                    &node.city_code,
+                    &peer.country_code,
+                    &peer.city_code,
+                ),
+                node.priority,
+                node.node_id.as_str(),
+            )
+        })
 }
 
 fn peer_network_id<'a>(
@@ -5296,12 +5318,12 @@ fn persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRelayCandid
         transport: candidate.transport.clone(),
         address: candidate.address.clone(),
         country_code: candidate.country_code.clone(),
+        city_code: candidate.city_code.clone(),
         region_id: candidate.region_id.clone(),
         cluster_id: candidate.cluster_id.clone(),
-        reachable_hint: candidate.reachable,
-        observed_rtt_ms_hint: candidate.observed_rtt_ms,
-        path_score_hint: candidate.path_score,
-        selected_hint: candidate.selected,
+        reachable_hint: false,
+        observed_rtt_ms_hint: None,
+        path_score_hint: Some(candidate.priority.into()),
     }
 }
 

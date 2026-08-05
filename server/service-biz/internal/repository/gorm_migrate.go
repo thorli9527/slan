@@ -30,10 +30,33 @@ func (s *GormStore) migrate() error {
 	if err := s.dropLegacyDeviceCredentialExpiry(); err != nil {
 		return err
 	}
+	if err := s.dropLegacyNodeLocationColumns(); err != nil {
+		return err
+	}
 	if err := s.revokeDuplicateActiveDeviceCredentials(); err != nil {
 		return err
 	}
 	return s.ensureIndexes()
+}
+
+func (s *GormStore) dropLegacyNodeLocationColumns() error {
+	migrator := s.db.Migrator()
+	for _, spec := range []struct {
+		model   any
+		columns []string
+	}{
+		{model: &gormRelayNodeRecord{}, columns: []string{"country_code", "city_code"}},
+		{model: &gormPunchNodeRecord{}, columns: []string{"region", "country_code", "city_code"}},
+	} {
+		for _, column := range spec.columns {
+			if migrator.HasColumn(spec.model, column) {
+				if err := migrator.DropColumn(spec.model, column); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (s *GormStore) dropLegacyDeviceCredentialExpiry() error {

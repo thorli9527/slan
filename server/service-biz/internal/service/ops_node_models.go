@@ -5,7 +5,6 @@ import "github.com/slan/service-biz/internal/pkg/wirekit"
 type OpsRelayNodeView struct {
 	NodeID            string                   `json:"nodeId"`
 	Name              string                   `json:"name"`
-	Region            string                   `json:"region"`
 	Endpoint          string                   `json:"endpoint"`
 	Status            string                   `json:"status"`
 	CreatedAt         int64                    `json:"createdAt"`
@@ -25,7 +24,6 @@ type OpsRelayNodeView struct {
 type OpsPunchNodeView struct {
 	NodeID         string `json:"nodeId"`
 	Name           string `json:"name"`
-	Region         string `json:"region"`
 	Endpoint       string `json:"endpoint"`
 	Status         string `json:"status"`
 	CreatedAt      int64  `json:"createdAt"`

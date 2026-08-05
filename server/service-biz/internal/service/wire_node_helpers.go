@@ -2,9 +2,7 @@ package service
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
-	"sort"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -95,61 +93,6 @@ func wireRelayURL(transport, address string) string {
 	return "udp://" + address
 }
 
-func wireFilterCandidatesForPreferredTransport(candidates []RelayCandidateView, preferredEndpointIDs []string) []RelayCandidateView {
-	preferredTransport := ""
-	for _, preferred := range preferredEndpointIDs {
-		preferred = strings.TrimSpace(preferred)
-		if preferred == "" {
-			continue
-		}
-		for _, candidate := range candidates {
-			if candidate.EndpointID == preferred {
-				preferredTransport = strings.TrimSpace(candidate.Transport)
-				break
-			}
-		}
-		if preferredTransport != "" {
-			break
-		}
-	}
-	if preferredTransport == "" {
-		return nil
-	}
-	filtered := make([]RelayCandidateView, 0, len(candidates))
-	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate.Transport) == preferredTransport {
-			filtered = append(filtered, candidate)
-		}
-	}
-	return filtered
-}
-
-func wireStableRelayCandidate(candidates []RelayCandidateView, sessionID string) (RelayCandidateView, bool) {
-	if len(candidates) == 0 {
-		return RelayCandidateView{}, false
-	}
-	if len(candidates) == 1 {
-		return candidates[0], true
-	}
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return RelayCandidateView{}, false
-	}
-	stableCandidates := append([]RelayCandidateView(nil), candidates...)
-	sort.Slice(stableCandidates, func(i, j int) bool {
-		if stableCandidates[i].EndpointID != stableCandidates[j].EndpointID {
-			return stableCandidates[i].EndpointID < stableCandidates[j].EndpointID
-		}
-		if stableCandidates[i].Transport != stableCandidates[j].Transport {
-			return stableCandidates[i].Transport < stableCandidates[j].Transport
-		}
-		return stableCandidates[i].Address < stableCandidates[j].Address
-	})
-	sum := sha256.Sum256([]byte(sessionID))
-	index := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(stableCandidates)))
-	return stableCandidates[index], true
-}
-
 func stableRelaySessionSeed(networkID, srcNodeID, dstNodeID string) string {
 	left, right := canonicalRelayNodePair(srcNodeID, dstNodeID)
 	return strings.Join([]string{
@@ -176,33 +119,6 @@ func canonicalRelayNodePair(srcNodeID, dstNodeID string) (string, string) {
 		return right, left
 	}
 	return left, right
-}
-
-func chooseWireRelayCandidate(candidates []RelayCandidateView, preferredEndpointIDs []string, sessionID string) (RelayCandidateView, bool) {
-	if filtered := wireFilterCandidatesForPreferredTransport(candidates, preferredEndpointIDs); len(filtered) > 0 {
-		if candidate, ok := wireStableRelayCandidate(filtered, sessionID); ok {
-			return candidate, true
-		}
-		return filtered[0], true
-	}
-	if candidate, ok := wireStableRelayCandidate(candidates, sessionID); ok {
-		return candidate, true
-	}
-	for _, preferred := range preferredEndpointIDs {
-		preferred = strings.TrimSpace(preferred)
-		if preferred == "" {
-			continue
-		}
-		for _, candidate := range candidates {
-			if candidate.EndpointID == preferred {
-				return candidate, true
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		return RelayCandidateView{}, false
-	}
-	return candidates[0], true
 }
 
 func wireTicketKeyStatus(item model.RelayNode) *wirekit.TicketKeyStatus {

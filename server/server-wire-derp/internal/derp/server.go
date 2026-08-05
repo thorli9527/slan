@@ -213,7 +213,8 @@ func (s *Server) handleConn(conn net.Conn) {
 				return
 			}
 			currentPeerID = msg.PeerID
-			s.setWriter(currentPeerID, writer)
+			replaced := s.setWriter(currentPeerID, writer)
+			log.Printf("derp peer connected peer=%s session=%s node=%s region=%s replaced=%t", currentPeerID, session.SessionID, session.NodeID, session.RegionID, replaced)
 			_ = writer.Encode(protocol.ServerMessage{
 				Kind:         "connected",
 				SessionID:    session.SessionID,
@@ -243,15 +244,23 @@ func (s *Server) handleConn(conn net.Conn) {
 			}
 			target, ok := s.writer(msg.TargetPeerID)
 			if !ok {
+				log.Printf("derp forward target missing source=%s target=%s session=%s", currentPeerID, msg.TargetPeerID, session.SessionID)
 				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "target_not_connected", Message: fmt.Sprintf("target peer %s is not connected to this DERP node", msg.TargetPeerID)}})
 				continue
 			}
-			_ = target.Encode(protocol.ServerMessage{
+			if err := target.Encode(protocol.ServerMessage{
 				Kind:         "recv",
 				SessionID:    session.SessionID,
 				SourcePeerID: currentPeerID,
 				Payload:      msg.Payload,
-			})
+			}); err != nil {
+				log.Printf("derp forward failed source=%s target=%s session=%s bytes=%d err=%v", currentPeerID, msg.TargetPeerID, session.SessionID, len(msg.Payload), err)
+				if s.clearWriter(msg.TargetPeerID, target) {
+					s.service.Disconnect(msg.TargetPeerID)
+				}
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "target_not_connected", Message: fmt.Sprintf("target peer %s connection is unavailable", msg.TargetPeerID)}})
+				continue
+			}
 			if s.cfg.SendAckEnabled {
 				_ = writer.Encode(protocol.ServerMessage{
 					Kind:           "sent",
@@ -289,10 +298,12 @@ func configureTCPConn(conn net.Conn, cfg config.Config) {
 	_ = tcpConn.SetWriteBuffer(cfg.WriteBufferBytes)
 }
 
-func (s *Server) setWriter(peerID string, writer *peerWriter) {
+func (s *Server) setWriter(peerID string, writer *peerWriter) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_, replaced := s.writers[peerID]
 	s.writers[peerID] = writer
+	return replaced
 }
 
 func (s *Server) writer(peerID string) (*peerWriter, bool) {

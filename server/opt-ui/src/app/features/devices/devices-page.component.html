@@ -3,7 +3,7 @@
     <div class="panel-title">
       <div>
         <h2>设备管理</h2>
-        <p>运营端管理独立设备身份、IP、心跳、网络启用状态和流量。</p>
+        <p>运营端管理独立设备身份、IP、心跳和网络启用状态。</p>
       </div>
       <div class="toolbar">
         <input class="search-input" [(ngModel)]="vm.deviceKeyword" (ngModelChange)="resetPage()" placeholder="搜索设备、IP、系统">
@@ -19,9 +19,7 @@
           <th>客户端系统</th>
           <th>IP</th>
           <th>心跳/网络</th>
-          <th>授权 Key</th>
-          <th>流量</th>
-          <th>上报时间</th>
+          <th>创建时间</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -36,9 +34,7 @@
             <span class="status" [class.online]="device.heartbeatOnline">{{ device.heartbeatOnline ? '在线' : '不在线' }}</span>
             <span class="status" [class.online]="device.networkEnabled">{{ device.networkEnabled ? '启用' : '停用' }}</span>
           </td>
-          <td><span class="status" [class.online]="vm.hasActiveCredential(device.deviceId)">{{ vm.hasActiveCredential(device.deviceId) ? '有效' : '无效' }}</span></td>
-          <td class="traffic-inline">收 {{ vm.formatBytes(device.rxBytesTotal) }} / 发 {{ vm.formatBytes(device.txBytesTotal) }}</td>
-          <td>{{ device.lastReportAt || '-' }}</td>
+          <td>{{ device.createdAt || '-' }}</td>
           <td>
             <div class="row-actions">
               <button class="table-icon-button" type="button" [title]="device.deviceEnabled ? '停用设备' : '启用设备'" [attr.aria-label]="device.deviceEnabled ? '停用设备' : '启用设备'" (click)="vm.toggleDevice(device)">
@@ -54,7 +50,7 @@
           </td>
         </tr>
         <tr *ngIf="vm.filteredDevices.length === 0">
-          <td colspan="8" class="empty-cell">暂无设备</td>
+          <td colspan="6" class="empty-cell">暂无设备</td>
         </tr>
       </tbody>
     </table>

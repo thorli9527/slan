@@ -935,10 +935,7 @@ fn peer_path_score(peer: &RelayRuntimePeerStats) -> Option<u32> {
 }
 
 fn device_country_code() -> Option<String> {
-    std::env::var("SLAN_DEVICE_COUNTRY_CODE")
-        .ok()
-        .map(|value| value.trim().to_ascii_uppercase())
-        .filter(|value| !value.is_empty())
+    crate::relay_candidates::runtime_device_country_code()
 }
 
 fn cross_country(source: Option<&str>, relay: Option<&str>) -> Option<bool> {
@@ -1264,12 +1261,12 @@ mod tests {
             transport: "udp".to_string(),
             address: "127.0.0.1:9000".to_string(),
             country_code: Some("CN".to_string()),
+            city_code: Some("1796236".to_string()),
             region_id: Some("sha".to_string()),
             cluster_id: Some("cn-a".to_string()),
             reachable_hint: false,
             observed_rtt_ms_hint: None,
             path_score_hint: None,
-            selected_hint: false,
         }];
 
         let outbox = control_transport_outbox(

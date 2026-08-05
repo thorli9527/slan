@@ -200,6 +200,10 @@ pub(crate) struct RuntimeEndpointsResponse {
     #[serde(default, deserialize_with = "null_vec_default")]
     pub node_configs: Vec<RuntimeNodeConfig>,
     #[serde(default)]
+    pub country_code: String,
+    #[serde(default)]
+    pub city_code: String,
+    #[serde(default)]
     pub refreshed_at: i64,
 }
 
@@ -217,6 +221,10 @@ pub(crate) struct RuntimeNodeConfig {
     pub address: String,
     #[serde(default)]
     pub path_kind: String,
+    #[serde(default)]
+    pub country_code: String,
+    #[serde(default)]
+    pub city_code: String,
     #[serde(default)]
     pub priority: u16,
     #[serde(default, deserialize_with = "null_vec_default")]
@@ -268,17 +276,13 @@ pub struct RelayCandidate {
     #[serde(default)]
     pub country_code: Option<String>,
     #[serde(default)]
+    pub city_code: Option<String>,
+    #[serde(default)]
     pub region_id: Option<String>,
     #[serde(default)]
     pub cluster_id: Option<String>,
     #[serde(default)]
-    pub reachable: bool,
-    #[serde(default)]
-    pub observed_rtt_ms: Option<u32>,
-    #[serde(default)]
-    pub path_score: Option<u32>,
-    #[serde(default)]
-    pub selected: bool,
+    pub priority: u16,
 }
 
 /// ControlPeer 是网络配置中可与本机通信的 peer 摘要。
@@ -286,6 +290,10 @@ pub struct RelayCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct ControlPeer {
     pub node_id: String,
+    #[serde(default)]
+    pub country_code: String,
+    #[serde(default)]
+    pub city_code: String,
     #[serde(default)]
     pub relay_allowed: bool,
     #[serde(default, deserialize_with = "null_vec_default")]
@@ -457,15 +465,8 @@ struct RelayTicketRequest<'a> {
     network_id: &'a str,
     src_node_id: &'a str,
     dst_node_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    derp_cluster_id: Option<&'a str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    preferred_derp_node_ids: Vec<&'a str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    preferred_relay_endpoint_ids: Vec<&'a str>,
+    relay_endpoint_id: &'a str,
     reason: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    relay_region_id: Option<&'a str>,
 }
 
 /// PunchConnectSessionRequest 是客户端向 biz 申请 punch 协商会话的请求体。
@@ -474,6 +475,7 @@ struct RelayTicketRequest<'a> {
 struct PunchConnectSessionRequest<'a> {
     requester_node_id: &'a str,
     peer_node_id: &'a str,
+    punch_node_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     ttl_seconds: Option<u32>,
 }
@@ -622,20 +624,14 @@ impl ControlPlaneClient {
         network_id: &str,
         src_node_id: &str,
         dst_node_id: &str,
-        derp_cluster_id: Option<&str>,
-        preferred_derp_node_id: Option<&str>,
-        preferred_relay_endpoint_id: Option<&str>,
-        relay_region_id: Option<&str>,
+        relay_endpoint_id: &str,
     ) -> Result<RelayTicket> {
         let body = serde_json::to_value(RelayTicketRequest {
             network_id,
             src_node_id,
             dst_node_id,
-            derp_cluster_id,
-            preferred_derp_node_ids: preferred_derp_node_id.into_iter().collect(),
-            preferred_relay_endpoint_ids: preferred_relay_endpoint_id.into_iter().collect(),
+            relay_endpoint_id,
             reason: "udp_relay_fallback",
-            relay_region_id,
         })?;
         let response = self.request_json("POST", API_RELAY_TICKETS, access_token, Some(body))?;
         serde_json::from_value(response).context("decode relay ticket")
@@ -680,11 +676,13 @@ impl ControlPlaneClient {
         network_id: &str,
         requester_node_id: &str,
         peer_node_id: &str,
+        punch_node_id: &str,
     ) -> Result<PunchConnectSession> {
         let punch_auth = punch_auth_headers(device_id, mqtt)?;
         let body = serde_json::to_value(PunchConnectSessionRequest {
             requester_node_id,
             peer_node_id,
+            punch_node_id,
             ttl_seconds: Some(60),
         })?;
         let path = api_punch_connect_sessions(network_id);
@@ -1002,6 +1000,12 @@ fn merge_control_peer(peers: &mut BTreeMap<String, ControlPeer>, incoming: Contr
             ..ControlPeer::default()
         });
     entry.relay_allowed |= incoming.relay_allowed;
+    if entry.country_code.is_empty() {
+        entry.country_code = incoming.country_code;
+    }
+    if entry.city_code.is_empty() {
+        entry.city_code = incoming.city_code;
+    }
     append_unique_strings(&mut entry.virtual_ips, incoming.virtual_ips);
     let mut endpoint_keys = entry
         .endpoints
@@ -1040,6 +1044,18 @@ fn network_config_control_peers(response: &Value) -> Vec<ControlPeer> {
             let virtual_ips = network_config_peer_virtual_ips(peer);
             Some(ControlPeer {
                 node_id: format!("node-{device_id}"),
+                country_code: peer
+                    .get("countryCode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_uppercase(),
+                city_code: peer
+                    .get("cityCode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
                 relay_allowed: true,
                 virtual_ips,
                 endpoints: network_config_control_endpoints(peer),
@@ -1704,7 +1720,8 @@ mod tests {
         activation_plan_from_device_network_configs, activation_plan_from_network_config,
         decode_control_json, device_credential_exchange_body, md5_hex, normalize_control_base_url,
         punch_auth_headers, punch_mqtt_signature, resolve_control_base_url, ControlPlaneClient,
-        MqttCredential, PunchConnectSession, DEFAULT_CONTROL_BASE_URL,
+        MqttCredential, PunchConnectSession, PunchConnectSessionRequest, RelayTicketRequest,
+        DEFAULT_CONTROL_BASE_URL,
     };
     #[test]
     fn default_control_base_url_points_to_remote_ip_endpoint() {
@@ -1963,6 +1980,30 @@ mod tests {
         assert_eq!(session.punch_node_id, "punch-1");
         assert_eq!(session.requester_node_id, "node-a");
         assert_eq!(session.peer_node_id, "node-b");
+    }
+
+    #[test]
+    fn path_requests_send_one_client_selected_node_id() {
+        let relay = serde_json::to_value(RelayTicketRequest {
+            network_id: "net-1",
+            src_node_id: "node-a",
+            dst_node_id: "node-b",
+            relay_endpoint_id: "relay-hk",
+            reason: "udp_relay_fallback",
+        })
+        .expect("serialize relay ticket request");
+        assert_eq!(relay["relayEndpointId"], "relay-hk");
+        assert!(relay.get("preferredRelayEndpointIds").is_none());
+        assert!(relay.get("preferredDerpNodeIds").is_none());
+
+        let punch = serde_json::to_value(PunchConnectSessionRequest {
+            requester_node_id: "node-a",
+            peer_node_id: "node-b",
+            punch_node_id: "punch-hk",
+            ttl_seconds: Some(60),
+        })
+        .expect("serialize punch request");
+        assert_eq!(punch["punchNodeId"], "punch-hk");
     }
 
     #[test]

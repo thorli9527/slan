@@ -312,6 +312,10 @@ pub struct NodeConfig {
     pub path_kind: String,
     pub address: String,
     #[serde(default)]
+    pub country_code: String,
+    #[serde(default)]
+    pub city_code: String,
+    #[serde(default)]
     pub priority: u16,
 }
 
@@ -663,6 +667,8 @@ mod tests {
             transport: "udp".to_string(),
             path_kind: "direct_udp".to_string(),
             address: "203.0.113.1:3478".to_string(),
+            country_code: "US".to_string(),
+            city_code: "5391959".to_string(),
             priority: 100,
         };
         assert!(direct.is_valid());

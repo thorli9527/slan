@@ -59,7 +59,6 @@ func defaultPunchNode(now int64) (model.PunchNode, bool) {
 	return model.PunchNode{
 		NodeID:    "punch000000000000000000000000000001",
 		Name:      "Punch 1",
-		Region:    defaultOpsRegion("SLAN_WIRE_PUNCH_REGION_ID", "default"),
 		Endpoint:  endpoint,
 		Status:    "active",
 		CreatedAt: now,
