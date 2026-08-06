@@ -313,6 +313,7 @@ pub fn control_transport_outbox(
                 payload: serde_json::json!({
                     "deviceId": session.device_id.clone(),
                     "activeNetworkId": session.active_network_id.clone(),
+                    "applicationState": "running",
                     "activated": state.activated,
                     "reportedAtMs": reported_at_ms,
                 }),
@@ -330,6 +331,8 @@ pub fn control_transport_outbox(
                 payload: serde_json::json!({
                     "deviceId": session.device_id.clone(),
                     "activeNetworkId": session.active_network_id.clone(),
+                    "applicationState": "running",
+                    "activated": state.activated,
                     "networkEnabled": state.network_enabled,
                     "virtualIp": state.virtual_ip.clone(),
                     "syncing": state.syncing,
@@ -982,6 +985,26 @@ fn normalize_downstream_envelope(
 ) -> Result<Option<AcceptedDownstreamControlMessage>> {
     let envelope: DownstreamEnvelope = serde_json::from_value(value)?;
     match envelope.message_type.trim() {
+        "device_disabled" => {
+            let device_id = envelope
+                .payload
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if !message_targets_self(device_id, self_device_id) {
+                return Ok(None);
+            }
+            Ok(Some(AcceptedDownstreamControlMessage {
+                action: "deactivateDevice".to_string(),
+                delivery_id: envelope_delivery_id(
+                    envelope.message_id,
+                    "device-disabled",
+                    &envelope.payload,
+                ),
+                require_ui_refresh: true,
+            }))
+        }
         "device_network_disabled" => {
             let device_id = envelope
                 .payload
@@ -1177,6 +1200,42 @@ mod tests {
     }
 
     #[test]
+    fn administratively_disabled_device_deactivates_self() {
+        let accepted = normalize_downstream_control_value(
+            serde_json::json!({
+                "type": "device_disabled",
+                "messageId": "msg-disable-device",
+                "payload": {
+                    "deviceId": "dev-1",
+                    "reason": "operator_disabled"
+                }
+            }),
+            Some("dev-1"),
+        )
+        .expect("normalize")
+        .expect("accepted");
+
+        assert_eq!(accepted.action, "deactivateDevice");
+        assert_eq!(accepted.delivery_id, "msg-disable-device");
+        assert!(accepted.require_ui_refresh);
+    }
+
+    #[test]
+    fn administratively_disabled_peer_is_ignored() {
+        let accepted = normalize_downstream_control_value(
+            serde_json::json!({
+                "type": "device_disabled",
+                "messageId": "msg-disable-peer",
+                "payload": {"deviceId": "dev-other"}
+            }),
+            Some("dev-1"),
+        )
+        .expect("normalize");
+
+        assert!(accepted.is_none());
+    }
+
+    #[test]
     fn direct_downstream_task_still_normalizes() {
         let accepted = normalize_downstream_control_value(
             serde_json::json!({
@@ -1231,6 +1290,54 @@ mod tests {
             1_200_000,
         );
         assert!(due.outbox.include_path_health);
+    }
+
+    #[test]
+    fn heartbeat_and_runtime_state_report_application_and_network_state() {
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("device-a".to_string());
+        session.mqtt = Some(MqttCredential {
+            broker_url: "mqtt://127.0.0.1:1883".to_string(),
+            client_id: "client-a".to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            topic_prefix: "slan/devices/device-a".to_string(),
+            expires_at: None,
+        });
+        let state = ClientViewState {
+            activated: true,
+            network_enabled: true,
+            virtual_ip: Some("10.0.1.2".to_string()),
+            ..ClientViewState::default()
+        };
+
+        let outbox =
+            control_transport_outbox(&session, &state, Vec::new(), 1_000, true, true, false);
+
+        assert_eq!(outbox.messages.len(), 2);
+        assert!(outbox.messages.iter().all(|message| {
+            message
+                .payload
+                .get("applicationState")
+                .and_then(Value::as_str)
+                == Some("running")
+        }));
+        let runtime = outbox
+            .messages
+            .iter()
+            .find(|message| matches!(message.kind, ControlTransportMessageKind::RuntimeState))
+            .expect("runtime-state message");
+        assert_eq!(
+            runtime
+                .payload
+                .get("networkEnabled")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            runtime.payload.get("virtualIp").and_then(Value::as_str),
+            Some("10.0.1.2")
+        );
     }
 
     #[test]

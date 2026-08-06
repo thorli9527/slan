@@ -261,8 +261,12 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         'key': value,
       });
     }
+    final resultState = _stateFromResult(result);
+    _throwStateErrorText(resultState);
     await _ensureDeviceThenConnectMqtt('bridge.deviceActivation.mqtt');
-    _applyStateFromResult(result);
+    if (resultState != null) {
+      _setStateIfChanged(resultState);
+    }
     _startBusinessEventWatchLoop();
   }
 
@@ -968,7 +972,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           if (!_isCurrentNetworkToggle(operation)) {
             return _state.value;
           }
-          _throwStateErrorText(_stateFromResult(result));
+          final resultState = _stateFromResult(result);
+          _throwStateErrorText(resultState);
           ClientUiDiagnostics.unawaitedLog(
             'bridge.switch.waitingBusinessEvent',
             state: _state.value,
@@ -977,7 +982,14 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
               'epoch': operation.epoch,
             },
           );
-          return _state.value;
+          if (resultState == null) {
+            throw StateError('local network switch returned no state');
+          }
+          return resultState.copyWith(
+            syncing: false,
+            clearSyncReason: true,
+            switchEnabled: true,
+          );
         },
         onError: (error) async {
           if (error is MissingPluginException) {
@@ -1570,7 +1582,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           if (revision == _lastBusinessEventRevision) {
             final next = await _stateAfterBusinessEvent(json);
             if (next != null && _staleBusinessSnapshotShouldUpdate(next)) {
-              _setStateIfChanged(next);
+              _setStateIfChanged(
+                next,
+                preserveMobilePlatformNetworkState:
+                    !businessEventForcesNetworkStopped(json),
+              );
             }
           }
           if (_usesNativeMobileControlPlane) {
@@ -1584,7 +1600,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         _lastBusinessEventRevision = revision;
         final next = await _stateAfterBusinessEvent(json);
         if (next != null) {
-          _setStateIfChanged(next);
+          _setStateIfChanged(
+            next,
+            preserveMobilePlatformNetworkState:
+                !businessEventForcesNetworkStopped(json),
+          );
         }
       },
     );
@@ -2000,6 +2020,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         snapshotMap: snapshotMap,
       ),
     );
+    if (businessEventForcesNetworkStopped(event)) {
+      await _stopNativeMobileNetworkFromControlEvent(event);
+    }
     if (_nativeMobilePeerRefreshRequired(event)) {
       await _refreshNativeMobilePeersFromControlSync();
     }
@@ -2014,6 +2037,38 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return queriedState;
     }
     return _reduceBusinessEvent(event);
+  }
+
+  Future<void> _stopNativeMobileNetworkFromControlEvent(
+    Map<String, Object?> event,
+  ) async {
+    if (!_usesNativeMobileControlPlane || !_state.value.networkEnabled) {
+      return;
+    }
+    try {
+      if (_isAndroid) {
+        await _plugin.androidStopVpn().timeout(_networkToggleTimeout);
+        _lastAndroidVpnConfigFingerprint = null;
+        _setAndroidNetworkAuthorizationState(clearNetworkConfig: true);
+      } else if (_isIos) {
+        await _plugin.iosStopPacketTunnel().timeout(_networkToggleTimeout);
+        _lastIosPacketTunnelConfigFingerprint = null;
+      }
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.mobile.controlEventNetworkStopped',
+        state: _state.value,
+        fields: {
+          'messageType':
+              _eventPayloadMap(event, 'businessData')?['messageType'],
+        },
+      );
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.mobile.controlEventNetworkStopFailed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+    }
   }
 
   Map<String, Object?>? _eventPayloadMap(
@@ -2285,11 +2340,16 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   /// 仅在状态变化时写入 [ValueNotifier]，降低 Flutter 重建成本。
-  void _setStateIfChanged(ClientViewState state) {
+  void _setStateIfChanged(
+    ClientViewState state, {
+    bool preserveMobilePlatformNetworkState = true,
+  }) {
     if (_closed) {
       return;
     }
-    final next = _preserveMobilePlatformNetworkState(state);
+    final next = preserveMobilePlatformNetworkState
+        ? _preserveMobilePlatformNetworkState(state)
+        : state;
     if (_state.value == next) {
       return;
     }

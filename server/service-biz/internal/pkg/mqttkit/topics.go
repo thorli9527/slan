@@ -18,6 +18,8 @@ func AllowTopicAccess(cfg Config, principal, deviceID, topic string, subscribe b
 			return topic == topicRoot(cfg)+"/devices/#" ||
 				isControlUpTopic(cfg, topic) ||
 				isControlAckTopic(cfg, topic) ||
+				topic == topicRoot(cfg)+"/devices/+/heartbeat" ||
+				topic == topicRoot(cfg)+"/devices/+/runtime-state" ||
 				topic == topicRoot(cfg)+"/server/control/up"
 		}
 		return isControlDownTopic(cfg, topic) || isNetworkBroadcastTopic(cfg, topic)

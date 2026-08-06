@@ -36,7 +36,7 @@ use crate::{
     session_device_api_token,
     session_store::{current_session_runtime_epoch, force_renew_mqtt_credential, PreparedSession},
     PersistedSession, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
-    BUSINESS_NETWORK_SWITCH_FAILED,
+    BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
 
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
@@ -566,6 +566,7 @@ fn ingest_downstream_publish(
         .map_err(|_| "control task queue mutex poisoned".to_string())?;
     let action = crate::control_tasks::ControlTaskAction::from_str(&accepted.action)
         .ok_or_else(|| format!("unsupported control task action: {}", accepted.action))?;
+    let deactivates_device = action == crate::control_tasks::ControlTaskAction::DeactivateDevice;
     let task = queue
         .enqueue_downstream(action, accepted.delivery_id, accepted.require_ui_refresh)
         .map_err(|err| err.to_string())?;
@@ -574,6 +575,8 @@ fn ingest_downstream_publish(
         let state = crate::drain_pending_control_tasks(runtime, task_queue);
         let business_type = if state.error.is_some() {
             BUSINESS_NETWORK_SWITCH_FAILED
+        } else if deactivates_device {
+            BUSINESS_SESSION_CHANGED
         } else {
             BUSINESS_NETWORK_RUNTIME_CHANGED
         };
@@ -733,6 +736,11 @@ fn downstream_control_business_data(message: &serde_json::Value) -> Option<serde
     let message_type = message.get("type").and_then(serde_json::Value::as_str)?;
     let payload = message.get("payload")?;
     match message_type {
+        "device_disabled" => Some(serde_json::json!({
+            "messageType": "device_disabled",
+            "deviceId": payload.get("deviceId").and_then(serde_json::Value::as_str).unwrap_or_default(),
+            "reason": payload.get("reason").and_then(serde_json::Value::as_str).unwrap_or_default(),
+        })),
         "device_network_disabled" => Some(serde_json::json!({
             "messageType": "device_network_disabled",
             "networkId": payload.get("networkId").and_then(serde_json::Value::as_str).unwrap_or_default(),

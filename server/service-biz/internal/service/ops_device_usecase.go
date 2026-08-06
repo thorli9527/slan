@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -16,7 +17,7 @@ func (s OpsManagedDeviceService) ListDevices(ctx context.Context) ([]OpsManagedD
 	}
 	views := make([]OpsManagedDeviceView, 0, len(items))
 	for _, item := range items {
-		view, err := buildManagedDeviceView(ctx, s.Networks, item)
+		view, err := buildManagedDeviceView(ctx, s.Networks, s.DeviceRuntime, item)
 		if err != nil {
 			return nil, err
 		}
@@ -36,7 +37,7 @@ func (s OpsManagedDeviceService) CreateDevice(ctx context.Context, input CreateO
 	if err := s.Devices.SaveDevice(ctx, item); err != nil {
 		return OpsManagedDeviceView{}, err
 	}
-	return buildManagedDeviceView(ctx, s.Networks, item)
+	return buildManagedDeviceView(ctx, s.Networks, s.DeviceRuntime, item)
 }
 
 func (s OpsManagedDeviceService) UpdateDevice(ctx context.Context, input UpdateDeviceInput) (OpsManagedDeviceView, error) {
@@ -92,6 +93,18 @@ func (s OpsManagedDeviceService) UpdateDevice(ctx context.Context, input UpdateD
 		s.recordManagedDeviceAudit(ctx, "update_ip", item.DeviceID, now)
 	}
 	if previousStatus == "active" && item.Status == "disabled" {
+		if s.DevicePublisher != nil {
+			if err := s.DevicePublisher.PublishDeviceControl(ctx, item.DeviceID, DeviceControlEnvelope{
+				Type:      "device_disabled",
+				MessageID: fmt.Sprintf("devicedisabled%d%s", now, item.DeviceID),
+				Payload: map[string]any{
+					"deviceId": item.DeviceID,
+					"reason":   "operator_disabled",
+				},
+			}); err != nil {
+				return OpsManagedDeviceView{}, err
+			}
+		}
 		sessions, err := s.Devices.ListDeviceSessionsByDeviceID(ctx, item.DeviceID)
 		if err != nil {
 			return OpsManagedDeviceView{}, err
@@ -109,7 +122,7 @@ func (s OpsManagedDeviceService) UpdateDevice(ctx context.Context, input UpdateD
 		}
 		s.recordManagedDeviceAudit(ctx, action, item.DeviceID, now)
 	}
-	return buildManagedDeviceView(ctx, s.Networks, item)
+	return buildManagedDeviceView(ctx, s.Networks, s.DeviceRuntime, item)
 }
 
 func (s OpsManagedDeviceService) publishManagedDeviceIPChange(ctx context.Context, deviceID string) error {

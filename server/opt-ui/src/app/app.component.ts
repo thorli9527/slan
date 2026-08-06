@@ -216,6 +216,7 @@ export class AppComponent implements OnInit, OnDestroy {
   showDeviceDialog = false;
   showDeviceGroupAssignmentDialog = false;
   showCredentialDialog = false;
+  credentialCreating = false;
   showNetworkDialog = false;
   showNetworkBindingDialog = false;
   showDeviceGroupDialog = false;
@@ -243,7 +244,6 @@ export class AppComponent implements OnInit, OnDestroy {
   auditActionFilter = '';
   auditResourceTypeFilter = '';
   auditKeyword = '';
-  credentialForm = { deviceId: '', name: '', scopes: 'standard_device' };
   createdCredentialKey = '';
   selectedNetwork: OpsNetwork | null = null;
   networkDetailId: string | null = null;
@@ -1355,37 +1355,29 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.credentialsForDevice(deviceId).some((credential) => credential.status === 'active');
   }
 
-  openCredentialDialog(deviceId: string | null = null): void {
-    this.credentialForm = {
-      deviceId: deviceId ?? '',
-      name: '', scopes: 'standard_device',
-    };
-    this.createdCredentialKey = '';
-    this.showCredentialDialog = true;
-  }
-
   closeCredentialDialog(): void {
     this.showCredentialDialog = false;
     this.createdCredentialKey = '';
   }
 
   async createDeviceCredential(): Promise<void> {
-    if (!this.credentialForm.name.trim()) {
-      this.apiMessage = '请填写 Key 名称';
+    if (this.credentialCreating) {
       return;
     }
+    this.credentialCreating = true;
+    this.createdCredentialKey = '';
     try {
       const created = await this.request<DeviceCredential & { key: string }>('POST', OPS_API.deviceCredentials, {
-        deviceId: this.credentialForm.deviceId,
-        name: this.credentialForm.name.trim(),
-        scopes: this.credentialForm.scopes,
+        scopes: 'standard_device',
       });
       this.createdCredentialKey = created.key;
       this.deviceCredentials = [this.formatDeviceCredential(created), ...this.deviceCredentials];
+      this.showCredentialDialog = true;
       this.apiMessage = '授权 Key 已创建';
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     } finally {
+      this.credentialCreating = false;
       this.notifyStateChanged();
     }
   }

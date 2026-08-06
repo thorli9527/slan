@@ -2030,7 +2030,8 @@ fn handle_ingest_platform_runtime_state(
 fn handle_activate_device(request: ServiceRequest, runtime: &RuntimeActorHandle) -> Result<String> {
     let input: crate::local_api::ActivateDeviceRequest =
         serde_json::from_value(request.args).context("decode activate device request")?;
-    let session = activate_device_with_key(&input.key).context("activate device")?;
+    let session = activate_device_with_key(&input.key)
+        .map_err(|error| anyhow::anyhow!("activate device: {error:#}"))?;
     let state = runtime.call_named(
         "device.activate",
         session.device_id.clone(),
@@ -3329,6 +3330,9 @@ fn execute_control_task(
         .unwrap_or_else(|error| state_with_error(&runtime.snapshot().state, error.to_string()))
     } else if task.action == ControlTaskAction::DisableNetwork {
         handle_network_deactivate(runtime, "control_task.network.deactivate", correlation_id)
+            .unwrap_or_else(|error| state_with_error(&runtime.snapshot().state, error.to_string()))
+    } else if task.action == ControlTaskAction::DeactivateDevice {
+        handle_local_device_deactivation(runtime, "control_task.device.deactivate", correlation_id)
             .unwrap_or_else(|error| state_with_error(&runtime.snapshot().state, error.to_string()))
     } else {
         unreachable!("control task action handled above")

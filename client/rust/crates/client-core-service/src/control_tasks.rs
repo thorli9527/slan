@@ -36,6 +36,7 @@ impl ControlTaskDirection {
 pub enum ControlTaskAction {
     EnableNetwork,
     DisableNetwork,
+    DeactivateDevice,
     ReconcileNetworkState,
 }
 
@@ -44,6 +45,7 @@ impl ControlTaskAction {
         match self {
             Self::EnableNetwork => "enableNetwork",
             Self::DisableNetwork => "disableNetwork",
+            Self::DeactivateDevice => "deactivateDevice",
             Self::ReconcileNetworkState => "reconcileNetworkState",
         }
     }
@@ -52,6 +54,7 @@ impl ControlTaskAction {
         match value {
             "enableNetwork" => Some(Self::EnableNetwork),
             "disableNetwork" => Some(Self::DisableNetwork),
+            "deactivateDevice" => Some(Self::DeactivateDevice),
             "reconcileNetworkState" => Some(Self::ReconcileNetworkState),
             _ => None,
         }

@@ -153,6 +153,30 @@ void main() {
     );
   });
 
+  test('device control events explicitly stop the native network', () {
+    expect(
+      businessEventForcesNetworkStopped({
+        'businessType': ClientBusinessEventType.sessionChanged,
+        'businessData': {'messageType': 'device_disabled'},
+      }),
+      isTrue,
+    );
+    expect(
+      businessEventForcesNetworkStopped({
+        'businessType': ClientBusinessEventType.networkRuntimeChanged,
+        'businessData': {'messageType': 'device_network_disabled'},
+      }),
+      isTrue,
+    );
+    expect(
+      businessEventForcesNetworkStopped({
+        'businessType': ClientBusinessEventType.controlSyncChanged,
+        'businessData': {'messageType': 'network_event'},
+      }),
+      isFalse,
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('android runtime diagnostics preserve native relay counters', () {
@@ -343,6 +367,101 @@ void main() {
       reason: 'rust business event should be the only UI state writer',
     );
     expect(bridge.state.value.virtualIp, '10.0.0.44');
+  });
+
+  test('android device network disabled event stops the native vpn', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    var businessEventSent = false;
+    var stopVpnCalls = 0;
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'androidStopVpn') {
+        stopVpnCalls += 1;
+        return <String, Object?>{
+          'adapterPresent': false,
+          'networkEnabled': false,
+        };
+      }
+      if (call.method == 'androidWatchNetworkEvent') {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        return null;
+      }
+      if (call.method == 'androidRuntimeState') {
+        return <String, Object?>{
+          'adapterPresent': true,
+          'networkEnabled': true,
+          'virtualIp': '10.0.1.20',
+        };
+      }
+      if (call.method != 'embeddedServiceRequest') {
+        return <String, Object?>{};
+      }
+      final request =
+          jsonDecode(call.arguments as String) as Map<String, Object?>;
+      final method = request['method'] as String;
+      if (method == 'start' || method == 'localEnsureDevice') {
+        return {
+          'activated': true,
+          'networkEnabled': true,
+          'virtualIp': '10.0.1.20',
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      if (method == 'localConnectControlMqtt') {
+        return {
+          'ready': true,
+          'mqttConnected': true,
+          'missing': <String>[],
+        };
+      }
+      if (method == 'localBusinessEventWatch') {
+        if (businessEventSent) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return null;
+        }
+        businessEventSent = true;
+        return {
+          'revision': 1,
+          'businessType': ClientBusinessEventType.networkRuntimeChanged,
+          'businessData': {
+            'activated': true,
+            'networkEnabled': false,
+            'virtualIp': '10.0.1.20',
+            'syncing': false,
+            'switchEnabled': true,
+            'messageType': 'device_network_disabled',
+          },
+          'snapshot': {
+            'activated': true,
+            'networkEnabled': false,
+            'virtualIp': '10.0.1.20',
+            'syncing': false,
+            'switchEnabled': true,
+          },
+        };
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      runtimePlatform: ClientBridgeRuntimePlatform.android,
+      useMobileControlPlane: true,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () => stopVpnCalls == 1 && !bridge.state.value.networkEnabled,
+      reason: 'device network disabled should stop Android VPN exactly once',
+    );
+    expect(stopVpnCalls, 1);
   });
 
   test('mobile start uses embedded service before native state', () async {
@@ -2010,7 +2129,10 @@ void main() {
       () => bridge.state.value.virtualIp == '10.0.0.10',
       reason: 'enable result should settle',
     );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await _waitFor(
+      () => service.seenMethods.contains('localState'),
+      reason: 'terminal business event should reconcile local state',
+    );
     expect(service.seenMethods, isNot(contains('refresh')));
     expect(
         service.seenMethods,
@@ -2029,6 +2151,32 @@ void main() {
 
     expect(state.networkEnabled, isFalse);
     expect(state.virtualIp, '10.0.0.99');
+  });
+
+  test('device activation surfaces local service state errors', () async {
+    final service = await _FakeClientService.start([
+      const _ServiceReply(
+        expectedMethod: 'localActivateDevice',
+        body: {
+          'activated': false,
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+          'error': 'authorization key rejected',
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: service.host,
+    );
+    _closeBridgeOnTearDown(bridge);
+
+    await expectLater(
+      bridge.activateDevice('test-key'),
+      throwsA(equals('authorization key rejected')),
+    );
+    expect(service.seenMethods, ['localActivateDevice']);
   });
 }
 
@@ -2082,6 +2230,11 @@ class _FakeClientService {
       final method = requestJson['method'];
       if (method is String) {
         seenMethods.add(method);
+      }
+      if (method == 'localServerApiSettings') {
+        socket.write('${jsonEncode({'baseUrl': 'http://127.0.0.1:28080'})}\n');
+        await socket.flush();
+        return;
       }
       final reply = _takeReply(method);
       if (reply.expectedMethod != null && method != reply.expectedMethod) {

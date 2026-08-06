@@ -19,7 +19,9 @@ const (
 	deviceCredentialScope            = "standard_device"
 	deviceCredentialKeyIDSize        = 8
 	deviceCredentialSecretSize       = 18
+	deviceCredentialBindingTTL       = 30 * time.Minute
 	invalidDeviceCredentialRetention = 7 * 24 * time.Hour
+	defaultDeviceCredentialName      = "设备授权 Key"
 )
 
 type DeviceCredentialService struct {
@@ -38,7 +40,10 @@ func (s DeviceCredentialService) CreateDeviceCredential(ctx context.Context, inp
 	input.DeviceID = strings.TrimSpace(input.DeviceID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Scopes = strings.TrimSpace(input.Scopes)
-	if input.Name == "" || strings.TrimSpace(s.Pepper) == "" {
+	if input.Name == "" {
+		input.Name = defaultDeviceCredentialName
+	}
+	if strings.TrimSpace(s.Pepper) == "" {
 		return CreatedDeviceCredentialView{}, ErrInvalidArgument
 	}
 	if input.Scopes == "" {
@@ -90,8 +95,13 @@ func (s DeviceCredentialService) ListDeviceCredentials(ctx context.Context, devi
 }
 
 func (s DeviceCredentialService) CleanupInvalidDeviceCredentials(ctx context.Context) (int64, error) {
-	cutoff := currentTime(s.Now).Add(-invalidDeviceCredentialRetention).Unix()
-	return s.Credentials.DeleteInvalidDeviceCredentialsBefore(ctx, cutoff)
+	now := currentTime(s.Now)
+	expired, err := s.Credentials.DeleteExpiredUnboundDeviceCredentialsBefore(ctx, now.Add(-deviceCredentialBindingTTL).Unix())
+	if err != nil {
+		return 0, err
+	}
+	invalid, err := s.Credentials.DeleteInvalidDeviceCredentialsBefore(ctx, now.Add(-invalidDeviceCredentialRetention).Unix())
+	return expired + invalid, err
 }
 
 func (s DeviceCredentialService) RevokeDeviceCredential(ctx context.Context, credentialID string) (DeviceCredentialView, error) {
@@ -153,6 +163,10 @@ func (s DeviceCredentialService) exchangeDeviceCredential(ctx context.Context, i
 		!credentialSecretMatches(credential.SecretHash, secret, s.Pepper, s.PreviousPeppers) {
 		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
+	bindingCutoff := now.Add(-deviceCredentialBindingTTL).Unix()
+	if credential.DeviceID == "" && credential.CreatedAt <= bindingCutoff {
+		return DeviceSessionBoundView{}, ErrUnauthorized
+	}
 	requested := strings.TrimSpace(input.DeviceID)
 	if credential.DeviceID != "" && requested != "" && requested != credential.DeviceID {
 		return DeviceSessionBoundView{}, ErrUnauthorized
@@ -164,7 +178,7 @@ func (s DeviceCredentialService) exchangeDeviceCredential(ctx context.Context, i
 		if err := s.revokeOtherActiveDeviceCredentials(ctx, requested, credential.CredentialID); err != nil {
 			return DeviceSessionBoundView{}, err
 		}
-		bound, err := s.Credentials.BindDeviceCredential(ctx, credential.CredentialID, requested, now.Unix())
+		bound, err := s.Credentials.BindDeviceCredential(ctx, credential.CredentialID, requested, bindingCutoff, now.Unix())
 		if err != nil {
 			return DeviceSessionBoundView{}, err
 		}
@@ -200,6 +214,10 @@ func (s DeviceCredentialService) exchangeDeviceCredential(ctx context.Context, i
 			Status: "active", CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 		}
 	} else {
+		if device.Status != "active" {
+			device.Status = "active"
+			deviceChanged = true
+		}
 		if input.Platform != "" && device.Platform != input.Platform {
 			device.Platform = input.Platform
 			deviceChanged = true
@@ -211,9 +229,6 @@ func (s DeviceCredentialService) exchangeDeviceCredential(ctx context.Context, i
 		if deviceChanged {
 			device.UpdatedAt = now.Unix()
 		}
-	}
-	if device.Status != "active" {
-		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
 	if !managedDeviceVirtualIP(device.VirtualIP) {
 		if err := s.assignAndSaveDeviceVirtualIP(ctx, &device); err != nil {

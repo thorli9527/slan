@@ -196,22 +196,15 @@
 <div class="modal-backdrop" *ngIf="showCredentialDialog">
   <section class="modal">
     <div class="modal-header">
-      <div><h2>创建授权 Key</h2><p>完整 Key 仅显示一次，关闭后无法再次查看。</p></div>
+      <div><h2>授权 Key 已创建</h2><p>完整 Key 仅显示一次，关闭后无法再次查看。</p></div>
       <button class="icon-close" type="button" title="关闭" (click)="closeCredentialDialog()">x</button>
     </div>
-    <div class="form-grid" *ngIf="!createdCredentialKey">
-      <label><span>绑定设备</span><select [(ngModel)]="credentialForm.deviceId"><option value="">首次激活时自动绑定</option><option *ngFor="let device of devices" [value]="device.deviceId">{{ device.name || device.deviceId }}</option></select></label>
-      <label><span>名称</span><input [(ngModel)]="credentialForm.name" placeholder="例如：办公室网关"></label>
-      <label><span>权限模板</span><select [(ngModel)]="credentialForm.scopes"><option value="standard_device">standard_device</option></select></label>
-      <p class="form-notice">授权 Key 永久有效，直到运营人员主动吊销。</p>
-    </div>
-    <div class="form-grid" *ngIf="createdCredentialKey">
+    <div class="form-grid">
       <label><span>完整授权 Key</span><textarea [value]="createdCredentialKey" readonly rows="4"></textarea></label>
-      <p class="form-notice success">离开此窗口后，服务端不会再次返回完整 Key。</p>
+      <p class="form-notice success">可绑定新设备或已有设备；30 分钟内未绑定将自动回收。</p>
     </div>
     <div class="modal-footer">
       <button class="ghost" type="button" (click)="closeCredentialDialog()">关闭</button>
-      <button class="primary" type="button" *ngIf="!createdCredentialKey" (click)="createDeviceCredential()">创建</button>
     </div>
   </section>
 </div>

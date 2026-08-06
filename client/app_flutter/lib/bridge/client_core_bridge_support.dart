@@ -39,6 +39,21 @@ bool businessEventSettlesNetworkToggle(String? type) {
       type == ClientBusinessEventType.networkSwitchFailed;
 }
 
+bool businessEventForcesNetworkStopped(Map<String, Object?> event) {
+  final type = businessEventType(event);
+  if (type != ClientBusinessEventType.sessionChanged &&
+      type != ClientBusinessEventType.networkRuntimeChanged) {
+    return false;
+  }
+  final data = event['businessData'];
+  if (data is! Map) {
+    return false;
+  }
+  final messageType = data['messageType'];
+  return messageType == 'device_disabled' ||
+      messageType == 'device_network_disabled';
+}
+
 Map<String, Object?> businessEventReceivedLogFields(
   String? type, {
   Map<String, Object?>? businessDataMap,

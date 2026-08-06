@@ -82,6 +82,8 @@ services:
       SLAN_SERVICE_BIZ_DB_NAME: slan
       SLAN_SERVICE_BIZ_DB_SSLMODE: disable
       SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+      SLAN_BIZ_REDIS_ADDR: redis:6379
+      SLAN_DEVICE_RUNTIME_TTL: "${SLAN_DEVICE_RUNTIME_TTL:-45s}"
       SLAN_CLIENT_LOG_DIR: /var/lib/slan/client-logs
     ports:
       - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
@@ -90,6 +92,8 @@ services:
       - ./deploy/geoip:/opt/slan/geoip:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   server-biz-ops:
@@ -129,12 +133,16 @@ services:
       SLAN_SERVICE_BIZ_DB_NAME: slan
       SLAN_SERVICE_BIZ_DB_SSLMODE: disable
       SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+      SLAN_BIZ_REDIS_ADDR: redis:6379
+      SLAN_DEVICE_RUNTIME_TTL: "${SLAN_DEVICE_RUNTIME_TTL:-45s}"
     ports:
       - "${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}:8080"
     volumes:
       - ./deploy/geoip:/opt/slan/geoip:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   server-wire:

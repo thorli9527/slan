@@ -908,6 +908,16 @@ pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device:
             session.active_network_id = Some(network_id.to_string());
         }
     }
+    if let Some(virtual_ip) = device
+        .global_ip
+        .as_deref()
+        .or(device.current_virtual_ip.as_deref())
+        .or(device.virtual_ip.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        session.virtual_ip = Some(virtual_ip.to_string());
+    }
     if let Some(mqtt) = device.mqtt.clone() {
         session.mqtt = Some(normalize_mqtt_credential(mqtt));
     }
@@ -1406,7 +1416,7 @@ mod tests {
                 active_network_id: Some("net-1".to_string()),
                 status: None,
                 membership_status: None,
-                current_virtual_ip: None,
+                current_virtual_ip: Some("10.0.1.63".to_string()),
                 virtual_ip: None,
                 global_ip: None,
                 global_name: None,
@@ -1416,5 +1426,6 @@ mod tests {
 
         assert_eq!(session.device_id.as_deref(), Some("remote-device"));
         assert_eq!(session.active_network_id.as_deref(), Some("net-1"));
+        assert_eq!(session.virtual_ip.as_deref(), Some("10.0.1.63"));
     }
 }

@@ -157,38 +157,35 @@ func (s MQTTWebhookService) handlePresenceMessage(ctx context.Context, topic str
 	if deviceID == "" || payloadDeviceID == "" || payloadDeviceID != deviceID {
 		return fmt.Errorf("mqtt presence device mismatch topic=%s payloadDeviceId=%s", deviceID, payloadDeviceID)
 	}
-	networkID := stringMapValue(values, "activeNetworkId")
-	if networkID == "" {
-		return fmt.Errorf("mqtt presence active network missing deviceId=%s", deviceID)
+	if s.Devices != nil {
+		if _, ok, err := s.Devices.GetDevice(ctx, deviceID); err != nil {
+			return err
+		} else if !ok {
+			return ErrNotFound
+		}
 	}
-	items, err := s.Networks.ListNetworkDevices(ctx, networkID)
-	if err != nil {
-		return err
+	if s.DeviceRuntime == nil {
+		return fmt.Errorf("device runtime repository is not configured")
 	}
 	now := currentTime(s.Now)
-	for _, item := range items {
-		if item.DeviceID != deviceID || !networkMemberActive(item) {
-			continue
-		}
-		wasOnline := networkMemberOnlineAt(item, now)
-		updated := item
-		updated.LastSeenAt = now.Unix()
-		if heartbeat {
-			updated.LastHeartbeatAt = now.Unix()
-		} else {
-			updated.LastRuntimeStateAt = now.Unix()
-		}
-		updated.PresenceStatus = model.DevicePresenceStatusActive
-		updated.UpdatedAt = now.Unix()
-		if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
-			return err
-		}
-		if !wasOnline {
-			return publishDevicePresenceChanged(ctx, s.EventPublisher, now, networkID, deviceID, updated)
-		}
-		return nil
+	ttl := s.DeviceRuntimeTTL
+	if ttl <= 0 {
+		ttl = 45 * time.Second
 	}
-	return ErrNotFound
+	state := model.DeviceRuntimeState{
+		DeviceID:         deviceID,
+		ApplicationState: firstNonEmpty(stringMapValue(values, "applicationState"), "running"),
+		Activated:        boolMapValue(values, "activated"),
+		NetworkEnabled:   boolMapValue(values, "networkEnabled"),
+		VirtualIP:        stringMapValue(values, "virtualIp"),
+		LastSeenAt:       now.Unix(),
+	}
+	if heartbeat {
+		state.LastHeartbeatAt = now.Unix()
+		return s.DeviceRuntime.RefreshDeviceHeartbeat(ctx, state, ttl)
+	}
+	state.LastRuntimeStateAt = now.Unix()
+	return s.DeviceRuntime.RefreshDeviceNetworkState(ctx, state, ttl)
 }
 
 func consumerBrokerURL(cfg mqttkit.Config, fallback string) string {

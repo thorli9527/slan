@@ -23,9 +23,9 @@ func (s *GormStore) GetDeviceCredentialByKeyID(_ context.Context, keyID string) 
 	return firstModel(s.db.Where("key_id = ?", keyID), func(row gormDeviceCredentialRecord) model.DeviceCredential { return row.model() })
 }
 
-func (s *GormStore) BindDeviceCredential(_ context.Context, credentialID, deviceID string, now int64) (bool, error) {
+func (s *GormStore) BindDeviceCredential(_ context.Context, credentialID, deviceID string, createdAfter, now int64) (bool, error) {
 	result := s.db.Model(&gormDeviceCredentialRecord{}).
-		Where("credential_id = ? AND device_id = ? AND status = ?", credentialID, "", model.DeviceCredentialStatusActive).
+		Where("credential_id = ? AND device_id = ? AND status = ? AND created_at > ?", credentialID, "", model.DeviceCredentialStatusActive, createdAfter).
 		Updates(map[string]any{"device_id": deviceID, "updated_at": now})
 	return result.RowsAffected == 1, result.Error
 }
@@ -59,6 +59,13 @@ func (s *GormStore) DeleteInvalidDeviceCredentialsBefore(_ context.Context, cuto
 		return result.Error
 	})
 	return deleted, err
+}
+
+func (s *GormStore) DeleteExpiredUnboundDeviceCredentialsBefore(_ context.Context, cutoff int64) (int64, error) {
+	result := s.db.
+		Where("status = ? AND device_id = ? AND created_at <= ?", model.DeviceCredentialStatusActive, "", cutoff).
+		Delete(&gormDeviceCredentialRecord{})
+	return result.RowsAffected, result.Error
 }
 
 func (s *GormStore) SaveDeviceCredential(_ context.Context, item model.DeviceCredential) error {

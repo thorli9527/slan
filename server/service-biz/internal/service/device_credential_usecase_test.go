@@ -16,6 +16,7 @@ type deviceCredentialTestStore struct {
 	revokeOnMark                  bool
 	enforceActiveDeviceUniqueness bool
 	cleanupCutoff                 int64
+	unboundCleanupCutoff          int64
 }
 
 type deviceCredentialTestAudit struct {
@@ -63,9 +64,9 @@ func (s *deviceCredentialTestStore) SaveDeviceCredential(_ context.Context, item
 	return nil
 }
 
-func (s *deviceCredentialTestStore) BindDeviceCredential(_ context.Context, credentialID, deviceID string, updatedAt int64) (bool, error) {
+func (s *deviceCredentialTestStore) BindDeviceCredential(_ context.Context, credentialID, deviceID string, createdAfter, updatedAt int64) (bool, error) {
 	item, ok := s.items[credentialID]
-	if !ok || item.DeviceID != "" || item.Status != model.DeviceCredentialStatusActive {
+	if !ok || item.DeviceID != "" || item.Status != model.DeviceCredentialStatusActive || item.CreatedAt <= createdAfter {
 		return false, nil
 	}
 	if s.enforceActiveDeviceUniqueness {
@@ -143,6 +144,18 @@ func (s *deviceCredentialTestStore) DeleteInvalidDeviceCredentialsBefore(_ conte
 	return deleted, nil
 }
 
+func (s *deviceCredentialTestStore) DeleteExpiredUnboundDeviceCredentialsBefore(_ context.Context, cutoff int64) (int64, error) {
+	s.unboundCleanupCutoff = cutoff
+	var deleted int64
+	for credentialID, item := range s.items {
+		if item.Status == model.DeviceCredentialStatusActive && item.DeviceID == "" && item.CreatedAt <= cutoff {
+			delete(s.items, credentialID)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 func TestCleanupInvalidDeviceCredentialsKeepsActiveAndRecentlyRevokedKeys(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &deviceCredentialTestStore{items: map[string]model.DeviceCredential{
@@ -156,7 +169,12 @@ func TestCleanupInvalidDeviceCredentialsKeepsActiveAndRecentlyRevokedKeys(t *tes
 		},
 		"old-active": {
 			CredentialID: "old-active", Status: model.DeviceCredentialStatusActive,
+			DeviceID:  "device-1",
 			UpdatedAt: now.Add(-30 * 24 * time.Hour).Unix(),
+		},
+		"expired-unbound": {
+			CredentialID: "expired-unbound", Status: model.DeviceCredentialStatusActive,
+			CreatedAt: now.Add(-31 * time.Minute).Unix(), UpdatedAt: now.Add(-31 * time.Minute).Unix(),
 		},
 	}}
 	service := DeviceCredentialService{Credentials: store, Now: func() time.Time { return now }}
@@ -165,8 +183,11 @@ func TestCleanupInvalidDeviceCredentialsKeepsActiveAndRecentlyRevokedKeys(t *tes
 	if err != nil {
 		t.Fatalf("CleanupInvalidDeviceCredentials returned error: %v", err)
 	}
-	if deleted != 1 {
-		t.Fatalf("deleted credentials = %d, want 1", deleted)
+	if deleted != 2 {
+		t.Fatalf("deleted credentials = %d, want 2", deleted)
+	}
+	if store.unboundCleanupCutoff != now.Add(-30*time.Minute).Unix() {
+		t.Fatalf("unbound cleanup cutoff = %d, want %d", store.unboundCleanupCutoff, now.Add(-30*time.Minute).Unix())
 	}
 	if store.cleanupCutoff != now.Add(-7*24*time.Hour).Unix() {
 		t.Fatalf("cleanup cutoff = %d, want %d", store.cleanupCutoff, now.Add(-7*24*time.Hour).Unix())
@@ -179,6 +200,9 @@ func TestCleanupInvalidDeviceCredentialsKeepsActiveAndRecentlyRevokedKeys(t *tes
 	}
 	if _, ok := store.items["old-active"]; !ok {
 		t.Fatal("active credential was deleted")
+	}
+	if _, ok := store.items["expired-unbound"]; ok {
+		t.Fatal("expired unbound credential was not deleted")
 	}
 }
 
@@ -415,12 +439,44 @@ func TestUnboundDeviceCredentialBindsAndCreatesDeviceOnFirstExchange(t *testing.
 	}
 }
 
+func TestUnboundDeviceCredentialExpiresBeforeFirstExchange(t *testing.T) {
+	createdAt := time.Unix(1_700_000_000, 0)
+	now := createdAt
+	devices := &deviceSessionTestDevices{networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{}}}
+	credentials := &deviceCredentialTestStore{}
+	service := DeviceCredentialService{
+		Devices: devices, Credentials: credentials,
+		Networks: &deviceSessionTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
+			networks: map[string]model.Network{}, networkDevices: map[string][]model.NetworkDevice{},
+		}},
+		MQTT: mqttkit.DefaultConfig(), Pepper: "test-pepper",
+		NewSessID: func(scope string) string { return scope + "-1" }, Now: func() time.Time { return now },
+	}
+
+	created, err := service.CreateDeviceCredential(context.Background(), CreateDeviceCredentialInput{})
+	if err != nil {
+		t.Fatalf("CreateDeviceCredential returned error: %v", err)
+	}
+	if created.Name != defaultDeviceCredentialName {
+		t.Fatalf("default credential name = %q, want %q", created.Name, defaultDeviceCredentialName)
+	}
+	now = createdAt.Add(deviceCredentialBindingTTL)
+	if _, err := service.ExchangeDeviceCredential(context.Background(), ExchangeDeviceCredentialInput{
+		Key: created.Key, DeviceID: "device-late",
+	}); err != ErrUnauthorized {
+		t.Fatalf("expired credential exchange error = %v, want %v", err, ErrUnauthorized)
+	}
+	if _, ok := devices.devices["device-late"]; ok {
+		t.Fatal("expired credential created a device")
+	}
+}
+
 func TestDeviceCredentialExchangeUpdatesExistingDeviceClientMetadata(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	devices := &deviceSessionTestDevices{networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
 		"device-1": {
 			DeviceID: "device-1", Name: "gateway", Platform: "unknown",
-			VirtualIP: "10.0.1.9", Status: "active",
+			VirtualIP: "10.0.1.9", Status: "disabled",
 		},
 	}}}
 	credentials := &deviceCredentialTestStore{}
@@ -433,9 +489,7 @@ func TestDeviceCredentialExchangeUpdatesExistingDeviceClientMetadata(t *testing.
 		NewSessID: func(scope string) string { return scope + "-1" }, Now: func() time.Time { return now },
 	}
 
-	created, err := service.CreateDeviceCredential(context.Background(), CreateDeviceCredentialInput{
-		DeviceID: "device-1", Name: "installer",
-	})
+	created, err := service.CreateDeviceCredential(context.Background(), CreateDeviceCredentialInput{Name: "installer"})
 	if err != nil {
 		t.Fatalf("CreateDeviceCredential returned error: %v", err)
 	}
@@ -445,8 +499,11 @@ func TestDeviceCredentialExchangeUpdatesExistingDeviceClientMetadata(t *testing.
 		t.Fatalf("ExchangeDeviceCredential returned error: %v", err)
 	}
 	device := devices.devices["device-1"]
-	if device.Platform != "macos" || device.DeviceVersion != "0.1.0" {
+	if device.Platform != "macos" || device.DeviceVersion != "0.1.0" || device.Status != "active" {
 		t.Fatalf("existing device client metadata was not updated: %+v", device)
+	}
+	if credentials.items[created.CredentialID].DeviceID != "device-1" {
+		t.Fatalf("generic credential was not bound to the existing device: %+v", credentials.items[created.CredentialID])
 	}
 }
 
@@ -481,7 +538,7 @@ func TestDeviceCredentialFirstExchangeRetriesVirtualIPConflict(t *testing.T) {
 	}
 }
 
-func TestDeviceCredentialCreatesPermanentAuthorizationKey(t *testing.T) {
+func TestBoundDeviceCredentialRemainsValidForDeviceSessionRenewal(t *testing.T) {
 	createdAt := time.Unix(1_700_000_000, 0)
 	now := createdAt
 	devices := &deviceSessionTestDevices{networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{

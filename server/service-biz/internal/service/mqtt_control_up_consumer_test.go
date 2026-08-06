@@ -80,61 +80,79 @@ func TestDecodeControlUpPathHealthReport(t *testing.T) {
 	}
 }
 
-func TestHandleUpstreamPresenceMessagesRefreshMembership(t *testing.T) {
+type runtimePresenceTestStore struct {
+	heartbeat model.DeviceRuntimeState
+	runtime   model.DeviceRuntimeState
+	ttl       time.Duration
+}
+
+func (s *runtimePresenceTestStore) GetDeviceRuntime(context.Context, string) (model.DeviceRuntimeState, bool, error) {
+	return model.DeviceRuntimeState{}, false, nil
+}
+
+func (s *runtimePresenceTestStore) RefreshDeviceHeartbeat(_ context.Context, state model.DeviceRuntimeState, ttl time.Duration) error {
+	s.heartbeat, s.ttl = state, ttl
+	return nil
+}
+
+func (s *runtimePresenceTestStore) RefreshDeviceNetworkState(_ context.Context, state model.DeviceRuntimeState, ttl time.Duration) error {
+	s.runtime, s.ttl = state, ttl
+	return nil
+}
+
+func TestHandleUpstreamPresenceMessagesRefreshRuntimeLease(t *testing.T) {
 	now := time.Unix(1700003000, 0)
 	for _, test := range []struct {
-		name               string
-		topicSuffix        string
-		wantHeartbeatAt    int64
-		wantRuntimeStateAt int64
+		name        string
+		topicSuffix string
+		payload     string
+		assert      func(*testing.T, *runtimePresenceTestStore)
 	}{
-		{name: "heartbeat", topicSuffix: "heartbeat", wantHeartbeatAt: now.Unix()},
-		{name: "runtime state", topicSuffix: "runtime-state", wantRuntimeStateAt: now.Unix()},
+		{
+			name: "heartbeat", topicSuffix: "heartbeat",
+			payload: `{"deviceId":"device-a","applicationState":"running","activated":true,"reportedAtMs":1700003000000}`,
+			assert: func(t *testing.T, store *runtimePresenceTestStore) {
+				if store.heartbeat.LastHeartbeatAt != now.Unix() || !store.heartbeat.Activated {
+					t.Fatalf("unexpected heartbeat lease: %#v", store.heartbeat)
+				}
+			},
+		},
+		{
+			name: "runtime state", topicSuffix: "runtime-state",
+			payload: `{"deviceId":"device-a","applicationState":"running","networkEnabled":true,"virtualIp":"10.0.1.2","reportedAtMs":1700003000000}`,
+			assert: func(t *testing.T, store *runtimePresenceTestStore) {
+				if store.runtime.LastRuntimeStateAt != now.Unix() || !store.runtime.NetworkEnabled || store.runtime.VirtualIP != "10.0.1.2" {
+					t.Fatalf("unexpected runtime lease: %#v", store.runtime)
+				}
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			networks := &networkRuntimeTestNetworks{
-				networks: map[string]model.Network{
-					"net-a": {NetworkID: "net-a", Status: "active"},
-				},
-				networkDevices: map[string][]model.NetworkDevice{
-					"net-a": {{
-						NetworkID:      "net-a",
-						DeviceID:       "device-a",
-						Enabled:        true,
-						MemberStatus:   model.NetworkMemberStatusActive,
-						PresenceStatus: model.DevicePresenceStatusOffline,
-					}},
-				},
-			}
+			store := &runtimePresenceTestStore{}
 			service := MQTTWebhookService{
-				Networks: networks,
-				Now:      func() time.Time { return now },
+				DeviceRuntime:    store,
+				DeviceRuntimeTTL: 45 * time.Second,
+				Now:              func() time.Time { return now },
 			}
 
 			err := service.HandleUpstreamMessage(
 				context.Background(),
 				"slan/devices/device-a/"+test.topicSuffix,
-				[]byte(`{"deviceId":"device-a","activeNetworkId":"net-a","reportedAtMs":1700003000000}`),
+				[]byte(test.payload),
 			)
 			if err != nil {
 				t.Fatalf("HandleUpstreamMessage returned error: %v", err)
 			}
-			if len(networks.savedNetworkDevices) != 1 {
-				t.Fatalf("expected one membership update, got %d", len(networks.savedNetworkDevices))
+			if store.ttl != 45*time.Second {
+				t.Fatalf("unexpected runtime TTL: %s", store.ttl)
 			}
-			saved := networks.savedNetworkDevices[0]
-			if saved.LastSeenAt != now.Unix() || saved.PresenceStatus != model.DevicePresenceStatusActive {
-				t.Fatalf("unexpected presence update: %#v", saved)
-			}
-			if saved.LastHeartbeatAt != test.wantHeartbeatAt || saved.LastRuntimeStateAt != test.wantRuntimeStateAt {
-				t.Fatalf("unexpected message timestamp update: %#v", saved)
-			}
+			test.assert(t, store)
 		})
 	}
 }
 
 func TestHandleUpstreamPresenceRejectsDeviceMismatch(t *testing.T) {
-	service := MQTTWebhookService{Networks: &networkRuntimeTestNetworks{}}
+	service := MQTTWebhookService{DeviceRuntime: &runtimePresenceTestStore{}}
 	err := service.HandleUpstreamMessage(
 		context.Background(),
 		"slan/devices/device-a/heartbeat",

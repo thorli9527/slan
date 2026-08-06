@@ -55,7 +55,7 @@ func (h DeviceCredentialHandler) CreateForDevice(w http.ResponseWriter, r *http.
 
 func (h DeviceCredentialHandler) create(w http.ResponseWriter, r *http.Request, deviceID string) {
 	var req createDeviceCredentialRequest
-	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+	if !serviceapi.DecodeJSONIfPresentOrError(w, r, &req) {
 		return
 	}
 	if deviceID != "" {

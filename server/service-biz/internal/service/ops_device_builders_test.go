@@ -2,40 +2,37 @@ package service
 
 import (
 	"testing"
-	"time"
 
 	"github.com/slan/service-biz/internal/model"
 )
 
-func TestDeviceHeartbeatOnlineAtSeparatesPresenceFromNetworkState(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-
+func TestDeviceRuntimeOnlineSeparatesApplicationFromNetworkState(t *testing.T) {
 	tests := []struct {
-		name   string
-		device model.Device
-		want   bool
+		name  string
+		state model.DeviceRuntimeState
+		want  bool
 	}{
 		{
-			name:   "recent active heartbeat",
-			device: model.Device{Status: "active", LastSeenAt: now.Add(-time.Minute).Unix()},
-			want:   true,
+			name:  "running with network enabled",
+			state: model.DeviceRuntimeState{ApplicationState: "running", NetworkEnabled: true},
+			want:  true,
 		},
 		{
-			name:   "stale active heartbeat",
-			device: model.Device{Status: "active", LastSeenAt: now.Add(-3 * time.Minute).Unix()},
-			want:   false,
+			name:  "running with network disabled",
+			state: model.DeviceRuntimeState{ApplicationState: "running", NetworkEnabled: false},
+			want:  true,
 		},
 		{
-			name:   "recent disabled device",
-			device: model.Device{Status: "inactive", LastSeenAt: now.Unix()},
-			want:   false,
+			name:  "stopped",
+			state: model.DeviceRuntimeState{ApplicationState: "stopped", NetworkEnabled: true},
+			want:  false,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := deviceHeartbeatOnlineAt(test.device, now); got != test.want {
-				t.Fatalf("deviceHeartbeatOnlineAt() = %v, want %v", got, test.want)
+			if got := deviceRuntimeOnline(test.state); got != test.want {
+				t.Fatalf("deviceRuntimeOnline() = %v, want %v", got, test.want)
 			}
 		})
 	}

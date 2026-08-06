@@ -54,13 +54,15 @@ type OpsCustomerService struct {
 }
 
 type OpsManagedDeviceService struct {
-	Devices        repository.DeviceRepository
-	Inventory      repository.DeviceInventoryRepository
-	Networks       repository.NetworkRepository
-	Audit          repository.AuditRepository
-	EventPublisher NetworkEventPublisher
-	NewDeviceID    func() string
-	Now            func() time.Time
+	Devices         repository.DeviceRepository
+	Inventory       repository.DeviceInventoryRepository
+	Networks        repository.NetworkRepository
+	Audit           repository.AuditRepository
+	EventPublisher  NetworkEventPublisher
+	DevicePublisher DeviceControlPublisher
+	DeviceRuntime   repository.DeviceRuntimeRepository
+	NewDeviceID     func() string
+	Now             func() time.Time
 }
 
 func opsNow(now func() time.Time) time.Time {

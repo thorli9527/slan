@@ -45,7 +45,7 @@ func startDeviceCredentialCleanup(server *serviceapp.Server) {
 		}
 	}
 	run()
-	ticker := time.NewTicker(time.Hour)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
 		run()

@@ -44,3 +44,16 @@ func TestAllowTopicAccessAllowsServerSubscribeToControlAck(t *testing.T) {
 		t.Fatalf("expected device subscribe to control/ack wildcard to be denied")
 	}
 }
+
+func TestAllowTopicAccessAllowsServerSubscribeToDeviceRuntimeState(t *testing.T) {
+	cfg := DefaultConfig()
+
+	for _, topic := range []string{
+		"slan/devices/+/heartbeat",
+		"slan/devices/+/runtime-state",
+	} {
+		if !AllowTopicAccess(cfg, "server", "", topic, true) {
+			t.Fatalf("expected server subscription to %s to be allowed", topic)
+		}
+	}
+}

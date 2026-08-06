@@ -8,7 +8,9 @@ func newDefaultContainerDependencies() ContainerDependencies {
 			Gorm: repository.GormConfig{},
 		},
 		Runtime: Runtime{
-			MQTTConfig: newMQTTConfig(),
+			MQTTConfig:       newMQTTConfig(),
+			DeviceRuntime:    newDeviceRuntimeRepository(),
+			DeviceRuntimeTTL: deviceRuntimeTTL(),
 		},
 	}
 }

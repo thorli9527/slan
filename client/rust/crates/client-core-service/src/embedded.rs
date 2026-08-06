@@ -36,7 +36,8 @@ use crate::{
         LocalResolverResolveRequest, LocalServiceMethod, PlatformRuntimeStateReportRequest,
         SendClientMessageRequest, ServiceRequest, WatchBusinessEventRequest,
         WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
-        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_STATE_CHANGED,
+        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_SESSION_CHANGED,
+        BUSINESS_STATE_CHANGED,
     },
     mobile_platform_config::{MobilePlatformDeviceNetworkConfig, MobilePlatformNetworkConfig},
     network_event::{
@@ -1422,6 +1423,7 @@ fn spawn_embedded_mqtt_consumer(
                     let business_ack_result = if ack_result.is_ok() {
                         publish_embedded_downstream_business_ack(
                             &mut client,
+                            &downstream_topic,
                             &publish.payload,
                             consume_result.as_ref().err().map(|error| error.to_string()),
                         )
@@ -1803,6 +1805,7 @@ fn embedded_downstream_message_type(payload: &[u8]) -> Option<String> {
 
 fn publish_embedded_downstream_business_ack(
     client: &mut ThinControlMqttClient,
+    downstream_topic: &str,
     payload: &[u8],
     error: Option<String>,
 ) -> std::result::Result<(), String> {
@@ -1810,12 +1813,10 @@ fn publish_embedded_downstream_business_ack(
     let Some((delivery_id, action)) = embedded_downstream_ack_identity(&value) else {
         return Ok(());
     };
-    let session = load_session().map_err(|err| err.to_string())?;
-    let mqtt = session
-        .mqtt
-        .as_ref()
-        .ok_or_else(|| "embedded mqtt ack missing mqtt credential".to_string())?;
-    let topic = format!("{}/control/ack", mqtt.topic_prefix.trim_end_matches('/'));
+    let topic_prefix = downstream_topic
+        .strip_suffix("/control/down")
+        .ok_or_else(|| format!("invalid embedded downstream topic: {downstream_topic}"))?;
+    let topic = format!("{topic_prefix}/control/ack");
     let status = if error.is_some() {
         "failed"
     } else {
@@ -1845,6 +1846,8 @@ fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static s
     let action = match message_type {
         "network_event" => "reconcileNetworkState",
         "device_ip_reassigned" => "reconcileNetworkState",
+        "device_disabled" => "deactivateDevice",
+        "device_network_disabled" => "disableNetwork",
         "client_message" => "clientMessage",
         _ => return None,
     };
@@ -1891,6 +1894,8 @@ fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
     );
     match message_type {
         "network_event" => ingest_embedded_network_event(&value),
+        "device_disabled" => ingest_embedded_device_disabled(&value),
+        "device_network_disabled" => ingest_embedded_device_network_disabled(&value),
         "device_network_membership_changed" => {
             ingest_embedded_device_network_membership_changed(&value)
         }
@@ -1898,6 +1903,88 @@ fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
         "client_message" => persist_embedded_client_message(&value),
         _ => Ok(()),
     }
+}
+
+fn embedded_control_event_targets_session(value: &Value, session: &PersistedSession) -> bool {
+    let target_device_id = value
+        .get("payload")
+        .and_then(|payload| payload.get("deviceId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let session_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    target_device_id.is_some() && target_device_id == session_device_id
+}
+
+fn ingest_embedded_device_disabled(value: &Value) -> Result<()> {
+    let session = load_session().context("load embedded device disable session")?;
+    if !embedded_control_event_targets_session(value, &session) {
+        return Ok(());
+    }
+    let message_id = value
+        .get("messageId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let device_id = session.device_id.clone();
+    let reason = value
+        .get("payload")
+        .and_then(|payload| payload.get("reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let state = dispatch_embedded(ClientCommand::DeactivateDevice, message_id.clone())?;
+    publish_embedded_business_event(
+        BUSINESS_SESSION_CHANGED,
+        serde_json::json!({
+            "messageType": "device_disabled",
+            "messageId": message_id,
+            "deviceId": device_id,
+            "reason": reason,
+        }),
+        &state,
+    );
+    Ok(())
+}
+
+fn ingest_embedded_device_network_disabled(value: &Value) -> Result<()> {
+    let session = load_session().context("load embedded network disable session")?;
+    if !embedded_control_event_targets_session(value, &session) {
+        return Ok(());
+    }
+    let message_id = value
+        .get("messageId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let device_id = session.device_id.clone();
+    let reason = value
+        .get("payload")
+        .and_then(|payload| payload.get("reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let state = dispatch_embedded(ClientCommand::DisableNetwork, message_id.clone())?;
+    publish_embedded_business_event(
+        BUSINESS_NETWORK_RUNTIME_CHANGED,
+        serde_json::json!({
+            "messageType": "device_network_disabled",
+            "messageId": message_id,
+            "deviceId": device_id,
+            "reason": reason,
+            "reconfigureRequired": true,
+        }),
+        &state,
+    );
+    Ok(())
 }
 
 fn ingest_embedded_device_network_membership_changed(value: &Value) -> Result<()> {
@@ -2821,7 +2908,7 @@ mod tests {
     use serde_json::Value;
     use std::time::Duration;
 
-    use crate::session_store::{persist_session, PersistedSession};
+    use crate::session_store::{load_session, persist_session, PersistedSession};
 
     use super::{
         embedded_handle_request_json, reconcile_embedded_active_network_state,
@@ -3452,6 +3539,134 @@ mod tests {
             super::embedded_downstream_ack_identity(&value),
             Some(("event-msg-1".to_string(), "reconcileNetworkState"))
         );
+    }
+
+    #[test]
+    fn embedded_device_network_disabled_stops_network_and_keeps_session() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-network-disabled-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        super::runtime().events().reset();
+        super::runtime()
+            .call(|runtime| {
+                runtime.dispatch(ClientCommand::DeactivateDevice)?;
+                runtime.dispatch(ClientCommand::ApplyDeviceSession(DeviceSessionPayload {
+                    device_id: Some("device-control-test".to_string()),
+                    virtual_ip: Some("10.0.1.20".to_string()),
+                }))?;
+                runtime.dispatch(ClientCommand::ApplyPlatformRuntimeState(
+                    NetworkRuntimeState {
+                        adapter_present: true,
+                        network_enabled: true,
+                        virtual_ip: Some("10.0.1.20".to_string()),
+                        active_path: None,
+                        peer_paths: Vec::new(),
+                    },
+                ))?;
+                Ok(())
+            })
+            .expect("seed embedded runtime");
+        let mut session = PersistedSession::empty();
+        session.access_token = "token-control-test".to_string();
+        session.device_id = Some("device-control-test".to_string());
+        session.virtual_ip = Some("10.0.1.20".to_string());
+        persist_session(&session).expect("persist embedded session");
+
+        super::ingest_embedded_downstream_publish(
+            serde_json::json!({
+                "type": "device_network_disabled",
+                "messageId": "disable-network-1",
+                "payload": {"deviceId": "device-control-test"}
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("ingest network disabled");
+
+        let state = super::runtime().snapshot().state;
+        assert!(state.activated);
+        assert!(!state.network_enabled);
+        assert!(load_session().is_ok());
+        let event = watch_embedded_business_event(0, false, None, Duration::ZERO);
+        assert_eq!(event.business_type, BUSINESS_NETWORK_RUNTIME_CHANGED);
+        assert_eq!(
+            event
+                .business_data
+                .get("messageType")
+                .and_then(Value::as_str),
+            Some("device_network_disabled")
+        );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn embedded_device_disabled_deactivates_and_removes_session() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-device-disabled-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        super::runtime().events().reset();
+        super::runtime()
+            .call(|runtime| {
+                runtime.dispatch(ClientCommand::DeactivateDevice)?;
+                runtime.dispatch(ClientCommand::ApplyDeviceSession(DeviceSessionPayload {
+                    device_id: Some("device-control-test".to_string()),
+                    virtual_ip: Some("10.0.1.20".to_string()),
+                }))?;
+                Ok(())
+            })
+            .expect("seed embedded runtime");
+        let mut session = PersistedSession::empty();
+        session.access_token = "token-control-test".to_string();
+        session.device_id = Some("device-control-test".to_string());
+        persist_session(&session).expect("persist embedded session");
+
+        super::ingest_embedded_downstream_publish(
+            serde_json::json!({
+                "type": "device_disabled",
+                "messageId": "disable-device-1",
+                "payload": {"deviceId": "device-control-test"}
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("ingest device disabled");
+
+        assert!(!super::runtime().snapshot().state.activated);
+        assert!(load_session().is_err());
+        let event = watch_embedded_business_event(0, false, None, Duration::ZERO);
+        assert_eq!(event.business_type, "session.changed");
+        assert_eq!(
+            event
+                .business_data
+                .get("messageType")
+                .and_then(Value::as_str),
+            Some("device_disabled")
+        );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
     }
 
     #[test]

@@ -7,7 +7,7 @@
       </div>
       <div class="toolbar">
         <input class="search-input" [(ngModel)]="vm.deviceKeyword" (ngModelChange)="resetPage()" placeholder="搜索设备、IP、系统">
-        <button class="primary" type="button" (click)="vm.openCredentialDialog('')">创建授权 Key</button>
+        <button class="primary" type="button" [disabled]="vm.credentialCreating" (click)="vm.createDeviceCredential()">{{ vm.credentialCreating ? '创建中' : '创建授权 Key' }}</button>
       </div>
     </div>
 

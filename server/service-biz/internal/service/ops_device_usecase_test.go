@@ -57,8 +57,9 @@ func TestDisablingManagedDeviceDeletesSessionsAndWritesAudit(t *testing.T) {
 		savedSessions: []model.DeviceSession{{SessionID: "session-1", DeviceID: "device-1", AccessToken: "access-1"}},
 	}
 	audit := &deviceCredentialTestAudit{}
+	devicePublisher := &networkAccessTestDevicePublisher{}
 	service := OpsManagedDeviceService{
-		Devices: devices, Audit: audit,
+		Devices: devices, Audit: audit, DevicePublisher: devicePublisher,
 		Networks: &deviceSessionTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
 			networks: map[string]model.Network{}, networkDevices: map[string][]model.NetworkDevice{},
 		}},
@@ -75,6 +76,9 @@ func TestDisablingManagedDeviceDeletesSessionsAndWritesAudit(t *testing.T) {
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "disable" || audit.events[0].ActorID != "operator-1" || audit.events[0].ResourceID != "device-1" {
 		t.Fatalf("unexpected device disable audit: %#v", audit.events)
+	}
+	if len(devicePublisher.events) != 1 || devicePublisher.deviceIDs[0] != "device-1" || devicePublisher.events[0].Type != "device_disabled" {
+		t.Fatalf("expected device disabled MQTT event, got ids=%v events=%#v", devicePublisher.deviceIDs, devicePublisher.events)
 	}
 	reenabled, err := service.UpdateDevice(ctx, UpdateDeviceInput{DeviceID: "device-1", Status: "active"})
 	if err != nil {

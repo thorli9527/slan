@@ -58,7 +58,7 @@ func (h DeviceCredentialHandler) Exchange(w http.ResponseWriter, r *http.Request
 		activeNetworkIDs = append(activeNetworkIDs, item.Profile.ActiveNetworkID)
 	}
 	serviceapi.WriteJSON(w, http.StatusOK, map[string]any{
-		"device": item.Profile.Device,
+		"device": appControlDeviceProfilePayload(item.Profile),
 		"deviceSession": map[string]any{
 			"sessionId": item.Session.SessionID, "deviceId": item.Session.DeviceID,
 			"deviceToken": item.Session.AccessToken, "deviceTokenExpiresAt": item.Session.ExpiresAt,
