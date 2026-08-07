@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::Value;
 
-use client_core::{normalize_relay_transport, relay_path_kind_for_transport};
+use client_core::normalize_relay_transport;
 
 use crate::{
     control_plane::{ControlEndpoint, ControlPeer},
@@ -212,22 +212,6 @@ pub(crate) fn best_relay_candidate(
     select_relay_candidates(candidates)
         .into_iter()
         .find(|candidate| candidate.selected)
-}
-
-pub(crate) fn relay_candidate_probe_fallback(
-    candidates: &[PersistedRelayCandidate],
-) -> Option<RelayCandidateSelection> {
-    select_relay_candidates(candidates)
-        .into_iter()
-        .find(|candidate| {
-            normalize_relay_transport(candidate.transport.as_str())
-                .and_then(relay_path_kind_for_transport)
-                .is_some()
-        })
-        .map(|mut candidate| {
-            candidate.selected = true;
-            candidate
-        })
 }
 
 pub(crate) fn best_udp_relay_candidate(
@@ -525,11 +509,11 @@ fn score_relay_candidate(
                 rtt_ms = Some(rtt);
                 path_score = rtt.saturating_add(30);
             }
-            None if candidate.path_score_hint.is_none() => {
+            None => {
                 reachable = false;
+                rtt_ms = None;
                 path_score = 10_000;
             }
-            None => {}
         },
         ("derp_tcp_tls_443", true) => match probe_relay_tcp_rtt_ms(&address) {
             Some(rtt) => {
@@ -537,11 +521,11 @@ fn score_relay_candidate(
                 rtt_ms = Some(rtt);
                 path_score = rtt.saturating_add(100);
             }
-            None if candidate.path_score_hint.is_none() => {
+            None => {
                 reachable = false;
+                rtt_ms = None;
                 path_score = 10_500;
             }
-            None => {}
         },
         ("udp", false) | ("derp_tcp_tls_443", false) => {}
         _ => {
@@ -777,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn local_quality_selects_the_lower_score_candidate() {
+    fn failed_active_probe_overrides_stale_reachable_quality_hint() {
         let _lock = crate::test_env_lock();
         set_test_relay_transport_allowlist(None);
         let selections = select_relay_candidates(&[
@@ -808,7 +792,10 @@ mod tests {
         ]);
 
         assert_eq!(selections[0].endpoint_id, "derp-locally-faster");
-        assert!(selections[0].selected);
+        assert!(!selections[0].reachable);
+        assert_eq!(selections[0].rtt_ms, None);
+        assert!(!selections[0].selected);
+        assert!(!selections[1].reachable);
         assert!(!selections[1].selected);
     }
 

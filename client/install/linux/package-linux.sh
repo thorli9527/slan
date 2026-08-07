@@ -144,6 +144,7 @@ cp "$install_dir/bin/slan-client-v2-console" "$root_dir$SLAN_LINUX_CONSOLE_BIN"
 chmod 755 "$root_dir$SLAN_LINUX_CONSOLE_BIN"
 cp "$install_dir/install.sh" "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/install.sh"
 cp "$install_dir/lib/slan-linux-install.sh" "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/lib/slan-linux-install.sh"
+printf '%s\n' "$arch" > "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/architecture"
 chmod 755 "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/install.sh"
 chmod 644 "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/lib/slan-linux-install.sh"
 
@@ -165,7 +166,7 @@ Categories=Network;
 EOF
 fi
 
-tar -C "$root_dir" -czf "$tar_path" .
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$root_dir" -czf "$tar_path" .
 cp "$install_dir/console-installer.sh" "$console_installer_path"
 cat "$tar_path" >> "$console_installer_path"
 chmod 755 "$console_installer_path"

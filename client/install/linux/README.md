@@ -100,7 +100,7 @@ Opt-issued authorization key:
 ```sh
 chmod +x SLAN-Client-V2-linux-amd64-console.run
 sudo ./SLAN-Client-V2-linux-amd64-console.run \
-  --server https://slan.example.com \
+  --server-url https://slan.example.com \
   --authorization-key YOUR_AUTHORIZATION_KEY
 ```
 
@@ -121,3 +121,6 @@ For the first installer pass, the script writes `/etc/slan/client-v2-console.env
 
 For unattended installs, provide `SLAN_DEVICE_AUTHORIZATION_KEY` or
 `--authorization-key`. Create and revoke this key from Opt.
+
+The installer rejects a package built for a different CPU architecture. Use the
+`amd64` installer on x86_64 hosts and the `arm64` installer on aarch64 hosts.

@@ -46,10 +46,11 @@ require_value() {
 
 usage() {
   cat <<'EOF'
-Usage: install.sh --server URL --authorization-key KEY [options]
+Usage: install.sh --server-url URL --authorization-key KEY [options]
 
 Options:
-  --server URL      Control-plane base URL. Required.
+  --server-url URL  Control-plane base URL. Required.
+  --server URL      Alias for --server-url.
   --authorization-key KEY Device authorization key managed by Opt. Required.
   --package PATH    Install a local Linux client tarball.
   --package-url URL Download URL for the Linux client tarball.
@@ -79,11 +80,12 @@ while [ "$#" -gt 0 ]; do
       config_dir="${1#--config-dir=}"
       shift
       ;;
-    --server=*)
+    --server=*|--server-url=*)
       server="${1#--server=}"
+      server="${server#--server-url=}"
       shift
       ;;
-    --server)
+    --server|--server-url)
       require_value "$1" "${2:-}"
       server="$2"
       shift 2
@@ -149,10 +151,24 @@ case "$server" in
     ;;
 esac
 
+case "$server" in
+  *[[:space:]]*)
+    echo "--server-url must not contain whitespace" >&2
+    exit 2
+    ;;
+esac
+server="${server%/}"
+
 if [ -z "$authorization_key" ]; then
   echo "--authorization-key is required" >&2
   exit 2
 fi
+case "$authorization_key" in
+  *[[:space:]]*)
+    echo "--authorization-key must not contain whitespace" >&2
+    exit 2
+    ;;
+esac
 
 if [ -n "$package_path" ] && [ -n "$package_url" ]; then
   echo "Use only one of --package or --package-url" >&2
@@ -188,7 +204,9 @@ elif command -v curl >/dev/null 2>&1; then
     rm -rf "$install_root"
     extract_package "$tmp_pkg"
   else
-    echo "WARN: unable to download $package_url; only writing install policy" >&2
+    rm -f "$tmp_pkg"
+    echo "Unable to download Linux client package: $package_url" >&2
+    exit 1
   fi
   rm -f "$tmp_pkg"
 else

@@ -698,10 +698,18 @@ struct DirectUdpPeer {
     socket_addr: SocketAddr,
 }
 
+#[derive(Debug, Clone)]
+struct DirectUdpProbeTarget {
+    path_kind: PathKind,
+    address: String,
+    socket_addr: SocketAddr,
+}
+
 struct DirectUdpTransport {
     socket: UdpSocket,
     local_node_id: String,
     peers: Vec<DirectUdpPeer>,
+    probe_targets: HashMap<String, Vec<DirectUdpProbeTarget>>,
     probe_controllers: HashMap<String, PathProbeController>,
 }
 
@@ -721,10 +729,24 @@ impl DirectUdpTransport {
     #[cfg(test)]
     fn new(socket: UdpSocket, peers: Vec<DirectUdpPeer>) -> Self {
         let probe_controllers = direct_udp_probe_controllers(&peers);
+        let probe_targets = peers
+            .iter()
+            .map(|peer| {
+                (
+                    peer.peer_node_id.clone(),
+                    vec![DirectUdpProbeTarget {
+                        path_kind: peer.path_kind,
+                        address: peer.address.clone(),
+                        socket_addr: peer.socket_addr,
+                    }],
+                )
+            })
+            .collect();
         Self {
             socket,
             local_node_id: "node-local".to_string(),
             peers,
+            probe_targets,
             probe_controllers,
         }
     }
@@ -734,6 +756,7 @@ impl DirectUdpTransport {
         configured_paths: &[client_core::PeerPathConfig],
     ) -> Option<Self> {
         let mut peers = Vec::new();
+        let mut probe_targets = HashMap::new();
         let socket = match attach_direct_udp_socket() {
             Ok(socket) => socket,
             Err(error) => {
@@ -743,24 +766,18 @@ impl DirectUdpTransport {
             }
         };
         for path in configured_paths {
-            let Some((path_kind, address)) = udp_address_for_peer(path) else {
+            let targets = udp_probe_targets_for_peer(path);
+            let Some(primary) = targets.first() else {
                 continue;
             };
-            match resolve_direct_udp_peer_address(address.as_str()) {
-                Ok(socket_addr) => peers.push(DirectUdpPeer {
-                    peer_node_id: path.peer_node_id.clone(),
-                    peer_virtual_ips: path.peer_virtual_ips.clone(),
-                    path_kind,
-                    address,
-                    socket_addr,
-                }),
-                Err(error) => {
-                    eprintln!(
-                        "client-core-platform direct udp attach skipped peer={} error={error:#}",
-                        path.peer_node_id
-                    );
-                }
-            }
+            peers.push(DirectUdpPeer {
+                peer_node_id: path.peer_node_id.clone(),
+                peer_virtual_ips: path.peer_virtual_ips.clone(),
+                path_kind: primary.path_kind,
+                address: primary.address.clone(),
+                socket_addr: primary.socket_addr,
+            });
+            probe_targets.insert(path.peer_node_id.clone(), targets);
         }
         if peers.is_empty() {
             clear_direct_udp_endpoint_report();
@@ -772,6 +789,7 @@ impl DirectUdpTransport {
             socket,
             local_node_id: local_node_id.to_string(),
             peers,
+            probe_targets,
             probe_controllers,
         })
     }
@@ -819,11 +837,17 @@ impl DirectUdpTransport {
         if self.handle_punch_response(&buffer[..frame_len]) {
             return Ok(None);
         }
-        if let Some(peer_index) = self
-            .peers
-            .iter()
-            .position(|peer| peer.socket_addr == remote_addr)
-        {
+        if let Some(peer_index) = self.peers.iter().position(|peer| {
+            peer.socket_addr == remote_addr
+                || self
+                    .probe_targets
+                    .get(&peer.peer_node_id)
+                    .is_some_and(|targets| {
+                        targets
+                            .iter()
+                            .any(|target| target.socket_addr == remote_addr)
+                    })
+        }) {
             return Ok(Some(DirectUdpReceive {
                 peer_index,
                 frame_len,
@@ -885,11 +909,27 @@ impl DirectUdpTransport {
                 }
                 continue;
             }
-            if self
-                .socket
-                .send_to(payload.as_bytes(), peer.socket_addr)
-                .is_ok()
-            {
+            let sent = self
+                .probe_targets
+                .get(&peer.peer_node_id)
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .filter(|target| {
+                            self.socket
+                                .send_to(payload.as_bytes(), target.socket_addr)
+                                .is_ok()
+                        })
+                        .count()
+                })
+                .unwrap_or_else(|| {
+                    usize::from(
+                        self.socket
+                            .send_to(payload.as_bytes(), peer.socket_addr)
+                            .is_ok(),
+                    )
+                });
+            if sent > 0 {
                 controller.on_probe_sent(now_ms);
                 sent_count += 1;
             }
@@ -961,6 +1001,19 @@ impl DirectUdpTransport {
         let Some(peer) = self.peers.get_mut(peer_index) else {
             return false;
         };
+        if let Some(target) = self
+            .probe_targets
+            .get(&peer.peer_node_id)
+            .and_then(|targets| {
+                targets
+                    .iter()
+                    .find(|target| target.socket_addr == remote_addr)
+            })
+        {
+            peer.path_kind = target.path_kind;
+        } else if peer.socket_addr != remote_addr {
+            peer.path_kind = PathKind::DirectUdp;
+        }
         if peer.socket_addr == remote_addr {
             return false;
         }
@@ -2628,7 +2681,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 break;
             }
             if last_stats_flush.elapsed() >= RELAY_STATS_FLUSH_INTERVAL {
-                persist_relay_stats(&mut stats);
+                persist_relay_stats_async(&mut stats);
                 last_stats_flush = Instant::now();
             }
             thread::sleep(DATA_PLANE_IDLE_SLEEP);
@@ -3058,19 +3111,36 @@ fn derp_ticket_wire(local_node_id: &str, session: &RelayPeerSession) -> serde_js
     })
 }
 
-fn udp_address_for_peer(path: &client_core::PeerPathConfig) -> Option<(PathKind, String)> {
-    path.candidates
+fn udp_probe_targets_for_peer(path: &client_core::PeerPathConfig) -> Vec<DirectUdpProbeTarget> {
+    let mut targets = path
+        .candidates
         .iter()
         .filter(|candidate| candidate.kind.is_direct_udp())
         .filter_map(|candidate| {
-            candidate
+            let address = candidate
                 .address
                 .as_deref()
                 .map(str::trim)
-                .filter(|address| !address.is_empty())
-                .map(|address| (candidate.kind, address.to_string()))
+                .filter(|address| !address.is_empty())?;
+            match resolve_direct_udp_peer_address(address) {
+                Ok(socket_addr) => Some(DirectUdpProbeTarget {
+                    path_kind: candidate.kind,
+                    address: address.to_string(),
+                    socket_addr,
+                }),
+                Err(error) => {
+                    eprintln!(
+                        "client-core-platform direct udp candidate skipped peer={} address={} error={error:#}",
+                        path.peer_node_id, address
+                    );
+                    None
+                }
+            }
         })
-        .min_by_key(|(kind, _)| kind.priority())
+        .collect::<Vec<_>>();
+    targets.sort_by_key(|target| target.path_kind.priority());
+    targets.dedup_by_key(|target| target.socket_addr);
+    targets
 }
 
 fn attach_direct_udp_socket() -> Result<UdpSocket> {
@@ -3811,7 +3881,7 @@ fn relay_stats_file_path() -> PathBuf {
         .join("client-v2-relay-stats.json")
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectUdpEndpointReport {
     endpoint: String,
@@ -3822,6 +3892,9 @@ struct DirectUdpEndpointReport {
     bind_address: String,
     updated_at_ms: u64,
 }
+
+static WINDOWS_DIRECT_UDP_ENDPOINT_REPORT: OnceLock<Mutex<Option<DirectUdpEndpointReport>>> =
+    OnceLock::new();
 
 fn direct_udp_endpoint_file_path() -> PathBuf {
     app_data_dir()
@@ -3842,26 +3915,18 @@ fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {
         bind_address: local_addr.to_string(),
         updated_at_ms: current_timestamp_ms(),
     };
-    let path = direct_udp_endpoint_file_path();
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(payload) = serde_json::to_vec_pretty(&report) else {
-        return;
-    };
-    let _ = fs::write(path, payload);
+    persist_direct_udp_endpoint_report_value(report);
 }
 
 fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str) {
     let Ok(local_addr) = socket.local_addr() else {
         return;
     };
-    let lan_endpoint = fs::read(direct_udp_endpoint_file_path())
+    let lan_endpoint = WINDOWS_DIRECT_UDP_ENDPOINT_REPORT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
         .ok()
-        .and_then(|payload| serde_json::from_slice::<DirectUdpEndpointReport>(&payload).ok())
+        .and_then(|report| report.clone())
         .map(|report| {
             if report.lan_endpoint.trim().is_empty() && report.endpoint_type == "lan_udp" {
                 report.endpoint
@@ -3878,6 +3943,23 @@ fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str) {
         bind_address: local_addr.to_string(),
         updated_at_ms: current_timestamp_ms(),
     };
+    persist_direct_udp_endpoint_report_value(report);
+}
+
+fn persist_direct_udp_endpoint_report_value(report: DirectUdpEndpointReport) {
+    let mut changed = true;
+    if let Ok(mut current) = WINDOWS_DIRECT_UDP_ENDPOINT_REPORT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        changed = current
+            .as_ref()
+            .is_none_or(|value| !same_direct_udp_endpoint(value, &report));
+        *current = Some(report.clone());
+    }
+    if !changed {
+        return;
+    }
     let path = direct_udp_endpoint_file_path();
     let Some(parent) = path.parent() else {
         return;
@@ -3890,7 +3972,24 @@ fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str) {
     }
 }
 
+fn same_direct_udp_endpoint(
+    left: &DirectUdpEndpointReport,
+    right: &DirectUdpEndpointReport,
+) -> bool {
+    left.endpoint == right.endpoint
+        && left.endpoint_type == right.endpoint_type
+        && left.lan_endpoint == right.lan_endpoint
+        && left.nat_type == right.nat_type
+        && left.bind_address == right.bind_address
+}
+
 fn clear_direct_udp_endpoint_report() {
+    if let Ok(mut current) = WINDOWS_DIRECT_UDP_ENDPOINT_REPORT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        *current = None;
+    }
     let path = direct_udp_endpoint_file_path();
     if path.exists() {
         let _ = fs::remove_file(path);
@@ -3909,6 +4008,25 @@ fn persist_relay_stats(stats: &mut WindowsRelayDataPlaneStats) {
     let now_ms = current_timestamp_ms();
     stats.updated_at_ms = now_ms;
     refresh_relay_ticket_timing(stats, now_ms);
+    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
+        return;
+    };
+    write_relay_stats(payload);
+}
+
+fn persist_relay_stats_async(stats: &mut WindowsRelayDataPlaneStats) {
+    let now_ms = current_timestamp_ms();
+    stats.updated_at_ms = now_ms;
+    refresh_relay_ticket_timing(stats, now_ms);
+    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
+        return;
+    };
+    let _ = thread::Builder::new()
+        .name("slan-relay-stats".to_string())
+        .spawn(move || write_relay_stats(payload));
+}
+
+fn write_relay_stats(payload: Vec<u8>) {
     let path = relay_stats_file_path();
     let Some(parent) = path.parent() else {
         return;
@@ -3916,9 +4034,6 @@ fn persist_relay_stats(stats: &mut WindowsRelayDataPlaneStats) {
     if fs::create_dir_all(parent).is_err() {
         return;
     }
-    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
-        return;
-    };
     let _ = fs::write(path, payload);
 }
 

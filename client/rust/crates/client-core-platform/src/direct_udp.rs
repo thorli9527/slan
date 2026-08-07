@@ -358,11 +358,12 @@ impl DirectUdpTransport {
         let Some(endpoint) = endpoint else {
             return true;
         };
-        eprintln!(
-            "direct udp punch reflexive endpoint node={} endpoint={}",
-            self.local_node_id, endpoint
-        );
-        persist_direct_udp_reflexive_endpoint(&self.socket, endpoint);
+        if persist_direct_udp_reflexive_endpoint(&self.socket, endpoint) {
+            eprintln!(
+                "direct udp punch reflexive endpoint node={} endpoint={}",
+                self.local_node_id, endpoint
+            );
+        }
         true
     }
 
@@ -630,9 +631,9 @@ pub fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {
     persist_direct_udp_endpoint_report_value(report);
 }
 
-pub fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str) {
+pub fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str) -> bool {
     let Ok(local_addr) = socket.local_addr() else {
-        return;
+        return false;
     };
     let lan_endpoint = current_direct_udp_endpoint_report()
         .map(|report| {
@@ -650,27 +651,46 @@ pub fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str)
         nat_type: "unknown".to_string(),
         bind_address: local_addr.to_string(),
         updated_at_ms: current_timestamp_ms(),
-    });
+    })
 }
 
-fn persist_direct_udp_endpoint_report_value(report: DirectUdpEndpointReport) {
+fn persist_direct_udp_endpoint_report_value(report: DirectUdpEndpointReport) -> bool {
+    let mut changed = true;
     if let Ok(mut current) = DIRECT_UDP_ENDPOINT_REPORT
         .get_or_init(|| Mutex::new(None))
         .lock()
     {
+        changed = current
+            .as_ref()
+            .is_none_or(|value| !same_direct_udp_endpoint(value, &report));
         *current = Some(report.clone());
+    }
+    if !changed {
+        return false;
     }
     let path = direct_udp_endpoint_file_path();
     let Some(parent) = path.parent() else {
-        return;
+        return true;
     };
     if fs::create_dir_all(parent).is_err() {
-        return;
+        return true;
     }
     let Ok(payload) = serde_json::to_vec_pretty(&report) else {
-        return;
+        return true;
     };
     let _ = fs::write(path, payload);
+    true
+}
+
+fn same_direct_udp_endpoint(
+    left: &DirectUdpEndpointReport,
+    right: &DirectUdpEndpointReport,
+) -> bool {
+    left.endpoint == right.endpoint
+        && left.endpoint_type == right.endpoint_type
+        && left.lan_endpoint == right.lan_endpoint
+        && left.nat_type == right.nat_type
+        && left.bind_address == right.bind_address
 }
 
 pub fn clear_direct_udp_endpoint_report() {
@@ -735,6 +755,24 @@ mod tests {
             direct_udp_control_packet(br#"{"kind":"direct_udp","type":"probe"}"#),
             None
         );
+    }
+
+    #[test]
+    fn endpoint_report_identity_ignores_timestamp_only_changes() {
+        let report = DirectUdpEndpointReport {
+            endpoint: "203.0.113.10:41642".to_string(),
+            endpoint_type: "direct_udp".to_string(),
+            lan_endpoint: "192.168.5.101:41642".to_string(),
+            nat_type: "unknown".to_string(),
+            bind_address: "0.0.0.0:41642".to_string(),
+            updated_at_ms: 1,
+        };
+        let mut refreshed = report.clone();
+        refreshed.updated_at_ms = 2;
+        assert!(same_direct_udp_endpoint(&report, &refreshed));
+
+        refreshed.endpoint = "203.0.113.11:41642".to_string();
+        assert!(!same_direct_udp_endpoint(&report, &refreshed));
     }
 
     #[test]

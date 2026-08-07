@@ -355,6 +355,29 @@ begin
   );
 end;
 
+procedure ConfigureDirectUdpFirewall();
+begin
+  ExecHidden(
+    ExpandConstant('{sys}\netsh.exe'),
+    'advfirewall firewall delete rule name="SLAN Client Direct UDP"',
+    ewWaitUntilTerminated
+  );
+  ExecHidden(
+    ExpandConstant('{sys}\netsh.exe'),
+    'advfirewall firewall add rule name="SLAN Client Direct UDP" dir=in action=allow protocol=UDP localport=41642 profile=any',
+    ewWaitUntilTerminated
+  );
+end;
+
+procedure RemoveDirectUdpFirewall();
+begin
+  ExecHidden(
+    ExpandConstant('{sys}\netsh.exe'),
+    'advfirewall firewall delete rule name="SLAN Client Direct UDP"',
+    ewWaitUntilTerminated
+  );
+end;
+
 // --- HVCI-aware adapter check ---
 
 function CheckHvciAndTestSigning(): Boolean;
@@ -422,6 +445,7 @@ begin
     ClearPreviousInstallDir();
   end;
   if CurStep = ssPostInstall then begin
+    ConfigureDirectUdpFirewall();
     if not PrepareDedicatedAdapter() then begin
       RaiseException('Failed to prepare the SLAN Wintun adapter.');
     end;
@@ -439,6 +463,7 @@ begin
     StopAndDeleteWindowsService();
     DeleteServiceTask();
     DeleteHelperTask();
+    RemoveDirectUdpFirewall();
     RemoveDedicatedAdapter();
   end;
   if CurUninstallStep = usPostUninstall then begin

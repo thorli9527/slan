@@ -2556,7 +2556,7 @@ fn run_udp_data_plane(
             thread::sleep(DATA_PLANE_IDLE_SLEEP);
         }
         if last_stats_flush.elapsed() >= RELAY_STATS_FLUSH_INTERVAL {
-            persist_relay_stats(stats);
+            persist_relay_stats_async(stats);
             last_stats_flush = Instant::now();
         }
     }
@@ -3018,6 +3018,23 @@ fn relay_peer_stats_mut_by_node_id<'a>(
 
 fn persist_relay_stats(stats: &mut RelayDataPlaneStats) {
     stats.updated_at_ms = current_timestamp_ms();
+    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
+        return;
+    };
+    write_relay_stats(payload);
+}
+
+fn persist_relay_stats_async(stats: &mut RelayDataPlaneStats) {
+    stats.updated_at_ms = current_timestamp_ms();
+    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
+        return;
+    };
+    let _ = thread::Builder::new()
+        .name("slan-relay-stats".to_string())
+        .spawn(move || write_relay_stats(payload));
+}
+
+fn write_relay_stats(payload: Vec<u8>) {
     let path = relay_stats_file_path();
     let Some(parent) = path.parent() else {
         return;
@@ -3025,9 +3042,6 @@ fn persist_relay_stats(stats: &mut RelayDataPlaneStats) {
     if fs::create_dir_all(parent).is_err() {
         return;
     }
-    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
-        return;
-    };
     let _ = fs::write(path, payload);
 }
 

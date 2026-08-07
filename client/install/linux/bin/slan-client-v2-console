@@ -13,17 +13,18 @@ fi
 service_bin="${SLAN_CLIENT_CORE_SERVICE_BIN:-$SLAN_LINUX_SERVICE_BIN}"
 config_dir="$SLAN_LINUX_CONFIG_DIR"
 env_file="$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
-server_url="${SLAN_CONTROL_BASE_URL:-$SLAN_LINUX_DEFAULT_CONTROL_BASE_URL}"
+server_url="${SLAN_CONTROL_BASE_URL:-}"
 authorization_key=""
 enable_network="false"
 foreground="false"
 
 usage() {
   cat <<'EOF'
-Usage: slan-client-v2-console [--server-url URL] [options]
+Usage: slan-client-v2-console --server-url URL --authorization-key KEY [options]
 
 Options:
-  --server-url URL       Server control base URL.
+  --server-url URL         Server control base URL. Required.
+  --server URL             Alias for --server-url.
   --authorization-key KEY  Opt-issued device authorization Key.
   --enable-network       Enable network after bootstrap is consumed by core-service.
   --foreground           Run client-core-service in this console.
@@ -40,13 +41,14 @@ need_value() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --server-url)
+    --server-url|--server)
       need_value "$@"
       server_url="$2"
       shift 2
       ;;
-    --server-url=*)
+    --server-url=*|--server=*)
       server_url="${1#--server-url=}"
+      server_url="${server_url#--server=}"
       shift
       ;;
     --authorization-key)
@@ -78,10 +80,32 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+case "$server_url" in
+  http://*|https://*)
+    ;;
+  *)
+    echo "--server-url must be an http:// or https:// URL" >&2
+    exit 2
+    ;;
+esac
+case "$server_url" in
+  *[[:space:]]*)
+    echo "--server-url must not contain whitespace" >&2
+    exit 2
+    ;;
+esac
+server_url="${server_url%/}"
+
 if [ -z "$authorization_key" ]; then
   echo "--authorization-key is required" >&2
   exit 2
 fi
+case "$authorization_key" in
+  *[[:space:]]*)
+    echo "--authorization-key must not contain whitespace" >&2
+    exit 2
+    ;;
+esac
 
 umask 077
 mkdir -p "$config_dir"

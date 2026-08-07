@@ -114,8 +114,8 @@ use crate::platform_transition::PlatformNetworkActivation;
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
     extract_persisted_relay_candidates_from_control_map, infrastructure_location_rank,
-    normalize_relay_candidate_address, relay_candidate_probe_fallback, relay_candidates_for_peer,
-    replace_runtime_relay_candidates, runtime_relay_candidates, select_relay_candidates,
+    normalize_relay_candidate_address, relay_candidates_for_peer, replace_runtime_relay_candidates,
+    runtime_relay_candidates, select_relay_candidates,
 };
 use crate::relay_models::{
     PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu, PathDiagnosePathCount,
@@ -3697,7 +3697,6 @@ fn data_plane_relay_candidate(
     best_relay_candidate_for_connect_plans(candidates)
         .or_else(|| best_udp_relay_candidate(candidates))
         .or_else(|| best_relay_candidate(candidates))
-        .or_else(|| relay_candidate_probe_fallback(candidates))
 }
 
 fn best_relay_candidate_for_connect_plans(
@@ -3970,26 +3969,27 @@ fn execute_platform_network_activation_safely(
 /// routes, or DNS. Connectivity maintenance must remain a soft recovery path:
 /// rebuilding host networking here creates a local transmit-failure window even
 /// when only an upstream endpoint or relay session changed.
+struct TransportRecoveryOutcome {
+    state: ClientViewState,
+    succeeded: bool,
+}
+
 fn execute_runtime_transport_recovery(
     runtime: &RuntimeActorHandle,
     reason: &str,
     correlation_id: Option<String>,
     transition: PreparedRuntimeNetworkActivation,
-) -> Result<ClientViewState> {
+) -> Result<TransportRecoveryOutcome> {
     let plan = match transition.prepared {
         Ok(plan) => plan,
         Err(error) => {
-            let committed = runtime.call_named(
-                "relay.transport.recovery.prepare",
-                correlation_id,
-                move |runtime| {
-                    Ok(commit_control_network_activation_result(
-                        runtime,
-                        Err(error),
-                    ))
-                },
-            )?;
-            return Ok(committed.state);
+            log_service_error(format!(
+                "client-core-service transport recovery preparation failed reason={reason}: {error:#}"
+            ));
+            return Ok(TransportRecoveryOutcome {
+                state: runtime.snapshot().state,
+                succeeded: false,
+            });
         }
     };
     if !activation_context_matches(&runtime.snapshot().state, &plan.session)
@@ -3998,7 +3998,10 @@ fn execute_runtime_transport_recovery(
         log_service_error(
             "client-core-service skipped stale transport recovery before platform apply",
         );
-        return Ok(runtime.snapshot().state);
+        return Ok(TransportRecoveryOutcome {
+            state: runtime.snapshot().state,
+            succeeded: false,
+        });
     }
     let relay_config = plan.relay_config.clone();
     let platform_result = platform_transition::run_serialized_correlated(
@@ -4010,10 +4013,10 @@ fn execute_runtime_transport_recovery(
         log_service_error(format!(
             "client-core-service transport recovery failed reason={reason}: {error:#}"
         ));
-        return Ok(state_with_error(
-            &runtime.snapshot().state,
-            error.to_string(),
-        ));
+        return Ok(TransportRecoveryOutcome {
+            state: runtime.snapshot().state,
+            succeeded: false,
+        });
     }
     let committed = runtime.call_named(
         "relay.transport.recovery.commit",
@@ -4023,7 +4026,10 @@ fn execute_runtime_transport_recovery(
     log_service_error(format!(
         "client-core-service transport recovery completed without tunnel reconfiguration: reason={reason}"
     ));
-    Ok(committed.state)
+    Ok(TransportRecoveryOutcome {
+        state: committed.state,
+        succeeded: true,
+    })
 }
 
 fn execute_runtime_network_activation(
@@ -6284,12 +6290,12 @@ fn maintain_relay_data_plane(
         .ok()
         .and_then(|plan| plan.session.device_id.clone())
         .or_else(|| Some(reason.to_string()));
-    let state = execute_runtime_transport_recovery(runtime, reason, correlation_id, transition)?;
-    if state.error.is_none() {
+    let outcome = execute_runtime_transport_recovery(runtime, reason, correlation_id, transition)?;
+    if outcome.succeeded {
         maintenance.consecutive_reconfigure_failures = 0;
         maintenance.retry_not_before_ms = 0;
         maintenance.peer_reachability.clear();
-        report_runtime_state(&state);
+        report_runtime_state(&outcome.state);
     } else {
         maintenance.consecutive_reconfigure_failures = maintenance
             .consecutive_reconfigure_failures
@@ -6312,13 +6318,15 @@ fn maintain_relay_data_plane(
         maintenance.last_relay_packets_received = 0;
         maintenance.no_rx_intervals = 0;
     }
-    let business_type = if state.error.is_some() {
-        BUSINESS_NETWORK_SWITCH_FAILED
-    } else {
-        BUSINESS_NETWORK_RUNTIME_CHANGED
-    };
-    let business_data = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
-    publish_business_event(state_notifier, business_type, business_data);
+    if outcome.succeeded {
+        let business_data =
+            serde_json::to_value(&outcome.state).unwrap_or_else(|_| serde_json::json!({}));
+        publish_business_event(
+            state_notifier,
+            BUSINESS_NETWORK_RUNTIME_CHANGED,
+            business_data,
+        );
+    }
     Ok(())
 }
 

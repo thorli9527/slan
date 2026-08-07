@@ -38,6 +38,28 @@ if [ ! -f "$installer" ]; then
   exit 1
 fi
 
+install_lib="$payload_root/opt/slan-client-v2/install/lib/slan-linux-install.sh"
+service_bin="$payload_root/opt/slan-client-v2/bin/client-core-service"
+if [ ! -f "$install_lib" ] || [ ! -x "$service_bin" ]; then
+  echo "Invalid SLAN Linux installer: runtime files are missing" >&2
+  exit 1
+fi
+
+. "$install_lib"
+host_arch="$(slan_linux_host_arch)"
+architecture_file="$payload_root/opt/slan-client-v2/install/architecture"
+service_arch=""
+if [ -f "$architecture_file" ]; then
+  service_arch="$(sed -n '1p' "$architecture_file" | tr -d '[:space:]')"
+fi
+if [ -z "$service_arch" ]; then
+  service_arch="$(slan_linux_service_arch "$service_bin" || true)"
+fi
+if [ -z "$service_arch" ] || [ "$host_arch" != "$service_arch" ]; then
+  echo "SLAN Linux installer architecture mismatch: host=$host_arch package=${service_arch:-unknown}" >&2
+  exit 1
+fi
+
 sh "$installer" "$@" --package="$payload" --tray=disabled
 
 echo "SLAN Client V2 console installation completed"
