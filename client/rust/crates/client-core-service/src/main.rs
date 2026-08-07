@@ -160,6 +160,7 @@ const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
 const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
 const RELAY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECT_PLAN_TTL_MS: u64 = 10 * 60 * 1000;
+const PUNCH_SESSION_TTL_MS: u64 = 10 * 60 * 1000;
 const RELAY_TICKET_RENEW_INTERVAL_MS: u64 = 20 * 60 * 1000;
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 const RELAY_RECONFIGURE_BACKOFF_MS: u64 = 60 * 1000;
@@ -174,6 +175,12 @@ const NETWORK_PATH_STABLE_SAMPLES: u8 = 3;
 const CONNECTIVITY_RECOVERY_COOLDOWN_MS: u64 = 30 * 1000;
 const PEER_STALL_RECONFIGURE_INTERVALS: u32 = 3;
 static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
+static RUNTIME_RELAY_TICKETS: OnceLock<Mutex<BTreeMap<String, RelayTicket>>> = OnceLock::new();
+static RUNTIME_CONNECT_PLAN_RELAY_TICKETS: OnceLock<Mutex<BTreeMap<String, RelayTicket>>> =
+    OnceLock::new();
+static RUNTIME_RELAY_SELECTION: OnceLock<Mutex<Option<RuntimeRelaySelection>>> = OnceLock::new();
+static RUNTIME_PUNCH_SESSIONS: OnceLock<Mutex<BTreeMap<String, CachedPunchSession>>> =
+    OnceLock::new();
 static CONNECTIVITY_SIGNAL_SENDER: OnceLock<Mutex<Option<SyncSender<ConnectivitySignal>>>> =
     OnceLock::new();
 const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
@@ -187,6 +194,19 @@ define_windows_service!(ffi_service_main, service_main);
 #[derive(Debug, Default)]
 struct ControlSyncThrottle {
     last_sync_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeRelaySelection {
+    network_id: String,
+    endpoint_id: String,
+    transport: String,
+}
+
+#[derive(Debug, Clone)]
+struct CachedPunchSession {
+    created_at_ms: u64,
+    session: PunchConnectSession,
 }
 
 #[derive(Clone)]
@@ -3653,7 +3673,7 @@ fn prepare_relay_data_plane_from_latest_control(
             .collect()
     };
     session.virtual_ip = Some(activation.virtual_ip);
-    let best_relay = data_plane_relay_candidate(&relay_candidates);
+    let best_relay = stable_data_plane_relay_candidate(&network_id, &relay_candidates);
     let network_configs = client
         .device_network_configs(session_device_api_token(session), &device_id)
         .unwrap_or_else(|_| {
@@ -3691,6 +3711,7 @@ fn android_data_plane_relay_candidate(
     best_udp_relay_candidate(candidates).or_else(|| best_relay_candidate(candidates))
 }
 
+#[cfg(test)]
 fn data_plane_relay_candidate(
     candidates: &[PersistedRelayCandidate],
 ) -> Option<RelayCandidateSelection> {
@@ -3699,6 +3720,56 @@ fn data_plane_relay_candidate(
         .or_else(|| best_relay_candidate(candidates))
 }
 
+fn stable_data_plane_relay_candidate(
+    network_id: &str,
+    candidates: &[PersistedRelayCandidate],
+) -> Option<RelayCandidateSelection> {
+    let proposed =
+        best_udp_relay_candidate(candidates).or_else(|| best_relay_candidate(candidates));
+    stabilize_relay_selection(network_id, proposed, &select_relay_candidates(candidates))
+}
+
+fn stabilize_relay_selection(
+    network_id: &str,
+    proposed: Option<RelayCandidateSelection>,
+    candidates: &[RelayCandidateSelection],
+) -> Option<RelayCandidateSelection> {
+    let mut selected = RUNTIME_RELAY_SELECTION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("runtime relay selection mutex poisoned");
+    if let Some(current) = selected
+        .as_ref()
+        .filter(|current| current.network_id == network_id)
+    {
+        if let Some(candidate) = candidates.iter().find(|candidate| {
+            candidate.endpoint_id == current.endpoint_id
+                && candidate.transport == current.transport
+                && candidate.reachable
+        }) {
+            let proposed_is_better_transport = proposed.as_ref().is_some_and(|proposed| {
+                relay_path_kind_for_transport(&proposed.transport)
+                    .zip(relay_path_kind_for_transport(&candidate.transport))
+                    .is_some_and(|(proposed, current)| proposed.priority() < current.priority())
+            });
+            if !proposed_is_better_transport {
+                return Some(candidate.clone());
+            }
+        }
+    }
+    if let Some(proposed) = proposed.as_ref() {
+        *selected = Some(RuntimeRelaySelection {
+            network_id: network_id.to_string(),
+            endpoint_id: proposed.endpoint_id.clone(),
+            transport: proposed.transport.clone(),
+        });
+    } else {
+        *selected = None;
+    }
+    proposed
+}
+
+#[cfg(test)]
 fn best_relay_candidate_for_connect_plans(
     candidates: &[PersistedRelayCandidate],
 ) -> Option<RelayCandidateSelection> {
@@ -3712,6 +3783,7 @@ fn best_relay_candidate_for_connect_plans(
         .find_map(|path| relay_candidate_matching_connect_plan_path(path, &selections))
 }
 
+#[cfg(test)]
 fn relay_candidate_matching_connect_plan_path(
     path: &PersistedConnectPlanPath,
     candidates: &[RelayCandidateSelection],
@@ -3824,7 +3896,7 @@ fn prepare_control_network_activation(
             .map(persisted_relay_candidate)
             .collect()
     };
-    let best_relay = data_plane_relay_candidate(&relay_candidates);
+    let best_relay = stable_data_plane_relay_candidate(&network_id, &relay_candidates);
     let network_configs = client
         .device_network_configs(session_device_api_token(&session), &device_id)
         .unwrap_or_else(|_| {
@@ -4377,10 +4449,6 @@ fn build_relay_data_plane_config(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("network map missing self node id"))?;
-    let connect_plans = load_recent_connect_plans(current_timestamp_ms())
-        .into_iter()
-        .map(|plan| (plan.peer_node_id.clone(), plan))
-        .collect::<BTreeMap<_, _>>();
     let punch_sessions = create_punch_connect_sessions(
         client,
         session,
@@ -4389,6 +4457,10 @@ fn build_relay_data_plane_config(
         peers,
         network_configs,
     );
+    let connect_plans = load_recent_connect_plans(current_timestamp_ms())
+        .into_iter()
+        .map(|plan| (plan.peer_node_id.clone(), plan))
+        .collect::<BTreeMap<_, _>>();
 
     let relay_candidates = select_relay_candidates(&runtime_relay_candidates());
     let sessions = peers
@@ -4409,21 +4481,17 @@ fn build_relay_data_plane_config(
                 &peer_candidates,
                 single_target_only,
             );
-            if let Some(session) = connect_plans.get(&peer.node_id).and_then(|plan| {
-                relay_session_from_connect_plan_ticket(
-                    plan,
-                    peer_network_id,
-                    local_node_id,
-                    peer,
-                )
-            }) {
-                if relay_targets
-                    .iter()
-                    .any(|target| relay_session_matches_candidate(&session, target))
-                {
-                    sessions.push(session);
-                }
-            }
+            let connect_plan_ticket = connect_plans
+                .get(&peer.node_id)
+                .and_then(|plan| {
+                    relay_session_from_connect_plan_ticket(
+                        plan,
+                        peer_network_id,
+                        local_node_id,
+                        peer,
+                    )
+                })
+                .map(|session| session.ticket);
             for target in &relay_targets {
                 if sessions
                     .iter()
@@ -4431,12 +4499,14 @@ fn build_relay_data_plane_config(
                 {
                     continue;
                 }
-                match client.issue_relay_ticket(
+                match relay_ticket_for_target(
+                    client,
                     session_device_api_token(session),
                     peer_network_id,
                     local_node_id,
                     peer.node_id.as_str(),
-                    target.endpoint_id.as_str(),
+                    target,
+                    connect_plan_ticket.as_ref(),
                 ) {
                     Ok(ticket) => sessions.push(RelayPeerSession {
                         session_id: ticket.session_id.clone(),
@@ -4504,7 +4574,7 @@ fn build_relay_data_plane_config(
             relay,
             &relay_candidates,
             &sessions,
-            Some(connect_plans),
+            None,
             Some(punch_sessions),
         ),
         relay_mtu: Some(policy.relay_mtu),
@@ -4576,16 +4646,10 @@ fn peer_path_configs(
     relay: &RelayCandidateSelection,
     relay_candidates: &[RelayCandidateSelection],
     relay_sessions: &[RelayPeerSession],
-    connect_plans: Option<BTreeMap<String, PersistedConnectPlan>>,
+    _connect_plans: Option<BTreeMap<String, PersistedConnectPlan>>,
     punch_sessions: Option<BTreeMap<String, PunchConnectSession>>,
 ) -> Vec<PeerPathConfig> {
     let relay_only = relay_only_path_policy_enabled();
-    let connect_plans = connect_plans.unwrap_or_else(|| {
-        load_recent_connect_plans(current_timestamp_ms())
-            .into_iter()
-            .map(|plan| (plan.peer_node_id.clone(), plan))
-            .collect::<BTreeMap<_, _>>()
-    });
     peers
         .iter()
         .filter(|peer| peer.node_id != local_node_id)
@@ -4599,49 +4663,6 @@ fn peer_path_configs(
                 if let Some(address) = punch_session.and_then(punch_peer_direct_udp_address) {
                     direct_addresses.push(address.clone());
                     candidates.push(direct_path_candidate(PathKind::DirectUdp, &address));
-                }
-            }
-            if !relay_only {
-                if let Some(plan) = connect_plans.get(&peer.node_id) {
-                    for path in &plan.paths {
-                        let address = path.endpoint.trim();
-                        if address.is_empty() {
-                            continue;
-                        }
-                        if let Some(kind) = direct_path_kind_for_path_type(&path.path_type) {
-                            if !valid_direct_candidate_address(address) {
-                                continue;
-                            }
-                            if direct_addresses
-                                .iter()
-                                .any(|value: &String| value == address)
-                            {
-                                continue;
-                            }
-                            direct_addresses.push(address.to_string());
-                            let mut candidate = direct_path_candidate(kind, address);
-                            candidate.path_score = u32::try_from(path.priority).ok();
-                            candidates.push(candidate);
-                        } else if let Some(candidate) = relay_path_candidate_from_connect_plan(
-                            path,
-                            relay_sessions,
-                            relay,
-                            &peer.node_id,
-                        ) {
-                            push_unique_relay_path_candidate(&mut candidates, candidate);
-                        }
-                    }
-                }
-            } else if let Some(plan) = connect_plans.get(&peer.node_id) {
-                for path in &plan.paths {
-                    if let Some(candidate) = relay_path_candidate_from_connect_plan(
-                        path,
-                        relay_sessions,
-                        relay,
-                        &peer.node_id,
-                    ) {
-                        push_unique_relay_path_candidate(&mut candidates, candidate);
-                    }
                 }
             }
             if !relay_only {
@@ -4709,6 +4730,11 @@ fn peer_path_configs(
                 let Some(path_kind) = relay_path_kind_for_transport(transport) else {
                     continue;
                 };
+                let Some(relay_session) =
+                    relay_session_for_candidate(relay_sessions, &peer.node_id, candidate)
+                else {
+                    continue;
+                };
                 push_unique_relay_path_candidate(
                     &mut candidates,
                     PathCandidate {
@@ -4716,7 +4742,7 @@ fn peer_path_configs(
                         state: PathState::Standby,
                         endpoint_id: Some(candidate.endpoint_id.clone()),
                         address: Some(candidate.address.clone()),
-                        session_id: None,
+                        session_id: Some(relay_session.session_id.clone()),
                         transport: Some(transport.to_string()),
                         rtt_ms: candidate.rtt_ms,
                         path_score: Some(candidate.path_score),
@@ -4803,15 +4829,89 @@ fn relay_session_matches_candidate(
     session: &RelayPeerSession,
     candidate: &RelayCandidateSelection,
 ) -> bool {
+    relay_ticket_matches_candidate(&session.ticket, candidate)
+}
+
+fn relay_ticket_matches_candidate(
+    ticket: &RelayTicket,
+    candidate: &RelayCandidateSelection,
+) -> bool {
     let Some(transport) = normalize_relay_transport(candidate.transport.as_str()) else {
         return false;
     };
     let Some(session_address) =
-        normalize_relay_candidate_address(session.ticket.relay_url.as_str(), transport)
+        normalize_relay_candidate_address(ticket.relay_url.as_str(), transport)
     else {
         return false;
     };
     session_address == candidate.address
+}
+
+fn relay_ticket_for_target(
+    client: &ControlPlaneClient,
+    access_token: &str,
+    network_id: &str,
+    local_node_id: &str,
+    peer_node_id: &str,
+    target: &RelayCandidateSelection,
+    connect_plan_ticket: Option<&RelayTicket>,
+) -> Result<RelayTicket> {
+    let cache_key = format!(
+        "{}|{}|{}|{}",
+        network_id.trim(),
+        local_node_id.trim(),
+        peer_node_id.trim(),
+        target.endpoint_id.trim()
+    );
+    let now_ms = current_timestamp_ms();
+    if let Some(ticket) = connect_plan_ticket.filter(|ticket| {
+        relay_ticket_matches_peer(ticket, network_id, local_node_id, peer_node_id)
+            && relay_ticket_matches_candidate(ticket, target)
+            && !relay_ticket_should_renew(now_ms, Some(&ticket.expires_at))
+    }) {
+        let mut tickets = RUNTIME_CONNECT_PLAN_RELAY_TICKETS
+            .get_or_init(|| Mutex::new(BTreeMap::new()))
+            .lock()
+            .expect("runtime connect plan relay ticket cache mutex poisoned");
+        tickets.retain(|_, ticket| !relay_ticket_expired(now_ms, Some(&ticket.expires_at)));
+        if let Some(cached) = tickets.get(&cache_key).filter(|cached| {
+            relay_ticket_matches_peer(cached, network_id, local_node_id, peer_node_id)
+                && relay_ticket_matches_candidate(cached, target)
+                && !relay_ticket_should_renew(now_ms, Some(&cached.expires_at))
+        }) {
+            return Ok(cached.clone());
+        }
+        tickets.insert(cache_key.clone(), ticket.clone());
+        return Ok(ticket.clone());
+    }
+    {
+        let mut tickets = RUNTIME_RELAY_TICKETS
+            .get_or_init(|| Mutex::new(BTreeMap::new()))
+            .lock()
+            .expect("runtime relay ticket cache mutex poisoned");
+        tickets.retain(|_, ticket| !relay_ticket_expired(now_ms, Some(&ticket.expires_at)));
+        if let Some(ticket) = tickets.get(&cache_key).filter(|ticket| {
+            relay_ticket_matches_peer(ticket, network_id, local_node_id, peer_node_id)
+                && relay_ticket_matches_candidate(ticket, target)
+                && !relay_ticket_should_renew(now_ms, Some(&ticket.expires_at))
+        }) {
+            return Ok(ticket.clone());
+        }
+    }
+
+    let ticket = client.issue_relay_ticket(
+        access_token,
+        network_id,
+        local_node_id,
+        peer_node_id,
+        target.endpoint_id.as_str(),
+    )?;
+    RUNTIME_RELAY_TICKETS
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .expect("runtime relay ticket cache mutex poisoned")
+        .insert(cache_key, ticket.clone());
+    Ok(ticket)
 }
 
 fn relay_ticket_matches_peer(
@@ -4843,12 +4943,29 @@ fn create_punch_connect_sessions(
     network_configs: &[crate::control_plane::DeviceNetworkConfig],
 ) -> BTreeMap<String, PunchConnectSession> {
     let device_id = session.device_id.as_deref().unwrap_or_default();
+    let now_ms = current_timestamp_ms();
     peers
         .iter()
         .filter(|peer| peer.node_id != local_node_id)
         .filter_map(|peer| {
             let peer_network_id = peer_network_id(network_id, peer, network_configs);
             let punch_node = select_punch_node(&session.node_configs, peer)?;
+            let cache_key = format!(
+                "{}|{}|{}|{}",
+                peer_network_id, local_node_id, peer.node_id, punch_node.node_id
+            );
+            {
+                let mut sessions = RUNTIME_PUNCH_SESSIONS
+                    .get_or_init(|| Mutex::new(BTreeMap::new()))
+                    .lock()
+                    .expect("runtime punch session cache mutex poisoned");
+                sessions.retain(|_, cached| {
+                    now_ms.saturating_sub(cached.created_at_ms) < PUNCH_SESSION_TTL_MS
+                });
+                if let Some(cached) = sessions.get(&cache_key) {
+                    return Some((peer.node_id.clone(), cached.session.clone()));
+                }
+            }
             match client.create_punch_connect_session(
                 session_device_api_token(session),
                 device_id,
@@ -4858,7 +4975,20 @@ fn create_punch_connect_sessions(
                 peer.node_id.as_str(),
                 punch_node.node_id.as_str(),
             ) {
-                Ok(session) => Some((peer.node_id.clone(), session)),
+                Ok(punch_session) => {
+                    RUNTIME_PUNCH_SESSIONS
+                        .get_or_init(|| Mutex::new(BTreeMap::new()))
+                        .lock()
+                        .expect("runtime punch session cache mutex poisoned")
+                        .insert(
+                            cache_key,
+                            CachedPunchSession {
+                                created_at_ms: now_ms,
+                                session: punch_session.clone(),
+                            },
+                        );
+                    Some((peer.node_id.clone(), punch_session))
+                }
                 Err(error) => {
                     log_service_error(format!(
                         "client-core-service punch connect session skipped: peerNodeId={} error={error:#}",
@@ -4921,6 +5051,7 @@ fn punch_peer_direct_udp_address(session: &PunchConnectSession) -> Option<String
         .map(str::to_string)
 }
 
+#[cfg(test)]
 fn relay_path_candidate_from_connect_plan(
     path: &PersistedConnectPlanPath,
     relay_sessions: &[RelayPeerSession],
@@ -4953,6 +5084,7 @@ fn relay_path_candidate_from_connect_plan(
     })
 }
 
+#[cfg(test)]
 fn relay_transport_for_path_type(path_type: &str) -> Option<&'static str> {
     match path_type.trim() {
         "relay_udp" => Some("udp"),

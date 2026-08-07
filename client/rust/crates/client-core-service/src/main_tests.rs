@@ -12,8 +12,8 @@ use super::{
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_reconfigure_bypasses_retry_window, relay_retry_backoff_ms,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
-    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
-    request_is_watch, rotate_log_file, routes_with_peer_virtual_ips,
+    relay_ticket_matches_candidate, relay_ticket_should_renew, relay_ticket_timing,
+    relay_transport_for_path_type, request_is_watch, rotate_log_file, routes_with_peer_virtual_ips,
     select_relay_sessions_for_candidate, status_is_managed_disabled,
     valid_direct_candidate_address, ControlPeer, LocalRequestMetrics, PersistedConnectPlan,
     PersistedConnectPlanPath, PersistedConnectPlanStore, PreparedControlNetworkActivation,
@@ -823,6 +823,18 @@ fn relay_session_selection_keeps_one_selected_candidate_per_peer() {
 
     assert_eq!(actual.len(), 1);
     assert_eq!(actual[0].session_id, "session-selected");
+}
+
+#[test]
+fn relay_ticket_candidate_match_ignores_url_scheme_alias() {
+    let mut ticket = test_relay_ticket("net-1", "node-local", "node-peer");
+    ticket.relay_url = "relay+udp://relay.example:29110".to_string();
+    let candidate = test_relay_selection("relay-a", "udp", "relay.example:29110");
+
+    assert!(relay_ticket_matches_candidate(&ticket, &candidate));
+
+    ticket.relay_url = "relay+udp://relay.example:29111".to_string();
+    assert!(!relay_ticket_matches_candidate(&ticket, &candidate));
 }
 
 #[test]

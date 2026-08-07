@@ -177,6 +177,33 @@ impl DirectUdpTransport {
             clear_direct_udp_endpoint_report();
             return None;
         }
+        let local_addr = socket.local_addr().ok();
+        eprintln!(
+            "SLAN_DIRECT_UDP_TRANSPORT_ATTACHED localNodeId={} bindAddress={} peerCount={}",
+            local_node_id,
+            local_addr
+                .map(|address| address.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            peers.len()
+        );
+        for peer in &peers {
+            let candidates = peer
+                .probe_targets
+                .iter()
+                .map(|target| format!("{}@{}", target.path_kind.as_str(), target.address))
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!(
+                "SLAN_DIRECT_UDP_PEER_CANDIDATES peer={} virtualIps={} candidates={}",
+                peer.peer_node_id,
+                peer.peer_virtual_ips.join(","),
+                if candidates.is_empty() {
+                    "none"
+                } else {
+                    candidates.as_str()
+                }
+            );
+        }
         persist_direct_udp_endpoint_report(&socket);
         Some(Self {
             socket,
@@ -273,17 +300,38 @@ impl DirectUdpTransport {
                 continue;
             }
             let targets = if peer.probe_targets.is_empty() {
-                vec![peer.socket_addr]
+                vec![(peer.path_kind, peer.socket_addr)]
             } else {
                 peer.probe_targets
                     .iter()
-                    .map(|target| target.socket_addr)
+                    .map(|target| (target.path_kind, target.socket_addr))
                     .collect()
             };
             let mut sent_any = false;
-            for target in targets {
-                if self.socket.send_to(payload.as_bytes(), target).is_ok() {
-                    sent_any = true;
+            for (path_kind, target) in targets {
+                match self.socket.send_to(payload.as_bytes(), target) {
+                    Ok(size) => {
+                        sent_any = true;
+                        eprintln!(
+                            "SLAN_DIRECT_UDP_PROBE_SENT peer={} path={} target={} bytes={} role={role:?} health={:?}",
+                            peer.peer_node_id,
+                            path_kind.as_str(),
+                            target,
+                            size,
+                            peer.probe_controller.health()
+                        );
+                    }
+                    Err(error) => {
+                        let message = format!(
+                            "SLAN_DIRECT_UDP_PROBE_SEND_FAILED peer={} path={} target={} role={role:?} health={:?} error={error}",
+                            peer.peer_node_id,
+                            path_kind.as_str(),
+                            target,
+                            peer.probe_controller.health()
+                        );
+                        eprintln!("{message}");
+                        log_platform_error(message);
+                    }
                 }
             }
             if sent_any {
@@ -403,6 +451,13 @@ impl DirectUdpTransport {
             peer.ready = peer.probe_controller.usable();
             if was_ready && !peer.ready {
                 peer.ready = false;
+                eprintln!(
+                    "SLAN_DIRECT_UDP_PATH_FAILED peer={} path={} endpoint={} health={:?} reason=probe_timeout",
+                    peer.peer_node_id,
+                    peer.path_kind.as_str(),
+                    peer.address,
+                    peer.probe_controller.health()
+                );
                 expired.push(peer.peer_node_id.clone());
             }
         }
@@ -416,6 +471,9 @@ impl DirectUdpTransport {
         remote_addr: SocketAddr,
     ) -> Option<String> {
         let peer = self.peers.get_mut(peer_index)?;
+        let was_ready = peer.ready;
+        let previous_path_kind = peer.path_kind;
+        let previous_addr = peer.socket_addr;
         if let Some(target) = peer
             .probe_targets
             .iter()
@@ -432,6 +490,17 @@ impl DirectUdpTransport {
         let now_ms = current_timestamp_ms();
         peer.probe_controller.on_inbound(now_ms);
         peer.ready = peer.probe_controller.usable();
+        if !was_ready || previous_path_kind != peer.path_kind || previous_addr != peer.socket_addr {
+            eprintln!(
+                "SLAN_DIRECT_UDP_PATH_READY peer={} path={} endpoint={} previousPath={} previousEndpoint={} health={:?}",
+                peer.peer_node_id,
+                peer.path_kind.as_str(),
+                peer.socket_addr,
+                previous_path_kind.as_str(),
+                previous_addr,
+                peer.probe_controller.health()
+            );
+        }
         Some(peer.peer_node_id.clone())
     }
 

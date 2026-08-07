@@ -412,6 +412,13 @@ impl PlatformNetwork for MacosPlatformNetwork {
             return Ok(());
         }
         let previous_relay_config = runtime.relay_config.clone();
+        if let (Some(current), Some(next)) = (runtime.relay_config.as_ref(), relay_config) {
+            let changed_fields = current.data_plane_change_fields(next);
+            eprintln!(
+                "macos configure_relay changed_fields={}",
+                changed_fields.join(",")
+            );
+        }
         runtime.relay_config = relay_config.cloned();
         eprintln!(
             "macos configure_relay enabled={} sessions={} transport={}",

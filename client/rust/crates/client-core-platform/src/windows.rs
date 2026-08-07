@@ -787,6 +787,31 @@ impl DirectUdpTransport {
             clear_direct_udp_endpoint_report();
             return None;
         }
+        let bind_address = socket
+            .local_addr()
+            .map(|address| address.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        eprintln!(
+            "SLAN_DIRECT_UDP_TRANSPORT_ATTACHED localNodeId={} bindAddress={} peerCount={}",
+            local_node_id,
+            bind_address,
+            peers.len()
+        );
+        for peer in &peers {
+            let candidates = probe_targets
+                .get(&peer.peer_node_id)
+                .into_iter()
+                .flatten()
+                .map(|target| format!("{}@{}", target.path_kind.as_str(), target.address))
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!(
+                "SLAN_DIRECT_UDP_PEER_CANDIDATES peer={} virtualIps={} candidates={}",
+                peer.peer_node_id,
+                peer.peer_virtual_ips.join(","),
+                candidates
+            );
+        }
         persist_direct_udp_endpoint_report(&socket);
         let probe_controllers = direct_udp_probe_controllers(&peers);
         Some(Self {
@@ -913,26 +938,40 @@ impl DirectUdpTransport {
                 }
                 continue;
             }
-            let sent = self
+            let targets = self
                 .probe_targets
                 .get(&peer.peer_node_id)
-                .map(|targets| {
-                    targets
-                        .iter()
-                        .filter(|target| {
-                            self.socket
-                                .send_to(payload.as_bytes(), target.socket_addr)
-                                .is_ok()
-                        })
-                        .count()
-                })
+                .cloned()
                 .unwrap_or_else(|| {
-                    usize::from(
-                        self.socket
-                            .send_to(payload.as_bytes(), peer.socket_addr)
-                            .is_ok(),
-                    )
+                    vec![DirectUdpProbeTarget {
+                        path_kind: peer.path_kind,
+                        address: peer.address.clone(),
+                        socket_addr: peer.socket_addr,
+                    }]
                 });
+            let mut sent = 0;
+            for target in targets {
+                match self.socket.send_to(payload.as_bytes(), target.socket_addr) {
+                    Ok(size) => {
+                        sent += 1;
+                        eprintln!(
+                            "SLAN_DIRECT_UDP_PROBE_SENT peer={} path={} target={} bytes={} role={role:?} health={:?}",
+                            peer.peer_node_id,
+                            target.path_kind.as_str(),
+                            target.socket_addr,
+                            size,
+                            controller.health()
+                        );
+                    }
+                    Err(error) => eprintln!(
+                        "SLAN_DIRECT_UDP_PROBE_SEND_FAILED peer={} path={} target={} role={role:?} health={:?} error={error}",
+                        peer.peer_node_id,
+                        target.path_kind.as_str(),
+                        target.socket_addr,
+                        controller.health()
+                    ),
+                }
+            }
             if sent > 0 {
                 controller.on_probe_sent(now_ms);
                 sent_count += 1;
@@ -949,7 +988,17 @@ impl DirectUdpTransport {
             return;
         };
         if let Some(controller) = self.probe_controllers.get_mut(&peer.peer_node_id) {
+            let was_usable = controller.usable();
             controller.on_inbound(current_timestamp_ms());
+            if !was_usable && controller.usable() {
+                eprintln!(
+                    "SLAN_DIRECT_UDP_PATH_READY peer={} path={} endpoint={} health={:?}",
+                    peer.peer_node_id,
+                    peer.path_kind.as_str(),
+                    peer.socket_addr,
+                    controller.health()
+                );
+            }
         }
     }
 
@@ -1005,6 +1054,8 @@ impl DirectUdpTransport {
         let Some(peer) = self.peers.get_mut(peer_index) else {
             return false;
         };
+        let previous_path_kind = peer.path_kind;
+        let previous_addr = peer.socket_addr;
         if let Some(target) = self
             .probe_targets
             .get(&peer.peer_node_id)
@@ -1023,6 +1074,14 @@ impl DirectUdpTransport {
         }
         peer.socket_addr = remote_addr;
         peer.address = remote_addr.to_string();
+        eprintln!(
+            "SLAN_DIRECT_UDP_ENDPOINT_CHANGED peer={} path={} endpoint={} previousPath={} previousEndpoint={}",
+            peer.peer_node_id,
+            peer.path_kind.as_str(),
+            peer.socket_addr,
+            previous_path_kind.as_str(),
+            previous_addr
+        );
         true
     }
 }
@@ -2010,6 +2069,11 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                         .direct_udp_probes_sent
                         .saturating_add(probe_batch.sent_count as u64);
                     for (peer_node_id, path_kind) in probe_batch.failed_paths {
+                        eprintln!(
+                            "SLAN_PEER_PATH_DEGRADED peer={} path={} reason=adaptive_probe_timeout",
+                            peer_node_id,
+                            path_kind.as_str()
+                        );
                         let should_failover =
                             path_manager.record_probe_timeout(&peer_node_id, path_kind);
                         for peer_path in selected_peer_paths.iter_mut() {
@@ -2024,6 +2088,11 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             }
                         }
                         if should_failover {
+                            eprintln!(
+                                "SLAN_PEER_PATH_CHANGED peer={} previousPath={} currentPath=relay_udp reason=adaptive_probe_failure",
+                                peer_node_id,
+                                path_kind.as_str()
+                            );
                             path_manager
                                 .tracker
                                 .set_active_path(peer_node_id.clone(), PathKind::RelayUdp);
@@ -2140,6 +2209,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             if let Some(previous_path) =
                                 path_manager.record_sent_path(&peer_node_id, path_kind)
                             {
+                                eprintln!(
+                                    "SLAN_PEER_PATH_CHANGED peer={} previousPath={} currentPath={} reason=send_success",
+                                    peer_node_id,
+                                    previous_path.as_str(),
+                                    path_kind.as_str()
+                                );
                                 update_peer_active_path(
                                     &mut selected_peer_paths,
                                     &peer_node_id,
@@ -2201,6 +2276,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 if let Some(fallback_path) =
                                     path_manager.fallback_path_for_node(&peer_node_id, path_kind)
                                 {
+                                    eprintln!(
+                                        "SLAN_PEER_PATH_CHANGED peer={} previousPath={} currentPath={} reason=consecutive_send_failures",
+                                        peer_node_id,
+                                        path_kind.as_str(),
+                                        fallback_path.as_str()
+                                    );
                                     path_manager
                                         .tracker
                                         .set_active_path(peer_node_id.clone(), fallback_path);
@@ -2258,6 +2339,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 if let Some(fallback_path) =
                                     path_manager.fallback_path_for_node(&peer_node_id, path_kind)
                                 {
+                                    eprintln!(
+                                        "SLAN_PEER_PATH_CHANGED peer={} previousPath={} currentPath={} reason=transport_unavailable",
+                                        peer_node_id,
+                                        path_kind.as_str(),
+                                        fallback_path.as_str()
+                                    );
                                     path_manager
                                         .tracker
                                         .set_active_path(peer_node_id.clone(), fallback_path);
@@ -2660,6 +2747,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             if let Some((peer_node_id, path_kind)) = direct_udp_probe_success_peer {
                 let previous_path = path_manager.active_path_for_peer_node(&peer_node_id);
                 if path_manager.record_probe_success(&peer_node_id, path_kind) {
+                    eprintln!(
+                        "SLAN_PEER_PATH_CHANGED peer={} previousPath={} currentPath={} reason=probe_success",
+                        peer_node_id,
+                        previous_path.as_str(),
+                        path_kind.as_str()
+                    );
                     mark_peer_path_probe_success(
                         &mut selected_peer_paths,
                         &peer_node_id,
