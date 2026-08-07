@@ -93,6 +93,204 @@ pub enum PathState {
     Failed,
 }
 
+/// 客户端本地路径探测角色。服务端只提供候选，不参与探测周期或选路。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathProbeRole {
+    Active,
+    Standby,
+}
+
+/// 单条候选路径的本地健康状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathProbeHealth {
+    Healthy,
+    Suspect,
+    Failed,
+    Recovering,
+}
+
+/// 客户端固定的自适应探测策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientPathProbePolicy {
+    pub active_interval_ms: u64,
+    pub standby_interval_ms: u64,
+    pub suspect_interval_ms: u64,
+    pub failure_window_ms: u64,
+    pub failure_threshold: u32,
+    pub recovery_successes: u32,
+    pub min_timeout_ms: u64,
+    pub max_timeout_ms: u64,
+}
+
+impl Default for ClientPathProbePolicy {
+    fn default() -> Self {
+        Self {
+            active_interval_ms: 5_000,
+            standby_interval_ms: 10_000,
+            suspect_interval_ms: 1_000,
+            failure_window_ms: 5_000,
+            failure_threshold: 3,
+            recovery_successes: 3,
+            min_timeout_ms: 1_000,
+            max_timeout_ms: 3_000,
+        }
+    }
+}
+
+/// 单条候选路径的客户端探测状态机。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathProbeController {
+    policy: ClientPathProbePolicy,
+    health: PathProbeHealth,
+    usable: bool,
+    last_probe_at_ms: Option<u64>,
+    probe_pending: bool,
+    suspect_since_ms: Option<u64>,
+    consecutive_failures: u32,
+    recovery_successes: u32,
+    rtt_ewma_ms: Option<u64>,
+    failed_until_ms: Option<u64>,
+    backoff_level: u8,
+}
+
+impl PathProbeController {
+    pub fn new() -> Self {
+        Self::with_policy(ClientPathProbePolicy::default())
+    }
+
+    pub fn with_policy(policy: ClientPathProbePolicy) -> Self {
+        Self {
+            policy,
+            health: PathProbeHealth::Healthy,
+            usable: false,
+            last_probe_at_ms: None,
+            probe_pending: false,
+            suspect_since_ms: None,
+            consecutive_failures: 0,
+            recovery_successes: 0,
+            rtt_ewma_ms: None,
+            failed_until_ms: None,
+            backoff_level: 0,
+        }
+    }
+
+    pub fn health(&self) -> PathProbeHealth {
+        self.health
+    }
+
+    pub fn usable(&self) -> bool {
+        self.usable
+    }
+
+    pub fn probe_timeout_ms(&self) -> u64 {
+        self.rtt_ewma_ms
+            .map(|rtt| rtt.saturating_mul(3))
+            .unwrap_or(self.policy.min_timeout_ms)
+            .clamp(self.policy.min_timeout_ms, self.policy.max_timeout_ms)
+    }
+
+    /// 推进状态并判断此刻是否应发送探测包。
+    pub fn should_probe(&mut self, now_ms: u64, role: PathProbeRole) -> bool {
+        self.expire_pending_probe(now_ms);
+        if self.health == PathProbeHealth::Failed {
+            if self.failed_until_ms.is_some_and(|until| now_ms < until) {
+                return false;
+            }
+            self.health = PathProbeHealth::Recovering;
+            self.recovery_successes = 0;
+            self.probe_pending = false;
+        }
+        if self.health == PathProbeHealth::Suspect
+            && (self.consecutive_failures >= self.policy.failure_threshold
+                || self.suspect_since_ms.is_some_and(|started| {
+                    now_ms.saturating_sub(started) >= self.policy.failure_window_ms
+                }))
+        {
+            self.fail(now_ms);
+            return false;
+        }
+        let interval = match self.health {
+            PathProbeHealth::Suspect | PathProbeHealth::Recovering => {
+                self.policy.suspect_interval_ms
+            }
+            PathProbeHealth::Healthy if role == PathProbeRole::Active => {
+                self.policy.active_interval_ms
+            }
+            PathProbeHealth::Healthy => self.policy.standby_interval_ms,
+            PathProbeHealth::Failed => return false,
+        };
+        !self.probe_pending
+            && self
+                .last_probe_at_ms
+                .is_none_or(|last| now_ms.saturating_sub(last) >= interval)
+    }
+
+    pub fn on_probe_sent(&mut self, now_ms: u64) {
+        self.last_probe_at_ms = Some(now_ms);
+        self.probe_pending = true;
+    }
+
+    /// 任意已认证的控制包或数据帧都可证明路径双向可达。
+    pub fn on_inbound(&mut self, now_ms: u64) {
+        if let Some(sent_at) = self.last_probe_at_ms.filter(|_| self.probe_pending) {
+            let sample = now_ms.saturating_sub(sent_at).max(1);
+            self.rtt_ewma_ms = Some(match self.rtt_ewma_ms {
+                Some(previous) => previous.saturating_mul(7).saturating_add(sample) / 8,
+                None => sample,
+            });
+        }
+        self.probe_pending = false;
+        self.consecutive_failures = 0;
+        self.suspect_since_ms = None;
+        if !self.usable {
+            if self.health == PathProbeHealth::Recovering {
+                self.recovery_successes = self.recovery_successes.saturating_add(1);
+                if self.recovery_successes < self.policy.recovery_successes.max(1) {
+                    return;
+                }
+            }
+            self.usable = true;
+        }
+        self.health = PathProbeHealth::Healthy;
+        self.recovery_successes = 0;
+        self.failed_until_ms = None;
+        self.backoff_level = 0;
+    }
+
+    fn expire_pending_probe(&mut self, now_ms: u64) {
+        let Some(sent_at) = self.last_probe_at_ms.filter(|_| self.probe_pending) else {
+            return;
+        };
+        if now_ms.saturating_sub(sent_at) < self.probe_timeout_ms() {
+            return;
+        }
+        self.probe_pending = false;
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        if self.health == PathProbeHealth::Healthy {
+            self.health = PathProbeHealth::Suspect;
+            self.suspect_since_ms = Some(now_ms);
+        } else if self.health == PathProbeHealth::Recovering {
+            self.recovery_successes = 0;
+        }
+    }
+
+    fn fail(&mut self, now_ms: u64) {
+        const BACKOFF_MS: [u64; 4] = [10_000, 30_000, 60_000, 120_000];
+        let index = usize::from(self.backoff_level).min(BACKOFF_MS.len() - 1);
+        self.health = PathProbeHealth::Failed;
+        self.usable = false;
+        self.probe_pending = false;
+        self.failed_until_ms = Some(now_ms.saturating_add(BACKOFF_MS[index]));
+        self.backoff_level = self.backoff_level.saturating_add(1);
+    }
+}
+
+impl Default for PathProbeController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// PathPolicy 是客户端路径选择和故障切换策略。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,12 +300,6 @@ pub struct PathPolicy {
     /// 是否允许故障时自动切换到后备路径。
     #[serde(default = "default_fallback_enabled")]
     pub fallback_enabled: bool,
-    /// 主动探测间隔，单位毫秒。
-    #[serde(default = "default_probe_interval_ms")]
-    pub probe_interval_ms: u64,
-    /// 发送失败持续多久后触发 failover，单位毫秒。
-    #[serde(default = "default_failover_after_ms")]
-    pub failover_after_ms: u64,
     /// 从 relay 升级到更优路径前需要连续成功探测次数。
     #[serde(default = "default_upgrade_successes")]
     pub upgrade_successes: u32,
@@ -130,8 +322,6 @@ impl Default for PathPolicy {
                 PathKind::DerpTcpTls443,
             ],
             fallback_enabled: true,
-            probe_interval_ms: default_probe_interval_ms(),
-            failover_after_ms: default_failover_after_ms(),
             upgrade_successes: default_upgrade_successes(),
             failed_path_cooldown_probes: default_failed_path_cooldown_probes(),
             switch_hysteresis_score: default_switch_hysteresis_score(),
@@ -272,7 +462,7 @@ impl PathTracker {
         self.record_send_failure_at(peer_node_id, path_kind, failure_threshold, None)
     }
 
-    /// 带时间戳的发送失败记录，用于按 failover_after_ms 判断持续失败。
+    /// 带时间戳的发送失败记录，持续失败窗口由客户端固定策略决定。
     pub fn record_send_failure_at(
         &mut self,
         peer_node_id: &str,
@@ -294,7 +484,8 @@ impl PathTracker {
         let failed_long_enough = now_ms
             .zip(self.send_failure_started_at_ms.get(&key).copied())
             .is_some_and(|(now_ms, started_at_ms)| {
-                now_ms.saturating_sub(started_at_ms) >= self.policy.failover_after_ms
+                now_ms.saturating_sub(started_at_ms)
+                    >= ClientPathProbePolicy::default().failure_window_ms
             });
         if *failures < failure_threshold && !failed_long_enough {
             return false;
@@ -625,14 +816,6 @@ fn path_is_ready(candidates: &[PathCandidate], kind: PathKind) -> bool {
 
 fn default_fallback_enabled() -> bool {
     true
-}
-
-fn default_probe_interval_ms() -> u64 {
-    15_000
-}
-
-fn default_failover_after_ms() -> u64 {
-    30_000
 }
 
 fn default_upgrade_successes() -> u32 {
@@ -1030,10 +1213,7 @@ mod tests {
     #[test]
     fn path_tracker_flags_failover_window_without_inventing_fallback() {
         let mut tracker = PathTracker::new(
-            PathPolicy {
-                failover_after_ms: 5_000,
-                ..PathPolicy::default()
-            },
+            PathPolicy::default(),
             [("node-a".to_string(), PathKind::DirectUdp)],
         );
 
@@ -1057,5 +1237,66 @@ mod tests {
         );
 
         assert_eq!(tracker.active_path_summary(), "mixed");
+    }
+
+    #[test]
+    fn probe_controller_uses_active_and_standby_cadence() {
+        let mut active = PathProbeController::new();
+        assert!(active.should_probe(0, PathProbeRole::Active));
+        active.on_probe_sent(0);
+        active.on_inbound(100);
+        assert!(!active.should_probe(4_999, PathProbeRole::Active));
+        assert!(active.should_probe(5_000, PathProbeRole::Active));
+
+        let mut standby = PathProbeController::new();
+        assert!(standby.should_probe(0, PathProbeRole::Standby));
+        standby.on_probe_sent(0);
+        standby.on_inbound(100);
+        assert!(!standby.should_probe(9_999, PathProbeRole::Standby));
+        assert!(standby.should_probe(10_000, PathProbeRole::Standby));
+    }
+
+    #[test]
+    fn probe_controller_accelerates_then_fails_and_recovers() {
+        let mut controller = PathProbeController::new();
+        assert!(controller.should_probe(0, PathProbeRole::Active));
+        controller.on_probe_sent(0);
+        controller.on_inbound(100);
+
+        assert!(controller.should_probe(5_100, PathProbeRole::Active));
+        controller.on_probe_sent(5_100);
+        assert!(controller.should_probe(6_100, PathProbeRole::Active));
+        assert_eq!(controller.health(), PathProbeHealth::Suspect);
+        controller.on_probe_sent(6_100);
+        assert!(controller.should_probe(7_100, PathProbeRole::Active));
+        controller.on_probe_sent(7_100);
+        assert!(!controller.should_probe(8_100, PathProbeRole::Active));
+        assert_eq!(controller.health(), PathProbeHealth::Failed);
+        assert!(!controller.usable());
+
+        assert!(!controller.should_probe(18_099, PathProbeRole::Active));
+        assert!(controller.should_probe(18_100, PathProbeRole::Active));
+        for now in [18_200, 19_200, 20_200] {
+            controller.on_inbound(now);
+            if now != 20_200 {
+                assert!(!controller.usable());
+                assert!(controller.should_probe(now + 1_000, PathProbeRole::Active));
+                controller.on_probe_sent(now + 1_000);
+            }
+        }
+        assert!(controller.usable());
+        assert_eq!(controller.health(), PathProbeHealth::Healthy);
+    }
+
+    #[test]
+    fn probe_timeout_tracks_rtt_with_bounds() {
+        let mut controller = PathProbeController::new();
+        controller.on_probe_sent(10_000);
+        controller.on_inbound(10_800);
+        assert_eq!(controller.probe_timeout_ms(), 2_400);
+
+        controller.on_probe_sent(20_000);
+        controller.on_inbound(25_000);
+        assert_eq!(controller.probe_timeout_ms(), 3_000);
     }
 }

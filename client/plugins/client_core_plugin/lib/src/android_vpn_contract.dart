@@ -425,21 +425,15 @@ class PathPolicy {
       PathKind.derpTcpTls443,
     ],
     this.fallbackEnabled = true,
-    this.probeIntervalMs = 15000,
-    this.failoverAfterMs = 30000,
   });
 
   final List<String> preferred;
   final bool fallbackEnabled;
-  final int probeIntervalMs;
-  final int failoverAfterMs;
 
   factory PathPolicy.fromJson(Map<String, Object?> json) {
     return PathPolicy(
       preferred: _stringList(json['preferred']),
       fallbackEnabled: json['fallbackEnabled'] as bool? ?? true,
-      probeIntervalMs: json['probeIntervalMs'] as int? ?? 15000,
-      failoverAfterMs: json['failoverAfterMs'] as int? ?? 30000,
     );
   }
 
@@ -447,8 +441,6 @@ class PathPolicy {
     return {
       'preferred': preferred,
       'fallbackEnabled': fallbackEnabled,
-      'probeIntervalMs': probeIntervalMs,
-      'failoverAfterMs': failoverAfterMs,
     };
   }
 }

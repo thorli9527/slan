@@ -19,7 +19,7 @@ mod android_tun {
             Arc, Mutex, OnceLock,
         },
         thread::{self, JoinHandle},
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use client_core::relay_frame::{
@@ -33,8 +33,7 @@ mod android_tun {
         PlatformResolverRecord, RelayPeerSession,
     };
     use client_core_platform::direct_udp::{
-        direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
-        DirectUdpTransport,
+        direct_udp_control_packet, DirectUdpControlKind, DirectUdpTransport,
     };
     use jni::{
         objects::{JClass, JIntArray, JString},
@@ -52,6 +51,13 @@ mod android_tun {
     const ANDROID_LOG_TAG: &[u8] = b"client-core-ffi\0";
     const ANDROID_LOG_INFO: i32 = 4;
     const ANDROID_LOG_ERROR: i32 = 6;
+
+    fn current_timestamp_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or_default()
+    }
 
     unsafe extern "C" {
         fn __android_log_write(prio: i32, tag: *const c_char, text: *const c_char) -> i32;
@@ -345,13 +351,7 @@ mod android_tun {
             let mut tun_buffer = vec![0_u8; 2048];
             let mut relay_buffer = vec![0_u8; 4096];
             let mut direct_udp = direct_udp;
-            let direct_udp_probe_interval = parsed_config
-                .as_ref()
-                .and_then(|config| config.relay_data_plane.as_ref())
-                .map(|config| {
-                    direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms)
-                })
-                .unwrap_or_else(|| Duration::from_secs(15));
+            let direct_udp_probe_interval = Duration::from_secs(1);
             let direct_udp_network_id = parsed_config
                 .as_ref()
                 .and_then(|config| config.relay_data_plane.as_ref())
@@ -385,7 +385,16 @@ mod android_tun {
             while !thread_stop.load(Ordering::SeqCst) {
                 let mut did_work = false;
                 if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
-                    if let Some(direct_udp) = direct_udp.as_ref() {
+                    if let Some(direct_udp) = direct_udp.as_mut() {
+                        for peer_node_id in direct_udp.poll_probe_health(current_timestamp_ms()) {
+                            android_log_info(&format!(
+                                "SLAN_ANDROID_DIRECT_UDP_PEER_FAILED peer={}",
+                                peer_node_id
+                            ));
+                        }
+                        thread_stats
+                            .direct_udp_ready_peer_count
+                            .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
                         let punch_probes = direct_udp.send_punch_endpoint_probes(
                             direct_udp_network_id.as_str(),
                             &direct_udp_node_configs,

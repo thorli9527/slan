@@ -126,7 +126,8 @@ void runDeviceActivationTest() {
     }
     expect(bridge.state.value.activated, isTrue);
     expect(bridge.state.value.deviceId, isNotEmpty);
-    expect(find.byKey(const Key('current-device-value')), findsOneWidget);
+    expect(find.byKey(const Key('current-device-value')), findsNothing);
+    expect(find.byKey(const Key('network-ip-value')), findsOneWidget);
     debugPrint('SLAN_TEST_CLIENT_DEVICE_ID=${bridge.state.value.deviceId}');
     await tester.pump(const Duration(seconds: 2));
 

@@ -89,15 +89,8 @@ pub(crate) struct DeviceNetworkMembershipChangedPayload {
 }
 
 pub(crate) fn decode_device_network_membership_payload(
-    mut value: Value,
+    value: Value,
 ) -> serde_json::Result<DeviceNetworkMembershipChangedPayload> {
-    if let Some(payload) = value.as_object_mut() {
-        let canonical = payload.remove("changedNetworkId");
-        let legacy = payload.remove("networkId");
-        if let Some(changed_network_id) = canonical.or(legacy) {
-            payload.insert("changedNetworkId".to_string(), changed_network_id);
-        }
-    }
     serde_json::from_value(value)
 }
 
@@ -421,34 +414,18 @@ mod tests {
     use crate::session_store::PersistedSession;
 
     #[test]
-    fn membership_payload_prefers_canonical_field_when_legacy_field_is_also_present() {
+    fn membership_payload_decodes_canonical_changed_network_id() {
         let payload = decode_device_network_membership_payload(serde_json::json!({
             "deviceId": "device-1",
-            "networkId": "network-legacy",
             "changedNetworkId": "network-current",
             "networkIds": ["network-current"],
             "operation": "joined"
         }))
-        .expect("decode duplicate-compatible membership payload");
+        .expect("decode membership payload");
 
         assert_eq!(
             payload.changed_network_id.as_deref(),
             Some("network-current")
-        );
-    }
-
-    #[test]
-    fn membership_payload_accepts_legacy_network_id() {
-        let payload = decode_device_network_membership_payload(serde_json::json!({
-            "deviceId": "device-1",
-            "networkId": "network-legacy",
-            "networkIds": ["network-legacy"]
-        }))
-        .expect("decode legacy membership payload");
-
-        assert_eq!(
-            payload.changed_network_id.as_deref(),
-            Some("network-legacy")
         );
     }
 

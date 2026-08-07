@@ -4120,19 +4120,19 @@ fn execute_runtime_network_activation(
                 format!("{command_kind}.phase2"),
                 correlation_id.clone(),
                 move |platform| {
-                    // Guard: if the network has been disabled since phase 1, skip.
-                    if let Ok(state) = platform.read_runtime_state() {
-                        if !state.network_enabled {
-                            log_service_error(
-                                "configure_network_full: skipped — network disabled since phase 1",
-                            );
-                            return Ok(());
-                        }
+                    // Phase 1 only creates/enables the adapter. On platforms such as
+                    // macOS, platform network_enabled remains false until phase 2
+                    // assigns the virtual IP, so cancellation must follow the actor's
+                    // desired state rather than the incomplete platform state.
+                    let current_state = snapshots_p2.latest().state;
+                    if phase2_network_activation_cancelled(&current_state) {
+                        log_service_error(
+                            "configure_network_full: skipped — network disabled since phase 1",
+                        );
+                        return Ok(());
                     }
-                    if !activation_context_matches(
-                        &snapshots_p2.latest().state,
-                        &plan_for_phase2.session,
-                    ) || !persisted_activation_context_matches(&plan_for_phase2.session)
+                    if !activation_context_matches(&current_state, &plan_for_phase2.session)
+                        || !persisted_activation_context_matches(&plan_for_phase2.session)
                     {
                         anyhow::bail!("stale platform network activation phase 2");
                     }
@@ -4194,6 +4194,10 @@ fn execute_runtime_network_activation(
         }
     }
     Ok(runtime.snapshot().state)
+}
+
+fn phase2_network_activation_cancelled(state: &ClientViewState) -> bool {
+    !state.network_enabled
 }
 
 fn activation_context_matches(state: &ClientViewState, session: &PersistedSession) -> bool {

@@ -35,8 +35,8 @@ use client_core::{
 use serde::Serialize;
 
 use crate::direct_udp::{
-    clear_direct_udp_endpoint_report, direct_udp_control_packet, direct_udp_probe_interval_from_ms,
-    DirectUdpControlKind, DirectUdpTransport,
+    clear_direct_udp_endpoint_report, direct_udp_control_packet, DirectUdpControlKind,
+    DirectUdpTransport,
 };
 use crate::effective_resolver_servers;
 
@@ -697,7 +697,7 @@ fn start_local_data_plane(
     ) = if let Some(config) = direct_config.as_ref() {
         (
             DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths),
-            direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms),
+            Duration::from_secs(1),
             config.network_id.clone(),
             config.node_configs.clone(),
             stable_hash64(&serde_json::to_string(config)?),
@@ -707,7 +707,7 @@ fn start_local_data_plane(
         clear_direct_udp_endpoint_report();
         (
             None,
-            direct_udp_probe_interval_from_ms(0),
+            Duration::from_secs(1),
             String::new(),
             Vec::new(),
             0,
@@ -787,8 +787,7 @@ fn start_udp_data_plane(
     let direct_udp = DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths);
     let config_hash = stable_hash64(&serde_json::to_string(&config)?);
     let max_frame_payload = usize::from(config.max_frame_payload.unwrap_or(1200).clamp(512, 1400));
-    let direct_udp_probe_interval =
-        direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms);
+    let direct_udp_probe_interval = Duration::from_secs(1);
     let direct_network_id = config.network_id.clone();
     let node_configs = config.node_configs.clone();
     let mut stats = relay_data_plane_stats_from_config(&config, &peers, &derp_peers);
@@ -1846,7 +1845,11 @@ fn run_udp_data_plane(
             last_keepalive = Instant::now();
         }
         if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
-            if let Some(direct_udp) = direct_udp.as_ref() {
+            if let Some(direct_udp) = direct_udp.as_mut() {
+                for peer_node_id in direct_udp.poll_probe_health(current_timestamp_ms()) {
+                    macos_trace!("SLAN_MACOS_DIRECT_UDP_PEER_FAILED peer={}", peer_node_id);
+                }
+                stats.direct_udp_ready_peer_count = direct_udp.ready_peer_count() as u64;
                 let _ = direct_udp.send_punch_endpoint_probes(&direct_network_id, &node_configs);
                 stats.direct_udp_probes_sent = stats
                     .direct_udp_probes_sent
@@ -3148,7 +3151,13 @@ fn run_local_data_plane(
     while !stop.load(Ordering::SeqCst) {
         let mut did_work = false;
         if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
-            if let Some(direct_udp) = direct_udp.as_ref() {
+            if let Some(direct_udp) = direct_udp.as_mut() {
+                for peer_node_id in direct_udp.poll_probe_health(current_timestamp_ms()) {
+                    macos_trace!(
+                        "SLAN_MACOS_LOCAL_DIRECT_UDP_PEER_FAILED peer={}",
+                        peer_node_id
+                    );
+                }
                 let _ = direct_udp.send_punch_endpoint_probes(&direct_network_id, &node_configs);
                 let _ = direct_udp.send_probe_packets();
             }

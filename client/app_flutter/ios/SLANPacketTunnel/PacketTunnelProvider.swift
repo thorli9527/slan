@@ -1817,6 +1817,19 @@ private final class DirectUdpRuntime {
 
 // 单个 Direct UDP peer，会对一个远端公网候选地址进行 probe/pong 打洞和数据收发。
 private final class DirectUdpPeerRuntime {
+  private enum ProbeHealth {
+    case healthy
+    case suspect
+    case failed
+    case recovering
+  }
+  private static let activeProbeInterval: TimeInterval = 5
+  private static let standbyProbeInterval: TimeInterval = 10
+  private static let suspectProbeInterval: TimeInterval = 1
+  private static let probeTimeout: TimeInterval = 1
+  private static let failureThreshold = 3
+  private static let recoverySuccesses = 3
+  private static let retryBackoffs: [TimeInterval] = [10, 30, 60, 120]
   private let peerNodeId: String
   private let peerVirtualIps: Set<String>
   fileprivate let pathKind: String
@@ -1836,6 +1849,13 @@ private final class DirectUdpPeerRuntime {
   private(set) var framesSent = 0
   private(set) var framesReceived = 0
   private var seq: UInt64 = 0
+  private var lastProbeAt: Date?
+  private var probePending = false
+  private var probeHealth = ProbeHealth.healthy
+  private var consecutiveProbeFailures = 0
+  private var recoveryProbeSuccesses = 0
+  private var failedUntil: Date?
+  private var retryBackoffIndex = 0
   var aclPeer: AclPeer {
     AclPeer(peerNodeId: peerNodeId, peerVirtualIps: peerVirtualIps)
   }
@@ -1893,7 +1913,7 @@ private final class DirectUdpPeerRuntime {
       if case .ready = state {
         self.receive()
         self.sendProbe()
-        self.scheduleProbe()
+        self.scheduleProbe(on: queue)
       }
       if case .failed = state {
         self.ready = false
@@ -1931,6 +1951,8 @@ private final class DirectUdpPeerRuntime {
 
   private func sendProbe() {
     sendControl(type: "probe")
+    lastProbeAt = Date()
+    probePending = true
     probesSent += 1
   }
 
@@ -1951,13 +1973,44 @@ private final class DirectUdpPeerRuntime {
     connection?.send(content: data, completion: .contentProcessed { _ in })
   }
 
-  private func scheduleProbe() {
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) { [weak self] in
+  private func scheduleProbe(on queue: DispatchQueue) {
+    queue.asyncAfter(
+      deadline: .now() + nextProbeInterval()
+    ) { [weak self] in
       guard let self = self, self.running else {
         return
       }
+      let now = Date()
+      if self.probeHealth == .failed {
+        if let failedUntil = self.failedUntil, now < failedUntil {
+          self.scheduleProbe(on: queue)
+          return
+        }
+        self.probeHealth = .recovering
+        self.recoveryProbeSuccesses = 0
+        self.probePending = false
+      }
+      if self.probePending,
+        let lastProbeAt = self.lastProbeAt,
+        now.timeIntervalSince(lastProbeAt) >= Self.probeTimeout
+      {
+        self.probePending = false
+        self.consecutiveProbeFailures += 1
+        if self.probeHealth == .healthy {
+          self.probeHealth = .suspect
+        } else if self.probeHealth == .recovering {
+          self.recoveryProbeSuccesses = 0
+        }
+      }
+      if self.probeHealth == .suspect,
+        self.consecutiveProbeFailures >= Self.failureThreshold
+      {
+        self.markProbeFailed(now: now)
+        self.scheduleProbe(on: queue)
+        return
+      }
       self.sendProbe()
-      self.scheduleProbe()
+      self.scheduleProbe(on: queue)
     }
   }
 
@@ -1987,7 +2040,7 @@ private final class DirectUdpPeerRuntime {
     else {
       return false
     }
-    ready = true
+    markInboundReady()
     framesReceived += 1
     guard AclPolicy.allows(packet, policies: aclPolicies, direction: .ingress, peer: aclPeer) else {
       return true
@@ -2018,8 +2071,8 @@ private final class DirectUdpPeerRuntime {
     if let nodeId = value["nodeId"] as? String, !nodeId.isEmpty, nodeId != peerNodeId {
       return true
     }
-    ready = true
     if type == "probe" {
+      markInboundReady()
       probesReceived += 1
       if let responseConnection = responseConnection, responseConnection !== connection {
         let payload: [String: Any] = [
@@ -2035,9 +2088,52 @@ private final class DirectUdpPeerRuntime {
         sendPong()
       }
     } else if type == "pong" {
+      markInboundReady()
       pongsReceived += 1
+    } else {
+      return false
     }
     return true
+  }
+
+  private func markInboundReady() {
+    let now = Date()
+    probePending = false
+    consecutiveProbeFailures = 0
+    if !ready && probeHealth == .recovering {
+      recoveryProbeSuccesses += 1
+      if recoveryProbeSuccesses < Self.recoverySuccesses {
+        return
+      }
+    }
+    ready = true
+    probeHealth = .healthy
+    recoveryProbeSuccesses = 0
+    failedUntil = nil
+    retryBackoffIndex = 0
+  }
+
+  private func nextProbeInterval() -> TimeInterval {
+    switch probeHealth {
+    case .suspect, .recovering:
+      return Self.suspectProbeInterval
+    case .failed:
+      guard let failedUntil = failedUntil else {
+        return Self.suspectProbeInterval
+      }
+      return max(Self.suspectProbeInterval, failedUntil.timeIntervalSinceNow)
+    case .healthy:
+      return ready ? Self.activeProbeInterval : Self.standbyProbeInterval
+    }
+  }
+
+  private func markProbeFailed(now: Date) {
+    let index = min(retryBackoffIndex, Self.retryBackoffs.count - 1)
+    ready = false
+    probePending = false
+    probeHealth = .failed
+    failedUntil = now.addingTimeInterval(Self.retryBackoffs[index])
+    retryBackoffIndex = min(retryBackoffIndex + 1, Self.retryBackoffs.count - 1)
   }
 
   // 将远端回包写回 iOS utun；短暂拥塞时做有限次微延迟重试。

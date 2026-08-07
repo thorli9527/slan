@@ -8,7 +8,7 @@ class MainFlutterWindow: NSWindow {
     // The Flutter desktop home is a compact utility surface. Keep the native
     // content area matched to it so activated and inactive states do not
     // leave a large unused region below their actions.
-    let contentSize = NSSize(width: 480, height: 190)
+    let contentSize = NSSize(width: 460, height: 176)
     self.setContentSize(contentSize)
     self.minSize = contentSize
     self.maxSize = contentSize

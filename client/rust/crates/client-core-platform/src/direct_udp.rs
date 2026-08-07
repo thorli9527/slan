@@ -3,23 +3,19 @@ use std::{
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use client_core::{
     compare_path_candidates, ipv4_source, normalize_virtual_ip,
-    relay_frame::decode_slan_relay_data_frame_full, relay_peer_index_for_packet, NodeConfig,
-    PathKind, PeerPathConfig,
+    path::{PathProbeController, PathProbeRole},
+    relay_frame::decode_slan_relay_data_frame_full,
+    relay_peer_index_for_packet, NodeConfig, PathKind, PeerPathConfig,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::log_platform_error;
-
-/// 兼容旧版直连 UDP 探测包。
-pub const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
-/// 兼容旧版直连 UDP 探测响应包。
-pub const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
 
 /// SLAN 默认直连 UDP 端口，刻意避开 Tailscale 默认使用的 41641。
 pub const DEFAULT_DIRECT_UDP_PORT: u16 = 41642;
@@ -39,13 +35,13 @@ pub enum DirectUdpControlKind {
 pub struct DirectUdpControlPacket {
     /// 控制包类型。
     pub kind: DirectUdpControlKind,
-    /// 发送方节点 ID；旧版固定字节包可能没有该字段。
-    pub node_id: Option<String>,
+    /// 发送方节点 ID。
+    pub node_id: String,
 }
 
 impl DirectUdpControlPacket {
-    pub fn peer_node_id(&self) -> Option<&str> {
-        self.node_id.as_deref().filter(|value| !value.is_empty())
+    pub fn peer_node_id(&self) -> &str {
+        &self.node_id
     }
 }
 
@@ -62,10 +58,21 @@ pub struct DirectUdpPeer {
     pub address: String,
     /// 已解析的对端 socket 地址。
     pub socket_addr: SocketAddr,
+    /// 需要并行探测的全部直连候选，避免首个 LAN 候选不可达时阻断公网打洞。
+    probe_targets: Vec<DirectUdpProbeTarget>,
     /// 最近接收的序列号，预留给重放或乱序检测。
     pub last_rx_seq: u64,
     /// 是否已经通过 probe/pong 或有效数据包确认可用。
     pub ready: bool,
+    /// 客户端本地路径探测状态，不接受服务端策略覆盖。
+    pub probe_controller: PathProbeController,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectUdpProbeTarget {
+    path_kind: PathKind,
+    address: String,
+    socket_addr: SocketAddr,
 }
 
 /// DirectUdpTransport 管理本机 direct UDP socket 以及所有 peer 的直连状态。
@@ -135,46 +142,32 @@ impl DirectUdpTransport {
         };
         let mut peers = Vec::new();
         for path in configured_paths {
-            let Some((path_kind, address)) = udp_address_for_peer(path) else {
+            let probe_targets = udp_probe_targets_for_peer(path);
+            let Some(primary) = probe_targets.first() else {
                 peers.push(DirectUdpPeer {
                     peer_node_id: path.peer_node_id.clone(),
                     peer_virtual_ips: path.peer_virtual_ips.clone(),
                     path_kind: PathKind::DirectUdp,
                     address: String::new(),
                     socket_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                    probe_targets,
                     last_rx_seq: 0,
                     ready: false,
+                    probe_controller: PathProbeController::new(),
                 });
                 continue;
             };
-            match resolve_direct_udp_peer_address(address.as_str()) {
-                Ok(socket_addr) => peers.push(DirectUdpPeer {
-                    peer_node_id: path.peer_node_id.clone(),
-                    peer_virtual_ips: path.peer_virtual_ips.clone(),
-                    path_kind,
-                    address,
-                    socket_addr,
-                    last_rx_seq: 0,
-                    ready: false,
-                }),
-                Err(error) => {
-                    let message = format!(
-                        "client-core-platform direct udp attach skipped peer={} error={error:#}",
-                        path.peer_node_id
-                    );
-                    eprintln!("{message}");
-                    log_platform_error(message);
-                    peers.push(DirectUdpPeer {
-                        peer_node_id: path.peer_node_id.clone(),
-                        peer_virtual_ips: path.peer_virtual_ips.clone(),
-                        path_kind: PathKind::DirectUdp,
-                        address: String::new(),
-                        socket_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
-                        last_rx_seq: 0,
-                        ready: false,
-                    });
-                }
-            }
+            peers.push(DirectUdpPeer {
+                peer_node_id: path.peer_node_id.clone(),
+                peer_virtual_ips: path.peer_virtual_ips.clone(),
+                path_kind: primary.path_kind,
+                address: primary.address.clone(),
+                socket_addr: primary.socket_addr,
+                probe_targets,
+                last_rx_seq: 0,
+                ready: false,
+                probe_controller: PathProbeController::new(),
+            });
         }
         if let Err(error) = socket.set_nonblocking(true) {
             let message =
@@ -237,11 +230,13 @@ impl DirectUdpTransport {
         if self.handle_punch_response(&buffer[..frame_len]) {
             return Ok(None);
         }
-        if let Some(peer_index) = self
-            .peers
-            .iter()
-            .position(|peer| peer.socket_addr == remote_addr)
-        {
+        if let Some(peer_index) = self.peers.iter().position(|peer| {
+            peer.socket_addr == remote_addr
+                || peer
+                    .probe_targets
+                    .iter()
+                    .any(|target| target.socket_addr == remote_addr)
+        }) {
             return Ok(Some(DirectUdpReceive {
                 peer_index,
                 frame_len,
@@ -259,21 +254,43 @@ impl DirectUdpTransport {
             }))
     }
 
-    /// 向所有已有 UDP 地址的 peer 发送 probe。
-    pub fn send_probe_packets(&self) -> usize {
+    /// 按客户端本地状态机向到期的 peer 发送 probe。
+    pub fn send_probe_packets(&mut self) -> usize {
+        let now_ms = current_timestamp_ms();
         let payload = direct_udp_control_payload(DirectUdpControlKind::Probe, &self.local_node_id);
         let mut sent = 0_usize;
-        for peer in &self.peers {
-            if peer.socket_addr.port() == 0 {
+        for peer in &mut self.peers {
+            if peer.probe_targets.is_empty() && peer.socket_addr.port() == 0 {
                 continue;
             }
-            if self
-                .socket
-                .send_to(payload.as_bytes(), peer.socket_addr)
-                .is_ok()
-            {
+            let role = if peer.ready {
+                PathProbeRole::Active
+            } else {
+                PathProbeRole::Standby
+            };
+            if !peer.probe_controller.should_probe(now_ms, role) {
+                peer.ready = peer.probe_controller.usable();
+                continue;
+            }
+            let targets = if peer.probe_targets.is_empty() {
+                vec![peer.socket_addr]
+            } else {
+                peer.probe_targets
+                    .iter()
+                    .map(|target| target.socket_addr)
+                    .collect()
+            };
+            let mut sent_any = false;
+            for target in targets {
+                if self.socket.send_to(payload.as_bytes(), target).is_ok() {
+                    sent_any = true;
+                }
+            }
+            if sent_any {
+                peer.probe_controller.on_probe_sent(now_ms);
                 sent = sent.saturating_add(1);
             }
+            peer.ready = peer.probe_controller.usable();
         }
         sent
     }
@@ -370,6 +387,27 @@ impl DirectUdpTransport {
         self.peers.iter().filter(|peer| peer.ready).count()
     }
 
+    /// Demote direct paths that have received no valid peer traffic for the timeout window.
+    /// Probes continue after demotion, so a later pong restores the path without rebuilding TUN.
+    pub fn poll_probe_health(&mut self, now_ms: u64) -> Vec<String> {
+        let mut expired = Vec::new();
+        for peer in &mut self.peers {
+            let was_ready = peer.ready;
+            let role = if peer.ready {
+                PathProbeRole::Active
+            } else {
+                PathProbeRole::Standby
+            };
+            let _ = peer.probe_controller.should_probe(now_ms, role);
+            peer.ready = peer.probe_controller.usable();
+            if was_ready && !peer.ready {
+                peer.ready = false;
+                expired.push(peer.peer_node_id.clone());
+            }
+        }
+        expired
+    }
+
     /// 标记 peer 已就绪，并在观察到地址变化时更新远端地址。
     pub fn mark_peer_ready(
         &mut self,
@@ -377,26 +415,31 @@ impl DirectUdpTransport {
         remote_addr: SocketAddr,
     ) -> Option<String> {
         let peer = self.peers.get_mut(peer_index)?;
+        if let Some(target) = peer
+            .probe_targets
+            .iter()
+            .find(|target| target.socket_addr == remote_addr)
+        {
+            peer.path_kind = target.path_kind;
+        } else if peer.socket_addr != remote_addr {
+            peer.path_kind = PathKind::DirectUdp;
+        }
         if peer.socket_addr != remote_addr {
             peer.socket_addr = remote_addr;
             peer.address = remote_addr.to_string();
         }
-        peer.ready = true;
+        let now_ms = current_timestamp_ms();
+        peer.probe_controller.on_inbound(now_ms);
+        peer.ready = peer.probe_controller.usable();
         Some(peer.peer_node_id.clone())
     }
 
     fn peer_index_for_unknown_inbound_packet(&self, frame: &[u8]) -> Option<usize> {
         if let Some(control_packet) = direct_udp_control_packet(frame) {
-            if let Some(peer_node_id) = control_packet.peer_node_id() {
-                if let Some(peer_index) = self
-                    .peers
-                    .iter()
-                    .position(|peer| peer.peer_node_id == peer_node_id)
-                {
-                    return Some(peer_index);
-                }
-            }
-            return (self.peers.len() == 1).then_some(0);
+            return self
+                .peers
+                .iter()
+                .position(|peer| peer.peer_node_id == control_packet.peer_node_id());
         }
         let decoded = decode_slan_relay_data_frame_full(frame)?;
         let source = ipv4_source(decoded.payload)?;
@@ -456,18 +499,6 @@ pub fn direct_udp_control_payload(kind: DirectUdpControlKind, node_id: &str) -> 
 }
 
 pub fn direct_udp_control_packet(frame: &[u8]) -> Option<DirectUdpControlPacket> {
-    if frame == DIRECT_UDP_PROBE_PACKET {
-        return Some(DirectUdpControlPacket {
-            kind: DirectUdpControlKind::Probe,
-            node_id: None,
-        });
-    }
-    if frame == DIRECT_UDP_PONG_PACKET {
-        return Some(DirectUdpControlPacket {
-            kind: DirectUdpControlKind::Pong,
-            node_id: None,
-        });
-    }
     let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
     if value.get("kind").and_then(serde_json::Value::as_str) != Some("direct_udp") {
         return None;
@@ -479,21 +510,16 @@ pub fn direct_udp_control_packet(frame: &[u8]) -> Option<DirectUdpControlPacket>
     };
     let node_id = value
         .get("nodeId")
-        .or_else(|| value.get("node_id"))
         .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)?;
     Some(DirectUdpControlPacket { kind, node_id })
 }
 
-pub fn direct_udp_probe_interval_from_ms(value: u64) -> Duration {
-    if value == 0 {
-        return Duration::from_secs(15);
-    }
-    Duration::from_millis(value).clamp(Duration::from_secs(1), Duration::from_secs(300))
-}
-
-fn udp_address_for_peer(path: &PeerPathConfig) -> Option<(PathKind, String)> {
-    path.candidates
+fn udp_probe_targets_for_peer(path: &PeerPathConfig) -> Vec<DirectUdpProbeTarget> {
+    let mut candidates = path
+        .candidates
         .iter()
         .filter(|candidate| candidate.kind.is_direct_udp())
         .filter(|candidate| {
@@ -502,18 +528,41 @@ fn udp_address_for_peer(path: &PeerPathConfig) -> Option<(PathKind, String)> {
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
         })
-        .min_by(|left, right| compare_path_candidates(left, right))
-        .map(|candidate| {
-            (
-                candidate.kind,
-                candidate
-                    .address
-                    .as_deref()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string(),
-            )
-        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| compare_path_candidates(left, right));
+
+    let mut targets = Vec::new();
+    for candidate in candidates {
+        let address = candidate
+            .address
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        match resolve_direct_udp_peer_address(&address) {
+            Ok(socket_addr)
+                if !targets
+                    .iter()
+                    .any(|target: &DirectUdpProbeTarget| target.socket_addr == socket_addr) =>
+            {
+                targets.push(DirectUdpProbeTarget {
+                    path_kind: candidate.kind,
+                    address,
+                    socket_addr,
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let message = format!(
+                    "client-core-platform direct udp candidate skipped peer={} address={} error={error:#}",
+                    path.peer_node_id, address
+                );
+                eprintln!("{message}");
+                log_platform_error(message);
+            }
+        }
+    }
+    targets
 }
 
 fn resolve_direct_udp_peer_address(address: &str) -> Result<SocketAddr> {
@@ -667,21 +716,18 @@ fn current_timestamp_ms() -> u64 {
 mod tests {
     use super::*;
     use client_core::{PathCandidate, PathState};
+    use std::time::Duration;
 
     #[test]
     fn direct_udp_control_packets_are_recognized() {
-        assert_eq!(
-            direct_udp_control_packet(DIRECT_UDP_PROBE_PACKET).map(|packet| packet.kind),
-            Some(DirectUdpControlKind::Probe)
-        );
-        assert_eq!(
-            direct_udp_control_packet(DIRECT_UDP_PONG_PACKET).map(|packet| packet.kind),
-            Some(DirectUdpControlKind::Pong)
-        );
         let packet = direct_udp_control_payload(DirectUdpControlKind::Probe, "node-a");
         let parsed = direct_udp_control_packet(packet.as_bytes()).unwrap();
         assert_eq!(parsed.kind, DirectUdpControlKind::Probe);
-        assert_eq!(parsed.peer_node_id(), Some("node-a"));
+        assert_eq!(parsed.peer_node_id(), "node-a");
+        assert_eq!(
+            direct_udp_control_packet(br#"{"kind":"direct_udp","type":"probe"}"#),
+            None
+        );
     }
 
     #[test]
@@ -741,8 +787,10 @@ mod tests {
                 path_kind: PathKind::DirectUdp,
                 address: known_remote.local_addr().unwrap().to_string(),
                 socket_addr: known_remote.local_addr().unwrap(),
+                probe_targets: Vec::new(),
                 last_rx_seq: 0,
                 ready: false,
+                probe_controller: PathProbeController::new(),
             }],
         };
         let packet = [
@@ -874,6 +922,50 @@ mod tests {
 
         assert_eq!(transport.peers[0].path_kind, PathKind::LanUdp);
         assert_eq!(transport.peers[0].socket_addr, lan.local_addr().unwrap());
+        assert_eq!(transport.peers[0].probe_targets.len(), 2);
+    }
+
+    #[test]
+    fn direct_udp_probe_sends_to_every_candidate_until_one_responds() {
+        let lan = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let public = UdpSocket::bind("127.0.0.1:0").unwrap();
+        lan.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        public
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let candidate = |kind, address: SocketAddr| PathCandidate {
+            kind,
+            state: PathState::Probing,
+            endpoint_id: None,
+            address: Some(address.to_string()),
+            session_id: None,
+            transport: Some("udp".to_string()),
+            rtt_ms: None,
+            path_score: None,
+            last_ok_at_ms: None,
+            last_error: None,
+        };
+        let paths = vec![PeerPathConfig {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9".to_string()],
+            candidates: vec![
+                candidate(PathKind::LanUdp, lan.local_addr().unwrap()),
+                candidate(PathKind::DirectUdp, public.local_addr().unwrap()),
+            ],
+        }];
+        let mut transport = DirectUdpTransport::attach_with_socket("node-local", &paths, || {
+            UdpSocket::bind("127.0.0.1:0")
+        })
+        .unwrap();
+
+        assert_eq!(transport.send_probe_packets(), 1);
+        let mut buffer = [0_u8; 256];
+        assert!(lan.recv_from(&mut buffer).is_ok());
+        assert!(public.recv_from(&mut buffer).is_ok());
+
+        transport.mark_peer_ready(0, public.local_addr().unwrap());
+        assert_eq!(transport.peers[0].path_kind, PathKind::DirectUdp);
+        assert_eq!(transport.peers[0].socket_addr, public.local_addr().unwrap());
     }
 
     #[test]
@@ -946,5 +1038,33 @@ mod tests {
         );
         assert_eq!(transport.peers[0].address, "127.0.0.1:32123");
         assert!(transport.peers[0].ready);
+    }
+
+    #[test]
+    fn direct_udp_peer_uses_burst_probes_before_expiring() {
+        let paths = vec![PeerPathConfig {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9".to_string()],
+            candidates: Vec::new(),
+        }];
+        let mut transport = DirectUdpTransport::attach_with_socket("node-local", &paths, || {
+            UdpSocket::bind("127.0.0.1:0")
+        })
+        .unwrap();
+        transport.peers[0].probe_controller.on_inbound(10_000);
+        transport.peers[0].ready = true;
+
+        assert!(transport.poll_probe_health(15_000).is_empty());
+        transport.peers[0].probe_controller.on_probe_sent(15_000);
+        for now_ms in [16_000, 17_000] {
+            assert!(transport.poll_probe_health(now_ms).is_empty());
+            transport.peers[0].probe_controller.on_probe_sent(now_ms);
+        }
+        assert_eq!(
+            transport.poll_probe_health(18_000),
+            vec!["node-a".to_string()]
+        );
+        assert!(!transport.peers[0].ready);
+        assert!(transport.poll_probe_health(20_000).is_empty());
     }
 }

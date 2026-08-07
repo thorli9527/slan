@@ -392,7 +392,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         : state;
     return ActivatedStatusPanel(
       desktop: _isDesktopLike,
-      deviceLabel: _deviceLabel(displayedState),
       currentIp: _ipText(displayedState),
       state: displayedState,
       onToggle: _toggleNetwork,
@@ -416,11 +415,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         );
       },
     );
-  }
-
-  String _deviceLabel(ClientViewState state) {
-    final deviceId = state.deviceId?.trim();
-    return deviceId == null || deviceId.isEmpty ? '-' : deviceId;
   }
 
   /// 归一化当前虚拟 IP 展示文案。
@@ -499,12 +493,12 @@ class _ServerApiSettingsDialogState extends State<_ServerApiSettingsDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
+        constraints: const BoxConstraints(maxWidth: 400),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -523,13 +517,17 @@ class _ServerApiSettingsDialogState extends State<_ServerApiSettingsDialog> {
                   IconButton(
                     tooltip: '关闭',
                     visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
                     onPressed:
                         _saving ? null : () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close_rounded),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               TextField(
                 key: const Key('server-base-url'),
                 controller: _controller,
@@ -554,7 +552,7 @@ class _ServerApiSettingsDialogState extends State<_ServerApiSettingsDialog> {
                 },
               ),
               SizedBox(
-                height: 20,
+                height: 16,
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
@@ -569,7 +567,7 @@ class _ServerApiSettingsDialogState extends State<_ServerApiSettingsDialog> {
                   ),
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -577,12 +575,20 @@ class _ServerApiSettingsDialogState extends State<_ServerApiSettingsDialog> {
                     key: const Key('server-cancel'),
                     onPressed:
                         _saving ? null : () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(64, 34),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
                     child: const Text('取消'),
                   ),
                   const SizedBox(width: 8),
                   FilledButton(
                     key: const Key('server-save'),
                     onPressed: _saving ? null : _confirm,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(64, 34),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
                     child: _saving
                         ? const SizedBox.square(
                             dimension: 16,

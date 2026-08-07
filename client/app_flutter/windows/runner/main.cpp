@@ -70,7 +70,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(10, 10);
   // Win32 includes the title bar in this size. The resulting client area is
   // aligned with the compact Flutter home used by macOS and Linux.
-  Win32Window::Size size(480, 220);
+  Win32Window::Size size(460, 206);
   if (!window.Create(kWindowTitle, origin, size)) {
     ::CoUninitialize();
     ::ReleaseMutex(single_instance_mutex);

@@ -37,10 +37,7 @@ use client_core::{
 };
 use serde::Serialize;
 
-use crate::direct_udp::{
-    direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
-    DirectUdpTransport,
-};
+use crate::direct_udp::{direct_udp_control_packet, DirectUdpControlKind, DirectUdpTransport};
 use crate::effective_resolver_servers;
 
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
@@ -704,8 +701,7 @@ fn start_udp_data_plane(
     let direct_udp = DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths);
     let config_hash = stable_hash64(&serde_json::to_string(&config)?);
     let max_frame_payload = usize::from(config.max_frame_payload.unwrap_or(1200).clamp(512, 1400));
-    let direct_udp_probe_interval =
-        direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms);
+    let direct_udp_probe_interval = Duration::from_secs(1);
     let mut stats = relay_data_plane_stats_from_config(&config, &peers, &derp_peers);
     let acl_policies = config.acl_policies.clone();
     stats.direct_udp_attached_peer_count = direct_udp
@@ -1178,7 +1174,11 @@ fn run_udp_data_plane(
             last_keepalive = Instant::now();
         }
         if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
-            if let Some(direct_udp) = direct_udp.as_ref() {
+            if let Some(direct_udp) = direct_udp.as_mut() {
+                for peer_node_id in direct_udp.poll_probe_health(current_timestamp_ms()) {
+                    eprintln!("linux direct udp peer failed peer={}", peer_node_id);
+                }
+                stats.direct_udp_ready_peer_count = direct_udp.ready_peer_count() as u64;
                 let _ = direct_udp.send_punch_endpoint_probes(&network_id, &node_configs);
                 stats.direct_udp_probes_sent = stats
                     .direct_udp_probes_sent

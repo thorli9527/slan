@@ -5,18 +5,15 @@ import 'compact_info_row.dart';
 
 /// 已登录首页状态面板。
 ///
-/// 集中展示当前设备、虚拟 IP 和流量统计。
+/// 集中展示虚拟 IP、网络开关和流量统计。
 class ActivatedStatusPanel extends StatelessWidget {
   const ActivatedStatusPanel({
     required this.desktop,
-    required this.deviceLabel,
     required this.currentIp,
     required this.state,
     required this.onToggle,
     super.key,
   });
-
-  final String deviceLabel;
 
   final bool desktop;
 
@@ -42,27 +39,45 @@ class ActivatedStatusPanel extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: CompactDeviceIdentity(deviceLabel: deviceLabel),
-              ),
-              const SizedBox(width: 12),
-              _NetworkControl(
-                desktop: desktop,
-                state: state,
-                onToggle: onToggle,
-              ),
-            ],
-          ),
-          SizedBox(height: desktop ? 6 : 8),
-          CompactInfoRow(
-            valueKey: const Key('network-ip-value'),
-            icon: Icons.router_rounded,
-            label: '当前 IP',
-            value: currentIp,
-          ),
+          if (desktop)
+            Row(
+              children: [
+                Expanded(child: _buildIpRow()),
+                const SizedBox(width: 14),
+                _NetworkControl(
+                  desktop: true,
+                  state: state,
+                  onToggle: onToggle,
+                ),
+              ],
+            )
+          else ...[
+            Row(
+              children: [
+                Icon(
+                  Icons.hub_outlined,
+                  size: 22,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    '虚拟网络',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _NetworkControl(
+                  desktop: false,
+                  state: state,
+                  onToggle: onToggle,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _buildIpRow(),
+          ],
           if (_hasTraffic(state)) ...[
             const SizedBox(height: 6),
             CompactInfoRow(
@@ -81,6 +96,15 @@ class ActivatedStatusPanel extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildIpRow() {
+    return CompactInfoRow(
+      valueKey: const Key('network-ip-value'),
+      icon: Icons.router_rounded,
+      label: '当前 IP',
+      value: currentIp,
     );
   }
 

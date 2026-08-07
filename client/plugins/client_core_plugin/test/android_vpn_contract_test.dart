@@ -49,8 +49,6 @@ void main() {
             'derp_tcp_tls_443'
           ],
           'fallbackEnabled': true,
-          'probeIntervalMs': 15000,
-          'failoverAfterMs': 30000,
         },
         'peerPaths': [
           {

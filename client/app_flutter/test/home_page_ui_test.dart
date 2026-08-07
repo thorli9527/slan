@@ -33,9 +33,10 @@ void main() {
     expect(find.text('SLAN Client'), findsNothing);
     expect(find.text('activated'), findsNothing);
     expect(find.byKey(const Key('network-switch')), findsOneWidget);
-    expect(find.text('设备'), findsOneWidget);
+    expect(find.byKey(const Key('network-ip-value')), findsOneWidget);
     expect(find.text('当前用户邮箱'), findsNothing);
-    expect(find.text('device-test'), findsOneWidget);
+    expect(find.text('device-test'), findsNothing);
+    expect(find.byKey(const Key('current-device-value')), findsNothing);
   });
 
   testWidgets('device activation submits a trimmed authorization key',
@@ -145,7 +146,7 @@ void main() {
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
-      await tester.binding.setSurfaceSize(const Size(480, 190));
+      await tester.binding.setSurfaceSize(const Size(460, 176));
       final bridge = _UiTestBridge(
         initialState: const ClientViewState(
           activated: true,
@@ -163,7 +164,7 @@ void main() {
       final networkSwitch = find.byKey(const Key('network-switch'));
       expect(networkSwitch, findsOneWidget);
       expect(find.text('解除激活'), findsNothing);
-      expect(tester.getBottomRight(networkSwitch).dy, lessThanOrEqualTo(190));
+      expect(tester.getBottomRight(networkSwitch).dy, lessThanOrEqualTo(176));
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;
@@ -174,7 +175,7 @@ void main() {
   testWidgets('desktop inactive layout stays compact', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
-      await tester.binding.setSurfaceSize(const Size(480, 190));
+      await tester.binding.setSurfaceSize(const Size(460, 176));
       final bridge = _UiTestBridge(
         initialState: ClientViewState.initial(),
         activationDelay: Duration.zero,
@@ -185,7 +186,13 @@ void main() {
 
       final activation = find.byKey(const Key('device-activate-submit'));
       expect(activation, findsOneWidget);
-      expect(tester.getBottomRight(activation).dy, lessThanOrEqualTo(190));
+      expect(tester.getBottomRight(activation).dy, lessThanOrEqualTo(176));
+
+      await tester.tap(find.byKey(const Key('server-settings')));
+      await tester.pumpAndSettle();
+      final save = find.byKey(const Key('server-save'));
+      expect(save, findsOneWidget);
+      expect(tester.getBottomRight(save).dy, lessThanOrEqualTo(176));
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;
@@ -234,7 +241,7 @@ void main() {
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
-      await tester.binding.setSurfaceSize(const Size(480, 190));
+      await tester.binding.setSurfaceSize(const Size(460, 176));
       final bridge = _UiTestBridge(
         initialState: const ClientViewState(
           activated: true,
@@ -536,8 +543,7 @@ void main() {
     expect(bridge.androidPrepareCount, greaterThanOrEqualTo(2));
   });
 
-  testWidgets('activated panel shows device id instead of user label',
-      (tester) async {
+  testWidgets('activated panel hides device identity', (tester) async {
     final bridge = _UiTestBridge(
       initialState: const ClientViewState(
         activated: true,
@@ -553,9 +559,11 @@ void main() {
     await tester.pumpWidget(SlanClientV2App(bridge: bridge));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('current-device-value')), findsOneWidget);
-    expect(find.text('device-current'), findsOneWidget);
+    expect(find.byKey(const Key('current-device-value')), findsNothing);
+    expect(find.text('device-current'), findsNothing);
     expect(find.text('tester@example.com'), findsNothing);
+    expect(find.byKey(const Key('network-ip-value')), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsOneWidget);
   });
 }
 

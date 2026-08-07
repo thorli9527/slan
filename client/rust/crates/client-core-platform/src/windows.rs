@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     ffi::{c_void, OsStr},
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, ErrorKind, Read, Write},
@@ -16,6 +17,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use client_core::path::{PathProbeController, PathProbeRole};
 use client_core::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
     ipv4_destination, ipv4_source, ipv4_transport_checksum_valid, mark_peer_path_probe_success,
@@ -44,15 +46,10 @@ const RELAY_ATTACH_ATTEMPTS: usize = 3;
 const RELAY_ATTACH_TIMEOUT: Duration = Duration::from_secs(2);
 const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-const DEFAULT_DIRECT_UDP_PROBE_INTERVAL: Duration = Duration::from_secs(15);
-const MIN_DIRECT_UDP_PROBE_INTERVAL: Duration = Duration::from_secs(1);
-const MAX_DIRECT_UDP_PROBE_INTERVAL: Duration = Duration::from_secs(300);
 const RELAY_DATA_PLANE_FAILURE_THRESHOLD: u32 = 20;
 const PATH_SEND_FAILURES_BEFORE_DOWNGRADE: u32 = 3;
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
-const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
-const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 type WintunAdapterHandle = *mut c_void;
@@ -705,6 +702,7 @@ struct DirectUdpTransport {
     socket: UdpSocket,
     local_node_id: String,
     peers: Vec<DirectUdpPeer>,
+    probe_controllers: HashMap<String, PathProbeController>,
 }
 
 struct DirectUdpReceive {
@@ -714,13 +712,20 @@ struct DirectUdpReceive {
     endpoint_changed: bool,
 }
 
+struct DirectUdpProbeBatch {
+    sent_count: usize,
+    failed_paths: Vec<(String, PathKind)>,
+}
+
 impl DirectUdpTransport {
     #[cfg(test)]
     fn new(socket: UdpSocket, peers: Vec<DirectUdpPeer>) -> Self {
+        let probe_controllers = direct_udp_probe_controllers(&peers);
         Self {
             socket,
             local_node_id: "node-local".to_string(),
             peers,
+            probe_controllers,
         }
     }
 
@@ -762,10 +767,12 @@ impl DirectUdpTransport {
             return None;
         }
         persist_direct_udp_endpoint_report(&socket);
+        let probe_controllers = direct_udp_probe_controllers(&peers);
         Some(Self {
             socket,
             local_node_id: local_node_id.to_string(),
             peers,
+            probe_controllers,
         })
     }
 
@@ -785,6 +792,13 @@ impl DirectUdpTransport {
         let Some(peer) = self.peers.get(peer_index) else {
             return PathSendResult::NoRoute;
         };
+        if !self
+            .probe_controllers
+            .get(&peer.peer_node_id)
+            .is_some_and(PathProbeController::usable)
+        {
+            return PathSendResult::NoRoute;
+        }
         if self.socket.send_to(frame, peer.socket_addr).is_ok() {
             PathSendResult::Sent {
                 peer_index,
@@ -829,16 +843,10 @@ impl DirectUdpTransport {
 
     fn peer_index_for_unknown_inbound_packet(&self, frame: &[u8]) -> Option<usize> {
         if let Some(control_packet) = direct_udp_control_packet(frame) {
-            if let Some(peer_node_id) = control_packet.peer_node_id() {
-                if let Some(peer_index) = self
-                    .peers
-                    .iter()
-                    .position(|peer| peer.peer_node_id == peer_node_id)
-                {
-                    return Some(peer_index);
-                }
-            }
-            return (self.peers.len() == 1).then_some(0);
+            return self
+                .peers
+                .iter()
+                .position(|peer| peer.peer_node_id == control_packet.peer_node_id());
         }
         let payload = decode_slan_relay_data_frame(frame)?;
         let source = ipv4_source(payload)?;
@@ -853,19 +861,52 @@ impl DirectUdpTransport {
         self.peers.len()
     }
 
-    fn send_probe_packets(&self) -> usize {
+    fn send_probe_packets(
+        &mut self,
+        active_peer_node_ids: &HashSet<String>,
+    ) -> DirectUdpProbeBatch {
+        let now_ms = current_timestamp_ms();
         let payload = direct_udp_control_payload(DirectUdpControlKind::Probe, &self.local_node_id);
-        let mut sent = 0_usize;
+        let mut sent_count = 0;
+        let mut failed_paths = Vec::new();
         for peer in &self.peers {
+            let Some(controller) = self.probe_controllers.get_mut(&peer.peer_node_id) else {
+                continue;
+            };
+            let was_usable = controller.usable();
+            let role = if active_peer_node_ids.contains(&peer.peer_node_id) {
+                PathProbeRole::Active
+            } else {
+                PathProbeRole::Standby
+            };
+            if !controller.should_probe(now_ms, role) {
+                if was_usable && !controller.usable() {
+                    failed_paths.push((peer.peer_node_id.clone(), peer.path_kind));
+                }
+                continue;
+            }
             if self
                 .socket
                 .send_to(payload.as_bytes(), peer.socket_addr)
                 .is_ok()
             {
-                sent += 1;
+                controller.on_probe_sent(now_ms);
+                sent_count += 1;
             }
         }
-        sent
+        DirectUdpProbeBatch {
+            sent_count,
+            failed_paths,
+        }
+    }
+
+    fn mark_peer_inbound(&mut self, peer_index: usize) {
+        let Some(peer) = self.peers.get(peer_index) else {
+            return;
+        };
+        if let Some(controller) = self.probe_controllers.get_mut(&peer.peer_node_id) {
+            controller.on_inbound(current_timestamp_ms());
+        }
     }
 
     fn send_punch_endpoint_probes(&self, network_id: &str, node_configs: &[NodeConfig]) -> usize {
@@ -929,6 +970,13 @@ impl DirectUdpTransport {
     }
 }
 
+fn direct_udp_probe_controllers(peers: &[DirectUdpPeer]) -> HashMap<String, PathProbeController> {
+    peers
+        .iter()
+        .map(|peer| (peer.peer_node_id.clone(), PathProbeController::new()))
+        .collect()
+}
+
 struct RelayUdpAttachResult {
     transport: RelayUdpTransport,
     peer_stats: Vec<WindowsRelayPeerStats>,
@@ -960,25 +1008,6 @@ impl RelayUdpTransport {
         let mut peer_stats = Vec::new();
         let mut attach_failures = 0_u64;
         let mut last_attach_error = None;
-        // Diagnostic: log relay attach start
-        let udp_sessions: Vec<_> = sessions
-            .iter()
-            .filter(|s| relay_path_kind_from_ticket(s) == Some(PathKind::RelayUdp))
-            .collect();
-        let log_line = format!(
-            "[relay-attach-start] relay_address={} total_sessions={} udp_sessions={}\n",
-            relay_address,
-            sessions.len(),
-            udp_sessions.len()
-        );
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-        {
-            use std::io::Write;
-            let _ = file.write_all(log_line.as_bytes());
-        }
         for session in sessions {
             if relay_path_kind_from_ticket(session) != Some(PathKind::RelayUdp) {
                 continue;
@@ -1010,19 +1039,6 @@ impl RelayUdpTransport {
                         "peer {} session {}: {error:#}",
                         session.peer_node_id, session.session_id
                     );
-                    // Write detailed error chain to debug log
-                    let log_line = format!(
-                        "[relay-attach-fail] peer={} session={} addr={} error={:?}\n",
-                        session.peer_node_id, session.session_id, session_relay_address, error
-                    );
-                    if let Ok(mut file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-                    {
-                        use std::io::Write;
-                        let _ = file.write_all(log_line.as_bytes());
-                    }
                     attach_failures = attach_failures.saturating_add(1);
                     last_attach_error = Some(message.clone());
                     peer_stats.push(WindowsRelayPeerStats {
@@ -1073,44 +1089,19 @@ impl RelayUdpTransport {
             return PathSendResult::NoRoute;
         };
         let mut sent = false;
-        let mut encode_failures = 0;
-        let mut send_errors = Vec::new();
         for attempt in 0..relay_send_attempt_count(payload) {
             if attempt > 0 {
                 thread::sleep(relay_send_attempt_delay(payload));
             }
             if peer.path_kind != PathKind::RelayUdp {
-                send_errors.push(format!("wrong path kind: {:?}", peer.path_kind));
                 continue;
             }
-            let forward_payload = encode_relay_forward(peer, frame);
-            if forward_payload.is_none() {
-                encode_failures += 1;
+            let Some(payload_bytes) = encode_relay_forward(peer, frame) else {
                 continue;
-            }
-            let payload_bytes = forward_payload.unwrap();
-            match peer.socket.send(&payload_bytes) {
-                Ok(_) => sent = true,
-                Err(error) => send_errors.push(format!("socket send error: {error}")),
-            }
+            };
+            sent |= peer.socket.send(&payload_bytes).is_ok();
         }
         if !sent {
-            if !send_errors.is_empty() || encode_failures > 0 {
-                let log_line = format!(
-                    "[relay-udp] send_to_peer failed: session={} encode_failures={} send_errors={}\n",
-                    peer.session_id,
-                    encode_failures,
-                    send_errors.join("; ")
-                );
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-                {
-                    use std::io::Write;
-                    let _ = file.write_all(log_line.as_bytes());
-                }
-            }
             PathSendResult::SendFailed {
                 peer_index,
                 peer_node_id: peer.peer_node_id.clone(),
@@ -1479,32 +1470,6 @@ impl WindowsPathManager {
             .position(|peer| peer.peer_node_id == peer_node_id)
     }
 
-    fn relay_udp_peer_count(&self) -> usize {
-        self.relay_udp.peers().len()
-    }
-
-    fn relay_udp_peer_ips(&self, peer_node_id: &str) -> Vec<String> {
-        self.relay_udp
-            .peers()
-            .iter()
-            .find(|peer| peer.peer_node_id == *peer_node_id)
-            .map(|peer| peer.peer_virtual_ips.clone())
-            .unwrap_or_default()
-    }
-
-    fn derp_tcp_peer_count(&self) -> usize {
-        self.derp_tcp.peers().len()
-    }
-
-    fn derp_tcp_peer_ips(&self, peer_node_id: &str) -> Vec<String> {
-        self.derp_tcp
-            .peers()
-            .iter()
-            .find(|peer| peer.peer_node_id == *peer_node_id)
-            .map(|peer| peer.peer_virtual_ips.clone())
-            .unwrap_or_default()
-    }
-
     fn active_path_for_route(&self, route: &PacketRoute) -> PathKind {
         self.tracker
             .active_path_for_node(route.peer_node_id.as_str(), route.default_path)
@@ -1567,6 +1532,11 @@ impl WindowsPathManager {
             PATH_SEND_FAILURES_BEFORE_DOWNGRADE,
             Some(current_timestamp_ms()),
         )
+    }
+
+    fn record_probe_timeout(&mut self, peer_node_id: &str, path_kind: PathKind) -> bool {
+        self.tracker
+            .record_send_failure_at(peer_node_id, path_kind, 1, None)
     }
 
     fn record_probe_success(&mut self, peer_node_id: &str, path_kind: PathKind) -> bool {
@@ -1944,15 +1914,11 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
         let mut last_keepalive = Instant::now()
             .checked_sub(RELAY_KEEPALIVE_INTERVAL)
             .unwrap_or_else(Instant::now);
-        let direct_udp_probe_interval = direct_udp_probe_interval_from_policy(&stats.path_policy);
+        let direct_udp_probe_interval = Duration::from_secs(1);
         let mut last_direct_udp_probe = Instant::now()
             .checked_sub(direct_udp_probe_interval)
             .unwrap_or_else(Instant::now);
         let mut consecutive_data_plane_failures = 0_u32;
-        let failover_after_ms = stats.path_policy.failover_after_ms;
-        // 跟踪每个 peer 的 direct UDP 探测状态：(last_probe_sent_ms, pending_response)
-        let mut direct_probe_tracker: std::collections::HashMap<String, (u64, bool, PathKind)> =
-            std::collections::HashMap::new();
         persist_relay_stats(&mut stats);
         while !thread_stop.load(Ordering::SeqCst) {
             path_manager.update_peer_paths(&selected_peer_paths);
@@ -1962,25 +1928,34 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 last_keepalive = Instant::now();
             }
             if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
-                let now_ms = current_timestamp_ms();
-                // 检查上一轮探测是否超时未回复
-                for (peer_node_id, (last_sent, pending, path_kind)) in
-                    direct_probe_tracker.iter_mut()
+                let active_direct_peer_ids = selected_peer_paths
+                    .iter()
+                    .filter(|path| path.active_path.is_some_and(PathKind::is_direct_udp))
+                    .map(|path| path.peer_node_id.clone())
+                    .collect::<HashSet<_>>();
+                // 发送新一轮探测
+                let probe_batch = if let Some(direct_udp) = path_manager.direct_udp_transport_mut()
                 {
-                    if *pending && now_ms.saturating_sub(*last_sent) >= failover_after_ms {
-                        *pending = false;
+                    let _ =
+                        direct_udp.send_punch_endpoint_probes(&direct_network_id, &node_configs);
+                    Some(direct_udp.send_probe_packets(&active_direct_peer_ids))
+                } else {
+                    None
+                };
+                if let Some(probe_batch) = probe_batch {
+                    stats.direct_udp_probes_sent = stats
+                        .direct_udp_probes_sent
+                        .saturating_add(probe_batch.sent_count as u64);
+                    for (peer_node_id, path_kind) in probe_batch.failed_paths {
                         let should_failover =
-                            path_manager.record_send_failure(peer_node_id, *path_kind);
-                        // 降级直连路径候选状态
+                            path_manager.record_probe_timeout(&peer_node_id, path_kind);
                         for peer_path in selected_peer_paths.iter_mut() {
-                            if peer_path.peer_node_id == *peer_node_id {
+                            if peer_path.peer_node_id == peer_node_id {
                                 for candidate in peer_path.candidates.iter_mut() {
-                                    if candidate.kind == *path_kind {
+                                    if candidate.kind == path_kind {
                                         candidate.state = PathState::Degraded;
-                                        candidate.last_error = Some(
-                                            "direct udp probe timeout — no pong received"
-                                                .to_string(),
-                                        );
+                                        candidate.last_error =
+                                            Some("direct udp adaptive probe failed".to_string());
                                     }
                                 }
                             }
@@ -1991,17 +1966,17 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 .set_active_path(peer_node_id.clone(), PathKind::RelayUdp);
                             update_peer_active_path(
                                 &mut selected_peer_paths,
-                                peer_node_id,
+                                &peer_node_id,
                                 PathKind::RelayUdp,
                             );
                             stats.active_path = path_manager.active_path_summary();
                             if let Some(peer_stats) =
-                                peer_stats_mut_by_node_id(&mut stats.peers, peer_node_id)
+                                peer_stats_mut_by_node_id(&mut stats.peers, &peer_node_id)
                             {
                                 peer_stats.path_downgrades =
                                     peer_stats.path_downgrades.saturating_add(1);
                                 peer_stats.last_path_change = Some(format!(
-                                    "{} -> relay_udp after probe timeout",
+                                    "{} -> relay_udp after adaptive probe failure",
                                     path_kind.as_str()
                                 ));
                             }
@@ -2009,26 +1984,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 PathKind::RelayUdp,
                                 selected_peer_paths.clone(),
                             );
-                            eprintln!(
-                                "SLAN_DATA_PLANE_PROBE_TIMEOUT peer={} path={} → failover to relay_udp",
-                                peer_node_id,
-                                path_kind.as_str()
-                            );
-                        }
-                    }
-                }
-                // 发送新一轮探测
-                if let Some(direct_udp) = path_manager.direct_udp_transport_mut() {
-                    let _ =
-                        direct_udp.send_punch_endpoint_probes(&direct_network_id, &node_configs);
-                    stats.direct_udp_probes_sent = stats
-                        .direct_udp_probes_sent
-                        .saturating_add(direct_udp.send_probe_packets() as u64);
-                    // 记录每个 peer 的探测发送时间和路径
-                    for peer in &direct_udp.peers {
-                        if peer.path_kind.is_direct_udp() {
-                            direct_probe_tracker
-                                .insert(peer.peer_node_id.clone(), (now_ms, true, peer.path_kind));
                         }
                     }
                 }
@@ -2232,25 +2187,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             path_kind,
                             ..
                         } => {
-                            let dest = ipv4_destination(&payload).unwrap_or_default();
-                            let relay_peer_count = path_manager.relay_udp_peer_count();
-                            let derp_peer_count = path_manager.derp_tcp_peer_count();
-                            let relay_peer_ips: Vec<String> =
-                                path_manager.relay_udp_peer_ips(&peer_node_id);
-                            let derp_peer_ips: Vec<String> =
-                                path_manager.derp_tcp_peer_ips(&peer_node_id);
-                            let log_line = format!(
-                                "[no-transport] peer={} path={} dest={} relay_peers={} relay_ips={} derp_peers={} derp_ips={}\n",
-                                peer_node_id, path_kind.as_str(), dest, relay_peer_count, relay_peer_ips.join(","), derp_peer_count, derp_peer_ips.join(",")
-                            );
-                            if let Ok(mut file) = std::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-                            {
-                                use std::io::Write;
-                                let _ = file.write_all(log_line.as_bytes());
-                            }
                             stats.last_tun_peer_node_id = Some(peer_node_id.clone());
                             stats.last_tun_send_path = Some(path_kind.as_str().to_string());
                             stats.last_tun_drop_reason =
@@ -2521,6 +2457,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             .as_ref()
                             .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
                         {
+                            direct_udp.mark_peer_inbound(peer_index);
                             stats.direct_udp_probes_received =
                                 stats.direct_udp_probes_received.saturating_add(1);
                             if received.endpoint_changed {
@@ -2539,6 +2476,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             .as_ref()
                             .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
                         {
+                            direct_udp.mark_peer_inbound(peer_index);
                             stats.direct_udp_pongs_received =
                                 stats.direct_udp_pongs_received.saturating_add(1);
                             if received.endpoint_changed {
@@ -2552,6 +2490,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                         } else if let Some(packet) =
                             decode_slan_relay_data_frame(&relay_buffer[..frame_len])
                         {
+                            direct_udp.mark_peer_inbound(peer_index);
                             let peer_node_id = direct_udp.peers[peer_index].peer_node_id.clone();
                             if received.endpoint_changed {
                                 direct_udp.update_peer_endpoint(peer_index, received.remote_addr);
@@ -2656,10 +2595,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 }
             }
             if let Some((peer_node_id, path_kind)) = direct_udp_probe_success_peer {
-                // 收到直连 UDP 回复，重置探测超时跟踪
-                if let Some(entry) = direct_probe_tracker.get_mut(&peer_node_id) {
-                    entry.1 = false; // pending = false
-                }
                 let previous_path = path_manager.active_path_for_peer_node(&peer_node_id);
                 if path_manager.record_probe_success(&peer_node_id, path_kind) {
                     mark_peer_path_probe_success(
@@ -2706,14 +2641,6 @@ fn persist_active_path_state(active_path: PathKind, peer_paths: Vec<PeerPathRunt
     state.active_path = Some(active_path);
     state.peer_paths = peer_paths;
     let _ = persist_state(&state);
-}
-
-fn direct_udp_probe_interval_from_policy(policy: &PathPolicy) -> Duration {
-    if policy.probe_interval_ms == 0 {
-        return DEFAULT_DIRECT_UDP_PROBE_INTERVAL;
-    }
-    Duration::from_millis(policy.probe_interval_ms)
-        .clamp(MIN_DIRECT_UDP_PROBE_INTERVAL, MAX_DIRECT_UDP_PROBE_INTERVAL)
 }
 
 fn relay_runtime_paths_from_config(
@@ -2886,25 +2813,6 @@ fn attach_udp_relay_session(
         "transport": PathKind::RelayUdp.as_str(),
     });
     let payload = serde_json::to_vec(&attach).context("encode Wintun relay attach")?;
-    // Diagnostic: log the attach payload size and transport value
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-    {
-        use std::io::Write;
-        let transport_value = attach
-            .get("transport")
-            .and_then(|v| v.as_str())
-            .unwrap_or("MISSING");
-        // Log full ticket fields for signature verification
-        let ticket = &session.ticket;
-        let log_line = format!(
-            "[relay-attach-ticket] addr={} ticket_id={} network_id={} session_id={} src_node_id={} dst_node_id={} expires_at={} signature={}\n",
-            relay_address, ticket.ticket_id, ticket.network_id, ticket.session_id, ticket.src_node_id, ticket.dst_node_id, ticket.expires_at, ticket.signature
-        );
-        let _ = file.write_all(log_line.as_bytes());
-    }
     let mut response = vec![0_u8; 4096];
     let mut last_error = None;
     for attempt in 1..=RELAY_ATTACH_ATTEMPTS {
@@ -2922,20 +2830,6 @@ fn attach_udp_relay_session(
                     break;
                 }
                 Err(verify_error) => {
-                    let resp_preview =
-                        String::from_utf8_lossy(&response[..len.min(1000)]).to_string();
-                    if let Ok(mut file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-                    {
-                        use std::io::Write;
-                        let log_line = format!(
-                                "[relay-attach-ack-fail] peer={} addr={} attempt={} resp={} error={:?}\n",
-                                session.peer_node_id, relay_address, attempt, resp_preview, verify_error
-                            );
-                        let _ = file.write_all(log_line.as_bytes());
-                    }
                     last_error = Some(verify_error.context(format!(
                             "verify relay attach ack from {relay_address} attempt {attempt}/{RELAY_ATTACH_ATTEMPTS}"
                         )));
@@ -2959,19 +2853,6 @@ fn attach_udp_relay_session(
         }
     }
     if let Some(error) = last_error {
-        let inner_msg = format!("{error:?}");
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-        {
-            use std::io::Write;
-            let log_line = format!(
-                "[relay-attach-inner] peer={} addr={} attempts={} error={}\n",
-                session.peer_node_id, relay_address, RELAY_ATTACH_ATTEMPTS, inner_msg
-            );
-            let _ = file.write_all(log_line.as_bytes());
-        }
         return Err(error).context(format!(
             "relay attach failed after {RELAY_ATTACH_ATTEMPTS} attempts for peer {}",
             session.peer_node_id
@@ -3447,24 +3328,7 @@ fn send_relay_udp_frame(peer: &AttachedRelayPeer, frame: &[u8]) -> bool {
     if peer.path_kind != PathKind::RelayUdp {
         return false;
     }
-    encode_relay_forward(peer, frame).is_some_and(|payload| match peer.socket.send(&payload) {
-        Ok(_) => true,
-        Err(error) => {
-            let log_line = format!(
-                "[relay-udp] send forward to relay failed: {error} (session={})\n",
-                peer.session_id
-            );
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("C:\\ProgramData\\SLAN\\relay-debug.log")
-            {
-                use std::io::Write;
-                let _ = file.write_all(log_line.as_bytes());
-            }
-            false
-        }
-    })
+    encode_relay_forward(peer, frame).is_some_and(|payload| peer.socket.send(&payload).is_ok())
 }
 
 fn encode_relay_forward(peer: &AttachedRelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
@@ -3768,62 +3632,32 @@ enum DirectUdpControlKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DirectUdpControlPacket {
     kind: DirectUdpControlKind,
-    peer_node_id: Option<String>,
+    peer_node_id: String,
 }
 
 impl DirectUdpControlPacket {
-    fn peer_node_id(&self) -> Option<&str> {
-        self.peer_node_id.as_deref()
+    fn peer_node_id(&self) -> &str {
+        &self.peer_node_id
     }
 }
 
 fn direct_udp_control_packet(payload: &[u8]) -> Option<DirectUdpControlPacket> {
-    if payload == DIRECT_UDP_PROBE_PACKET {
-        return Some(DirectUdpControlPacket {
-            kind: DirectUdpControlKind::Probe,
-            peer_node_id: None,
-        });
-    }
-    if payload == DIRECT_UDP_PONG_PACKET {
-        return Some(DirectUdpControlPacket {
-            kind: DirectUdpControlKind::Pong,
-            peer_node_id: None,
-        });
-    }
-    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) {
-        if value.get("kind").and_then(serde_json::Value::as_str) != Some("direct_udp") {
-            return None;
-        }
-        let kind = match value.get("type").and_then(serde_json::Value::as_str)? {
-            "probe" => DirectUdpControlKind::Probe,
-            "pong" => DirectUdpControlKind::Pong,
-            _ => return None,
-        };
-        let peer_node_id = value
-            .get("nodeId")
-            .or_else(|| value.get("node_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        return Some(DirectUdpControlPacket { kind, peer_node_id });
-    }
-    let value = std::str::from_utf8(payload).ok()?;
-    let (kind, peer_node_id) = value.split_once(':')?;
-    if peer_node_id.trim().is_empty() {
+    let value = serde_json::from_slice::<serde_json::Value>(payload).ok()?;
+    if value.get("kind").and_then(serde_json::Value::as_str) != Some("direct_udp") {
         return None;
     }
-    let kind = if kind == std::str::from_utf8(DIRECT_UDP_PROBE_PACKET).ok()? {
-        DirectUdpControlKind::Probe
-    } else if kind == std::str::from_utf8(DIRECT_UDP_PONG_PACKET).ok()? {
-        DirectUdpControlKind::Pong
-    } else {
-        return None;
+    let kind = match value.get("type").and_then(serde_json::Value::as_str)? {
+        "probe" => DirectUdpControlKind::Probe,
+        "pong" => DirectUdpControlKind::Pong,
+        _ => return None,
     };
-    Some(DirectUdpControlPacket {
-        kind,
-        peer_node_id: Some(peer_node_id.trim().to_string()),
-    })
+    let peer_node_id = value
+        .get("nodeId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)?;
+    Some(DirectUdpControlPacket { kind, peer_node_id })
 }
 
 fn direct_udp_control_payload(kind: DirectUdpControlKind, local_node_id: &str) -> String {
@@ -4696,16 +4530,15 @@ fn parse_cidr_for_netsh(cidr: &str) -> (String, String) {
 mod tests {
     use super::{
         adapter_enable_requires_session_restart, detach_udp_relay_sessions,
-        direct_udp_control_packet, direct_udp_control_payload,
-        direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at, escape_netsh_arg,
-        is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply, mark_ready_transports,
-        normalize_direct_udp_address, output_contains_exact_ipv4, parse_cidr_for_netsh,
-        prefix_len_to_subnet_mask, refresh_relay_ticket_timing, relay_error_message,
-        relay_runtime_paths_from_config, relay_udp_address_for_session, send_frame_to_peer,
-        validate_relay_peer_session, validate_relay_peer_session_for_path, AttachedRelayPeer,
-        DerpTcpTransport, DirectUdpControlKind, DirectUdpPeer, DirectUdpTransport, PathSendResult,
-        RelayUdpTransport, WindowsPathManager, WindowsRelayDataPlaneStats, DIRECT_UDP_PONG_PACKET,
-        DIRECT_UDP_PROBE_PACKET, MAX_DIRECT_UDP_PROBE_INTERVAL, MIN_DIRECT_UDP_PROBE_INTERVAL,
+        direct_udp_control_packet, direct_udp_control_payload, earliest_relay_ticket_expires_at,
+        escape_netsh_arg, is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply,
+        mark_ready_transports, normalize_direct_udp_address, output_contains_exact_ipv4,
+        parse_cidr_for_netsh, prefix_len_to_subnet_mask, refresh_relay_ticket_timing,
+        relay_error_message, relay_runtime_paths_from_config, relay_udp_address_for_session,
+        send_frame_to_peer, validate_relay_peer_session, validate_relay_peer_session_for_path,
+        AttachedRelayPeer, DerpTcpTransport, DirectUdpControlKind, DirectUdpPeer,
+        DirectUdpTransport, PathSendResult, RelayUdpTransport, WindowsPathManager,
+        WindowsRelayDataPlaneStats,
     };
     use crate::windows::parse_rfc3339_utc_ms;
 
@@ -5046,80 +4879,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_udp_unknown_control_packet_matches_single_peer() {
-        let direct_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        direct_socket
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-        let direct_addr = direct_socket.local_addr().unwrap();
-        let old_peer_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let roamed_peer_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let old_peer_addr = old_peer_socket.local_addr().unwrap();
-        let roamed_peer_addr = roamed_peer_socket.local_addr().unwrap();
-        let mut direct_udp = DirectUdpTransport::new(
-            direct_socket,
-            vec![DirectUdpPeer {
-                peer_node_id: "node-a".to_string(),
-                peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
-                path_kind: PathKind::DirectUdp,
-                address: old_peer_addr.to_string(),
-                socket_addr: old_peer_addr,
-            }],
-        );
-
-        roamed_peer_socket
-            .send_to(DIRECT_UDP_PROBE_PACKET, direct_addr)
-            .unwrap();
-        let mut buffer = [0_u8; 128];
-        let received = direct_udp.recv_from_peer(&mut buffer).unwrap().unwrap();
-
-        assert_eq!(received.peer_index, 0);
-        assert_eq!(received.remote_addr, roamed_peer_addr);
-        assert!(received.endpoint_changed);
-        let packet = direct_udp_control_packet(&buffer[..received.frame_len]).unwrap();
-        assert_eq!(packet.kind, DirectUdpControlKind::Probe);
-        assert_eq!(packet.peer_node_id(), None);
-    }
-
-    #[test]
-    fn direct_udp_unknown_control_packet_does_not_guess_among_multiple_peers() {
-        let direct_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        direct_socket
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-        let direct_addr = direct_socket.local_addr().unwrap();
-        let peer_a_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let peer_b_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let unknown_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let mut direct_udp = DirectUdpTransport::new(
-            direct_socket,
-            vec![
-                DirectUdpPeer {
-                    peer_node_id: "node-a".to_string(),
-                    peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
-                    path_kind: PathKind::DirectUdp,
-                    address: peer_a_socket.local_addr().unwrap().to_string(),
-                    socket_addr: peer_a_socket.local_addr().unwrap(),
-                },
-                DirectUdpPeer {
-                    peer_node_id: "node-b".to_string(),
-                    peer_virtual_ips: vec!["10.0.0.3/32".to_string()],
-                    path_kind: PathKind::DirectUdp,
-                    address: peer_b_socket.local_addr().unwrap().to_string(),
-                    socket_addr: peer_b_socket.local_addr().unwrap(),
-                },
-            ],
-        );
-
-        unknown_socket
-            .send_to(DIRECT_UDP_PROBE_PACKET, direct_addr)
-            .unwrap();
-        let mut buffer = [0_u8; 128];
-
-        assert!(direct_udp.recv_from_peer(&mut buffer).unwrap().is_none());
-    }
-
-    #[test]
     fn direct_udp_unknown_control_packet_with_node_id_matches_multi_peer() {
         let direct_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         direct_socket
@@ -5159,7 +4918,7 @@ mod tests {
         assert_eq!(received.peer_index, 1);
         assert!(received.endpoint_changed);
         let packet = direct_udp_control_packet(&buffer[..received.frame_len]).unwrap();
-        assert_eq!(packet.peer_node_id(), Some("node-b"));
+        assert_eq!(packet.peer_node_id(), "node-b");
     }
 
     #[test]
@@ -5343,8 +5102,9 @@ mod tests {
             .tracker
             .set_active_path("node-a".to_string(), PathKind::RelayUdp);
 
+        let probe = direct_udp_control_payload(DirectUdpControlKind::Probe, "node-a");
         assert_eq!(
-            direct_udp_control_packet(DIRECT_UDP_PROBE_PACKET).map(|packet| packet.kind),
+            direct_udp_control_packet(probe.as_bytes()).map(|packet| packet.kind),
             Some(DirectUdpControlKind::Probe)
         );
         assert!(!manager.record_probe_success("node-a", PathKind::DirectUdp));
@@ -5381,50 +5141,22 @@ mod tests {
     }
 
     #[test]
-    fn direct_udp_probe_interval_uses_policy_with_bounds() {
-        let mut policy = PathPolicy::default();
-        policy.probe_interval_ms = 5_000;
-        assert_eq!(
-            direct_udp_probe_interval_from_policy(&policy),
-            Duration::from_secs(5)
-        );
-
-        policy.probe_interval_ms = 1;
-        assert_eq!(
-            direct_udp_probe_interval_from_policy(&policy),
-            MIN_DIRECT_UDP_PROBE_INTERVAL
-        );
-
-        policy.probe_interval_ms = 600_000;
-        assert_eq!(
-            direct_udp_probe_interval_from_policy(&policy),
-            MAX_DIRECT_UDP_PROBE_INTERVAL
-        );
-    }
-
-    #[test]
     fn direct_udp_control_packets_are_recognized() {
-        assert_eq!(
-            direct_udp_control_packet(DIRECT_UDP_PROBE_PACKET).map(|packet| packet.kind),
-            Some(DirectUdpControlKind::Probe)
-        );
-        assert_eq!(
-            direct_udp_control_packet(DIRECT_UDP_PONG_PACKET).map(|packet| packet.kind),
-            Some(DirectUdpControlKind::Pong)
-        );
         let probe = direct_udp_control_payload(DirectUdpControlKind::Probe, "node-local");
         let parsed = direct_udp_control_packet(probe.as_bytes()).unwrap();
         assert_eq!(parsed.kind, DirectUdpControlKind::Probe);
-        assert_eq!(parsed.peer_node_id(), Some("node-local"));
+        assert_eq!(parsed.peer_node_id(), "node-local");
         assert!(probe.contains("\"kind\":\"direct_udp\""));
-        let pong = br#"{"kind":"direct_udp","type":"pong","node_id":"node-peer"}"#;
+        let pong = br#"{"kind":"direct_udp","type":"pong","nodeId":"node-peer"}"#;
         let parsed = direct_udp_control_packet(pong).unwrap();
         assert_eq!(parsed.kind, DirectUdpControlKind::Pong);
-        assert_eq!(parsed.peer_node_id(), Some("node-peer"));
-        let legacy_probe = b"slan-direct-udp-probe-v1:node-legacy";
-        let parsed = direct_udp_control_packet(legacy_probe).unwrap();
-        assert_eq!(parsed.kind, DirectUdpControlKind::Probe);
-        assert_eq!(parsed.peer_node_id(), Some("node-legacy"));
+        assert_eq!(parsed.peer_node_id(), "node-peer");
+        assert_eq!(
+            direct_udp_control_packet(
+                br#"{"kind":"direct_udp","type":"probe","node_id":"node-peer"}"#
+            ),
+            None
+        );
         assert_eq!(direct_udp_control_packet(b"not-control"), None);
     }
 
