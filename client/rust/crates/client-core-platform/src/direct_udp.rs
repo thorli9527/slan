@@ -454,8 +454,15 @@ impl DirectUdpTransport {
 fn attach_direct_udp_socket() -> std::io::Result<UdpSocket> {
     let port = configured_direct_udp_port();
     if port > 0 {
-        if let Ok(socket) = UdpSocket::bind(("0.0.0.0", port)) {
-            return Ok(socket);
+        match UdpSocket::bind(("0.0.0.0", port)) {
+            Ok(socket) => return Ok(socket),
+            Err(error) => {
+                let message = format!(
+                    "direct udp preferred port unavailable port={port}; allocating random port: {error}"
+                );
+                eprintln!("{message}");
+                log_platform_error(message);
+            }
         }
     }
     UdpSocket::bind("0.0.0.0:0")

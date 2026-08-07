@@ -1745,6 +1745,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
     let Some(runtime) = runtime.as_mut() else {
         bail!("Wintun runtime is not ready");
     };
+    // Release the previous direct UDP socket before binding the replacement.
+    // Otherwise every config refresh falls back from 41642 to a random port and
+    // peers keep probing stale LAN endpoints.
+    if runtime.data_plane.take().is_some() {
+        debug_log("configure_wintun_data_plane: stopped previous data plane before rebind");
+    }
     if let Err(error) = configure_adapter_mtu(DEFAULT_INTERFACE_NAME, relay_mtu) {
         eprintln!(
             "SLAN warning: Wintun MTU configuration failed (mtu={relay_mtu}): {error:#}. \
