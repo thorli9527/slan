@@ -10,7 +10,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private static let trayQuitTitle = "Quit"
   private var statusItem: NSStatusItem?
   private var trayStatusLabel: NSTextField?
-  private var trayDeviceIdLabel: NSTextField?
   private var networkSwitch: NSSwitch?
   private let bundledServiceLock = NSLock()
   private let browserLogLock = NSLock()
@@ -218,37 +217,23 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func makeStatusMenuHeader() -> NSView {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 100))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 72))
 
     let title = makeMenuLabel("SLAN", size: 18, weight: .semibold, color: .labelColor)
-    title.frame = NSRect(x: 16, y: 70, width: 220, height: 23)
+    title.frame = NSRect(x: 16, y: 43, width: 220, height: 23)
     view.addSubview(title)
 
     let status = makeMenuLabel("正在连接", size: 12, weight: .regular, color: .secondaryLabelColor)
-    status.frame = NSRect(x: 16, y: 51, width: 220, height: 18)
+    status.frame = NSRect(x: 16, y: 20, width: 220, height: 18)
     view.addSubview(status)
     trayStatusLabel = status
 
-    let toggle = NSSwitch(frame: NSRect(x: 270, y: 54, width: 50, height: 26))
+    let toggle = NSSwitch(frame: NSRect(x: 270, y: 24, width: 50, height: 26))
     toggle.target = self
     toggle.action = #selector(toggleNetwork)
     toggle.isEnabled = false
     view.addSubview(toggle)
     networkSwitch = toggle
-
-    let separator = NSBox(frame: NSRect(x: 16, y: 40, width: 308, height: 1))
-    separator.boxType = .separator
-    view.addSubview(separator)
-
-    let device = makeMenuLabel("设备", size: 12, weight: .semibold, color: .secondaryLabelColor)
-    device.frame = NSRect(x: 16, y: 10, width: 48, height: 20)
-    view.addSubview(device)
-
-    let deviceId = makeMenuLabel("未激活", size: 14, weight: .medium, color: .labelColor)
-    deviceId.frame = NSRect(x: 76, y: 10, width: 248, height: 20)
-    deviceId.lineBreakMode = .byTruncatingTail
-    view.addSubview(deviceId)
-    trayDeviceIdLabel = deviceId
 
     return view
   }
@@ -481,8 +466,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       syncing: syncing,
       switchEnabled: switchEnabled
     )
-    let deviceId = stringField(snapshot, "deviceId")
-    trayDeviceIdLabel?.stringValue = deviceId.isEmpty ? "未激活" : deviceId
     applyStatusIcon(
       activated: activated,
       networkEnabled: networkEnabled,
@@ -506,7 +489,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       && boolField(left, "syncing") == boolField(right, "syncing")
       && boolField(left, "switchEnabled") == boolField(right, "switchEnabled")
       && stringField(left, "error") == stringField(right, "error")
-      && stringField(left, "deviceId") == stringField(right, "deviceId")
   }
 
   private func extractStringField(_ json: String, _ field: String) -> String {

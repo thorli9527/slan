@@ -64,7 +64,6 @@ struct TrayServiceState {
   bool network_enabled = false;
   bool syncing = false;
   bool switch_enabled = false;
-  std::string device_id;
   std::string error;
 };
 
@@ -101,7 +100,6 @@ std::string JsonStringField(const std::string& json, const char* field);
 void UpdateTrayIconState(HWND window, const TrayServiceState& state);
 bool IsTrayNetworkActionEnabled(const TrayServiceState& state);
 const wchar_t* TrayTooltip(const TrayServiceState& state);
-std::wstring Utf8ToWide(const std::string& value);
 
 void AddTrayIcon(HWND window) {
   NOTIFYICONDATA notify_icon{};
@@ -187,10 +185,6 @@ void ShowTrayMenu(HWND window) {
     }
   }
   AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, status_text);
-  const std::wstring device_label = state.device_id.empty()
-      ? L"设备  未激活"
-      : L"设备  " + Utf8ToWide(state.device_id);
-  AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, device_label.c_str());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenu(menu, MF_STRING, ID_TRAY_SETTINGS, kTrayOpenTitle);
   UINT network_flags = MF_STRING;
@@ -261,25 +255,6 @@ std::string WideToUtf8(const std::wstring& value) {
   WideCharToMultiByte(
       CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), utf8.data(), size, nullptr, nullptr);
   return utf8;
-}
-
-std::wstring Utf8ToWide(const std::string& value) {
-  if (value.empty()) {
-    return L"";
-  }
-  const int size = MultiByteToWideChar(
-      CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(),
-      static_cast<int>(value.size()), nullptr, 0);
-  if (size <= 0) {
-    return L"";
-  }
-  std::wstring wide(size, L'\0');
-  if (MultiByteToWideChar(
-          CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(),
-          static_cast<int>(value.size()), wide.data(), size) <= 0) {
-    return L"";
-  }
-  return wide;
 }
 
 std::string ServiceHost() {
@@ -453,7 +428,6 @@ TrayServiceState QueryTrayServiceState() {
   state.network_enabled = JsonBoolField(response, "networkEnabled");
   state.syncing = JsonBoolField(response, "syncing");
   state.switch_enabled = JsonBoolField(response, "switchEnabled");
-  state.device_id = JsonStringField(response, "deviceId");
   state.error = JsonStringField(response, "error");
   return state;
 }

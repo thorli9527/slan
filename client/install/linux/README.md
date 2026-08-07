@@ -51,6 +51,7 @@ scripts/package_linux.sh --variant=console --service-bin=/path/to/linux/client-c
 Outputs are written to `client/.tmp/installer/linux`:
 
 - `SLAN-Client-V2-linux-amd64.tar.gz`
+- `SLAN-Client-V2-linux-amd64-console.run`
 - `slan-client-v2_<version>_amd64.deb` when `dpkg-deb` is available
 
 The package installs:
@@ -92,6 +93,20 @@ SLAN_LINUX_DUAL_BUILD_PACKAGE=1 scripts/linux_dual_docker_packet_smoke.sh
 ```
 
 ## Console bootstrap
+
+The single-file console installer requires both the server API address and an
+Opt-issued authorization key:
+
+```sh
+chmod +x SLAN-Client-V2-linux-amd64-console.run
+sudo ./SLAN-Client-V2-linux-amd64-console.run \
+  --server https://slan.example.com \
+  --authorization-key YOUR_AUTHORIZATION_KEY
+```
+
+Add `--enable-network` to enable the network immediately after activation. The
+installer writes the authorization bootstrap file with mode `0600`; the Rust
+runtime removes it after the key has been exchanged successfully.
 
 The console entry accepts the server URL and an Opt-issued device authorization key.
 

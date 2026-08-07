@@ -102,14 +102,16 @@ root_dir="$stage_dir/root"
 package_name="$SLAN_LINUX_PACKAGE_NAME"
 tar_path="$output_dir/SLAN-Client-V2-linux-$arch.tar.gz"
 deb_path="$output_dir/${package_name}_${version}_${arch}.deb"
+console_installer_path="$output_dir/SLAN-Client-V2-linux-$arch-console.run"
 
 rm -rf "$stage_dir"
-rm -f "$tar_path" "$deb_path"
+rm -f "$tar_path" "$deb_path" "$console_installer_path"
 mkdir -p "$root_dir$SLAN_LINUX_INSTALL_ROOT/bin"
 mkdir -p "$root_dir$SLAN_LINUX_LIB_DIR"
 mkdir -p "$root_dir$SLAN_LINUX_CONFIG_DIR"
 mkdir -p "$root_dir/usr/lib/systemd/system"
 mkdir -p "$root_dir/usr/bin"
+mkdir -p "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/lib"
 mkdir -p "$output_dir"
 
 cp "$service_bin" "$root_dir$SLAN_LINUX_SERVICE_BIN"
@@ -140,6 +142,10 @@ WantedBy=multi-user.target
 EOF
 cp "$install_dir/bin/slan-client-v2-console" "$root_dir$SLAN_LINUX_CONSOLE_BIN"
 chmod 755 "$root_dir$SLAN_LINUX_CONSOLE_BIN"
+cp "$install_dir/install.sh" "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/install.sh"
+cp "$install_dir/lib/slan-linux-install.sh" "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/lib/slan-linux-install.sh"
+chmod 755 "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/install.sh"
+chmod 644 "$root_dir$SLAN_LINUX_INSTALL_ROOT/install/lib/slan-linux-install.sh"
 
 slan_linux_write_runtime_env_example "$root_dir$SLAN_LINUX_CONFIG_DIR/$SLAN_LINUX_RUNTIME_ENV_NAME.example"
 
@@ -160,6 +166,9 @@ EOF
 fi
 
 tar -C "$root_dir" -czf "$tar_path" .
+cp "$install_dir/console-installer.sh" "$console_installer_path"
+cat "$tar_path" >> "$console_installer_path"
+chmod 755 "$console_installer_path"
 
 if command -v dpkg-deb >/dev/null 2>&1; then
   deb_root="$stage_dir/deb"
@@ -225,4 +234,5 @@ else
 fi
 
 echo "Linux tarball: $tar_path"
+echo "Linux console installer: $console_installer_path"
 echo "Linux stage: $root_dir"

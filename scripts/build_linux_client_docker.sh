@@ -56,20 +56,29 @@ apt-get install -y \
   build-essential \
   ca-certificates \
   clang \
-  cmake \
   curl \
   file \
   git \
+  pkg-config
+'
+
+if [[ "$VARIANT" != "console" ]]; then
+  log "install Linux desktop build dependencies"
+  docker exec "$CONTAINER_NAME" bash -lc '
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y \
+  cmake \
   libgtk-3-dev \
   liblzma-dev \
   libsecret-1-dev \
   libstdc++-12-dev \
   ninja-build \
-  pkg-config \
   unzip \
   xz-utils \
   zip
 '
+fi
 
 log "install Rust toolchain"
 docker exec "$CONTAINER_NAME" bash -lc '

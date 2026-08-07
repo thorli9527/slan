@@ -11,9 +11,11 @@ fi
 tray_mode="disabled"
 install_root="$SLAN_LINUX_INSTALL_ROOT"
 config_dir="$SLAN_LINUX_CONFIG_DIR"
-server="$SLAN_LINUX_DEFAULT_CONTROL_BASE_URL"
+server="${SLAN_CONTROL_BASE_URL:-}"
 authorization_key="${SLAN_DEVICE_AUTHORIZATION_KEY:-}"
 package_url="${SLAN_CLIENT_PACKAGE_URL:-}"
+package_path="${SLAN_CLIENT_PACKAGE_PATH:-}"
+enable_network="false"
 
 assert_safe_install_root() {
   if ! slan_linux_safe_install_root "$install_root"; then
@@ -33,14 +35,25 @@ extract_package() {
   fi
 }
 
+require_value() {
+  option="$1"
+  value="${2:-}"
+  if [ -z "$value" ]; then
+    echo "Missing value for $option" >&2
+    exit 2
+  fi
+}
+
 usage() {
   cat <<'EOF'
-Usage: install.sh [--server=URL] [--authorization-key=KEY] [--package-url=URL] [--tray=enabled|disabled] [--root=PATH] [--config-dir=PATH]
+Usage: install.sh --server URL --authorization-key KEY [options]
 
 Options:
-  --server=URL      Control-plane base URL.
-  --authorization-key=KEY Device authorization key managed by Opt.
-  --package-url=URL Download URL for the Linux client tarball.
+  --server URL      Control-plane base URL. Required.
+  --authorization-key KEY Device authorization key managed by Opt. Required.
+  --package PATH    Install a local Linux client tarball.
+  --package-url URL Download URL for the Linux client tarball.
+  --enable-network  Enable the network after successful activation.
   --tray=enabled    Install the desktop shell with tray integration.
   --tray=disabled   Install service/helper only. This is the default.
   --root=PATH       Target application root.
@@ -48,35 +61,70 @@ Options:
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --tray=enabled)
       tray_mode="enabled"
+      shift
       ;;
     --tray=disabled)
       tray_mode="disabled"
+      shift
       ;;
     --root=*)
-      install_root="${arg#--root=}"
+      install_root="${1#--root=}"
+      shift
       ;;
     --config-dir=*)
-      config_dir="${arg#--config-dir=}"
+      config_dir="${1#--config-dir=}"
+      shift
       ;;
     --server=*)
-      server="${arg#--server=}"
+      server="${1#--server=}"
+      shift
+      ;;
+    --server)
+      require_value "$1" "${2:-}"
+      server="$2"
+      shift 2
       ;;
     --authorization-key=*)
-      authorization_key="${arg#--authorization-key=}"
+      authorization_key="${1#--authorization-key=}"
+      shift
+      ;;
+    --authorization-key)
+      require_value "$1" "${2:-}"
+      authorization_key="$2"
+      shift 2
+      ;;
+    --package=*)
+      package_path="${1#--package=}"
+      shift
+      ;;
+    --package)
+      require_value "$1" "${2:-}"
+      package_path="$2"
+      shift 2
       ;;
     --package-url=*)
-      package_url="${arg#--package-url=}"
+      package_url="${1#--package-url=}"
+      shift
+      ;;
+    --package-url)
+      require_value "$1" "${2:-}"
+      package_url="$2"
+      shift 2
+      ;;
+    --enable-network)
+      enable_network="true"
+      shift
       ;;
     --help|-h)
       usage
       exit 0
       ;;
     *)
-      echo "Unknown option: $arg" >&2
+      echo "Unknown option: $1" >&2
       usage >&2
       exit 2
       ;;
@@ -92,14 +140,47 @@ case "$tray_mode" in
     ;;
 esac
 
-mkdir -p "$config_dir"
+case "$server" in
+  http://*|https://*)
+    ;;
+  *)
+    echo "--server must be an http:// or https:// URL" >&2
+    exit 2
+    ;;
+esac
 
-if [ -z "$package_url" ]; then
-	echo "--package-url is required" >&2
-	exit 2
+if [ -z "$authorization_key" ]; then
+  echo "--authorization-key is required" >&2
+  exit 2
 fi
 
-if command -v curl >/dev/null 2>&1; then
+if [ -n "$package_path" ] && [ -n "$package_url" ]; then
+  echo "Use only one of --package or --package-url" >&2
+  exit 2
+fi
+
+if [ -z "$package_path" ] && [ -z "$package_url" ]; then
+  echo "--package or --package-url is required" >&2
+  exit 2
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run this installer as root (for example: sudo ./install.sh ...)" >&2
+  exit 1
+fi
+
+mkdir -p "$config_dir"
+
+if [ -n "$package_path" ]; then
+  if [ ! -f "$package_path" ]; then
+    echo "Linux client package not found: $package_path" >&2
+    exit 1
+  fi
+  slan_linux_stop_runtime
+  assert_safe_install_root
+  rm -rf "$install_root"
+  extract_package "$package_path"
+elif command -v curl >/dev/null 2>&1; then
   tmp_pkg="$(mktemp /tmp/slan-client-linux.XXXXXX.tar.gz)"
   if curl -fsSL "$package_url" -o "$tmp_pkg"; then
     slan_linux_stop_runtime
@@ -111,9 +192,11 @@ if command -v curl >/dev/null 2>&1; then
   fi
   rm -f "$tmp_pkg"
 else
-  echo "WARN: curl is not installed; only writing install policy" >&2
+  echo "curl is required when --package-url is used" >&2
+  exit 1
 fi
 
+umask 077
 cat > "$config_dir/$SLAN_LINUX_INSTALL_ENV_NAME" <<EOF
 SLAN_CLIENT_V2_INSTALL_ROOT=$install_root
 SLAN_LINUX_TRAY_MODE=$tray_mode
@@ -122,7 +205,9 @@ EOF
 cat > "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME" <<EOF
 SLAN_CONTROL_BASE_URL=$server
 SLAN_DEVICE_AUTHORIZATION_KEY=$authorization_key
+SLAN_PENDING_ENABLE_NETWORK=$enable_network
 EOF
+chmod 600 "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
 
 if [ "$tray_mode" = "enabled" ]; then
   cat > "$config_dir/$SLAN_LINUX_DESKTOP_POLICY_NAME" <<EOF

@@ -135,6 +135,7 @@ fi
 
 TAR_PATH="$OUTPUT_DIR/SLAN-Client-V2-linux-$ARCH.tar.gz"
 DEB_PATH="$OUTPUT_DIR/${SLAN_LINUX_PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
+CONSOLE_INSTALLER_PATH="$OUTPUT_DIR/SLAN-Client-V2-linux-$ARCH-console.run"
 
 if [ ! -f "$TAR_PATH" ]; then
   echo "Missing Linux tarball: $TAR_PATH" >&2
@@ -144,6 +145,7 @@ fi
 tar -tzf "$TAR_PATH" | grep -q 'opt/slan-client-v2/bin/client-core-service'
 tar -tzf "$TAR_PATH" | grep -q 'usr/bin/slan-client-v2-console'
 tar -tzf "$TAR_PATH" | grep -q 'usr/lib/systemd/system/slan-client-v2.service'
+tar -tzf "$TAR_PATH" | grep -q 'opt/slan-client-v2/install/install.sh'
 if [ "$VARIANT" != "console" ]; then
   tar -tzf "$TAR_PATH" | grep -q 'opt/slan-client-v2/gui/'
 fi
@@ -156,5 +158,12 @@ if [ -f "$DEB_PATH" ]; then
   echo "linuxDeb: $DEB_PATH"
 fi
 
+if [ ! -x "$CONSOLE_INSTALLER_PATH" ]; then
+  echo "Missing Linux console installer: $CONSOLE_INSTALLER_PATH" >&2
+  exit 1
+fi
+"$CONSOLE_INSTALLER_PATH" --help >/dev/null
+
 echo "linuxTarball: $TAR_PATH"
+echo "linuxConsoleInstaller: $CONSOLE_INSTALLER_PATH"
 echo "linuxStage: $OUTPUT_DIR/stage/root"
