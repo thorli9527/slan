@@ -288,7 +288,11 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         let runtime = windows_network_runtime()
             .lock()
             .expect("windows network runtime lock poisoned");
-        if runtime.relay_config.as_ref() == config {
+        if match (runtime.relay_config.as_ref(), config) {
+            (Some(current), Some(next)) => current.data_plane_equivalent(next),
+            (None, None) => true,
+            _ => false,
+        } {
             debug_log("configure_relay: fast path — relay config unchanged, skipping");
             return Ok(());
         }
@@ -3156,10 +3160,43 @@ fn attach_direct_udp_socket() -> Result<UdpSocket> {
         UdpSocket::bind("0.0.0.0:0")
     })
     .with_context(|| format!("bind direct UDP socket to {bind_address}"))?;
+    if let Ok(local_addr) = socket.local_addr() {
+        if let Err(error) = ensure_direct_udp_firewall_rule(local_addr.port()) {
+            eprintln!(
+                "windows direct UDP firewall rule unavailable port={} error={error:#}",
+                local_addr.port()
+            );
+        }
+    }
     socket
         .set_nonblocking(true)
         .context("set direct UDP socket nonblocking")?;
     Ok(socket)
+}
+
+fn ensure_direct_udp_firewall_rule(port: u16) -> Result<()> {
+    let port = port.to_string();
+    let _ = run_netsh(&[
+        "advfirewall",
+        "firewall",
+        "delete",
+        "rule",
+        "name=SLAN Client Direct UDP",
+    ]);
+    run_netsh(&[
+        "advfirewall",
+        "firewall",
+        "add",
+        "rule",
+        "name=SLAN Client Direct UDP",
+        "dir=in",
+        "action=allow",
+        "protocol=UDP",
+        &format!("localport={port}"),
+        "profile=any",
+        "enable=yes",
+    ])?;
+    Ok(())
 }
 
 fn resolve_direct_udp_peer_address(address: &str) -> Result<SocketAddr> {

@@ -512,7 +512,7 @@ fn score_relay_candidate(
             None => {
                 reachable = false;
                 rtt_ms = None;
-                path_score = 10_000;
+                path_score = 10_000_u32.saturating_add(candidate.path_score_hint.unwrap_or(1_000));
             }
         },
         ("derp_tcp_tls_443", true) => match probe_relay_tcp_rtt_ms(&address) {
@@ -524,7 +524,7 @@ fn score_relay_candidate(
             None => {
                 reachable = false;
                 rtt_ms = None;
-                path_score = 10_500;
+                path_score = 10_500_u32.saturating_add(candidate.path_score_hint.unwrap_or(500));
             }
         },
         ("udp", false) | ("derp_tcp_tls_443", false) => {}

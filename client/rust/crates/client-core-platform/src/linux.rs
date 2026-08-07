@@ -370,7 +370,13 @@ impl PlatformNetwork for LinuxPlatformNetwork {
 
     fn configure_relay(&self, relay_config: Option<&RelayDataPlaneConfig>) -> Result<()> {
         let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
-        if runtime.tun.is_some() && runtime.relay_config.as_ref() == relay_config {
+        if runtime.tun.is_some()
+            && match (runtime.relay_config.as_ref(), relay_config) {
+                (Some(current), Some(next)) => current.data_plane_equivalent(next),
+                (None, None) => true,
+                _ => false,
+            }
+        {
             eprintln!("linux configure_relay skipped unchanged config");
             return Ok(());
         }

@@ -297,6 +297,47 @@ pub struct RelayDataPlaneConfig {
     pub sessions: Vec<RelayPeerSession>,
 }
 
+impl RelayDataPlaneConfig {
+    /// Compare only fields that change packet routing or transport setup.
+    /// Candidate health is runtime observation and must not restart the tunnel.
+    pub fn data_plane_equivalent(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+            && self.transport == other.transport
+            && self.relay_address == other.relay_address
+            && self.local_node_id == other.local_node_id
+            && self.network_id == other.network_id
+            && self.direct_udp_port == other.direct_udp_port
+            && self.randomize_direct_udp_port == other.randomize_direct_udp_port
+            && self.node_configs == other.node_configs
+            && self.path_policy == other.path_policy
+            && peer_path_transport_config_matches(&self.peer_paths, &other.peer_paths)
+            && self.relay_mtu == other.relay_mtu
+            && self.max_frame_payload == other.max_frame_payload
+            && self.acl_policies == other.acl_policies
+            && self.sessions == other.sessions
+    }
+}
+
+fn peer_path_transport_config_matches(left: &[PeerPathConfig], right: &[PeerPathConfig]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.peer_node_id == right.peer_node_id
+                && left.peer_virtual_ips == right.peer_virtual_ips
+                && left.candidates.len() == right.candidates.len()
+                && left
+                    .candidates
+                    .iter()
+                    .zip(&right.candidates)
+                    .all(|(left, right)| {
+                        left.kind == right.kind
+                            && left.endpoint_id == right.endpoint_id
+                            && left.address == right.address
+                            && left.session_id == right.session_id
+                            && left.transport == right.transport
+                    })
+        })
+}
+
 fn default_direct_udp_port() -> u16 {
     41642
 }
@@ -480,6 +521,7 @@ pub trait PlatformNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PathCandidate, PathKind, PathState};
 
     fn test_acl_policy() -> PlatformAclPolicy {
         PlatformAclPolicy {
@@ -657,6 +699,36 @@ mod tests {
         assert!(decoded.resolver_zones.is_empty());
         assert!(decoded.resolver_records.is_empty());
         assert!(decoded.relay_data_plane.is_none());
+    }
+
+    #[test]
+    fn relay_data_plane_equivalence_ignores_candidate_health_only() {
+        let mut current = test_relay_config(test_acl_policy());
+        current.peer_paths = vec![PeerPathConfig {
+            peer_node_id: "node-peer".to_string(),
+            peer_virtual_ips: vec!["10.0.0.2".to_string()],
+            candidates: vec![PathCandidate {
+                kind: PathKind::LanUdp,
+                state: PathState::Probing,
+                endpoint_id: None,
+                address: Some("192.168.1.2:41642".to_string()),
+                session_id: None,
+                transport: Some("udp".to_string()),
+                rtt_ms: None,
+                path_score: None,
+                last_ok_at_ms: None,
+                last_error: None,
+            }],
+        }];
+        let mut refreshed = current.clone();
+        refreshed.peer_paths[0].candidates[0].state = PathState::Ready;
+        refreshed.peer_paths[0].candidates[0].rtt_ms = Some(12);
+        refreshed.peer_paths[0].candidates[0].path_score = Some(8);
+        refreshed.peer_paths[0].candidates[0].last_ok_at_ms = Some(1234);
+        assert!(current.data_plane_equivalent(&refreshed));
+
+        refreshed.peer_paths[0].candidates[0].address = Some("192.168.1.3:41642".to_string());
+        assert!(!current.data_plane_equivalent(&refreshed));
     }
 
     #[test]

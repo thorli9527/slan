@@ -360,6 +360,13 @@ func TestIssueRelayTicketAllowsPortScopedDeny(t *testing.T) {
 	if view.TicketID == "" || view.RelayURL == "" {
 		t.Fatalf("IssueRelayTicket returned incomplete relay ticket: %+v", view)
 	}
+	expiresAt, err := time.Parse(time.RFC3339, view.ExpiresAt)
+	if err != nil {
+		t.Fatalf("parse relay ticket expiry: %v", err)
+	}
+	if want := time.Unix(1700000000, 0).UTC().Add(relayTicketTTL); !expiresAt.Equal(want) {
+		t.Fatalf("relay ticket expiry = %v, want %v", expiresAt, want)
+	}
 	payload := strings.Join([]string{
 		view.TicketID,
 		view.NetworkID,

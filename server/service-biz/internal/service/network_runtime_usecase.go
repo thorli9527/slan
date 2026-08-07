@@ -12,6 +12,8 @@ import (
 	"github.com/slan/service-biz/internal/repository"
 )
 
+const relayTicketTTL = time.Hour
+
 func relayCandidates(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsNodeRepository, nowFn func() time.Time, networkID string) ([]RelayCandidateView, error) {
 	items, err := listRelayNodeEntities(ctx, networks, ops, nowFn, networkID)
 	if err != nil {
@@ -98,7 +100,7 @@ func (s NetworkRuntimeService) IssueRelayTicket(ctx context.Context, input Issue
 	}
 	now := networkNow(s.Now).UTC()
 	sessionID := stableRelaySessionID(input.NetworkID, input.SrcNodeID, input.DstNodeID, candidate)
-	expiresAt := now.Add(10 * time.Minute).Format(time.RFC3339)
+	expiresAt := now.Add(relayTicketTTL).Format(time.RFC3339)
 	ticketID := newNetworkSessionID(s.NewSessID, "relay-ticket")
 	signature := signRelayBusinessTicket(
 		ticketID,

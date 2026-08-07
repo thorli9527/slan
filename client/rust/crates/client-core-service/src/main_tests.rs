@@ -659,7 +659,7 @@ fn android_data_plane_selects_derp_when_udp_is_unavailable() {
 }
 
 #[test]
-fn macos_data_plane_uses_derp_candidate_when_probe_fails() {
+fn macos_data_plane_rejects_derp_candidate_when_probe_fails() {
     let selected = data_plane_relay_candidate(&[PersistedRelayCandidate {
         endpoint_id: "derp-remote".to_string(),
         transport: "derp_tcp_tls_443".to_string(),
@@ -673,11 +673,7 @@ fn macos_data_plane_uses_derp_candidate_when_probe_fails() {
         path_score_hint: None,
     }]);
 
-    let selected = selected.expect("DERP candidate should be retained after probe failure");
-    assert_eq!(selected.endpoint_id, "derp-remote");
-    assert_eq!(selected.transport, "derp_tcp_tls_443");
-    assert!(!selected.reachable);
-    assert!(selected.selected);
+    assert!(selected.is_none());
 }
 
 #[test]
@@ -710,7 +706,8 @@ fn relay_selection_uses_local_quality_when_candidates_are_not_probeable() {
     ]);
 
     assert_eq!(selections[0].endpoint_id, "relay-selected");
-    assert!(selections[0].selected);
+    assert!(!selections[0].reachable);
+    assert!(!selections[0].selected);
 }
 
 #[test]

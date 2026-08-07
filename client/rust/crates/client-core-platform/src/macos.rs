@@ -400,7 +400,13 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
-        if runtime.utun.is_some() && runtime.relay_config.as_ref() == relay_config {
+        if runtime.utun.is_some()
+            && match (runtime.relay_config.as_ref(), relay_config) {
+                (Some(current), Some(next)) => current.data_plane_equivalent(next),
+                (None, None) => true,
+                _ => false,
+            }
+        {
             repair_runtime_network_state(&runtime)?;
             eprintln!("macos configure_relay reused unchanged config after route verification");
             return Ok(());
