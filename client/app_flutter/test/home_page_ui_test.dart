@@ -291,7 +291,7 @@ void main() {
     await tester.pump();
 
     expect(bridge.lastCommand, ClientCommandType.enableNetwork);
-    expect(_networkSwitch(tester).value, isTrue);
+    expect(_networkSwitch(tester).value, isFalse);
     expect(_networkSwitch(tester).onChanged, isNull);
     expect(find.text('10.0.0.10'), findsNothing);
 
@@ -326,7 +326,7 @@ void main() {
     expect(bridge.networkCommandCount, 1);
 
     await tester.pump();
-    expect(_networkSwitch(tester).value, isTrue);
+    expect(_networkSwitch(tester).value, isFalse);
     expect(_networkSwitch(tester).onChanged, isNull);
 
     await tester.pump(const Duration(milliseconds: 200));
@@ -355,7 +355,7 @@ void main() {
     await tester.tap(find.byKey(const Key('network-switch')));
     await tester.pump();
 
-    expect(_networkSwitch(tester).value, isTrue);
+    expect(_networkSwitch(tester).value, isFalse);
 
     await tester.pump(bridge.activationDelay);
     await tester.pumpAndSettle();
@@ -419,7 +419,7 @@ void main() {
     await tester.pump();
 
     expect(bridge.lastCommand, ClientCommandType.disableNetwork);
-    expect(_networkSwitch(tester).value, isFalse);
+    expect(_networkSwitch(tester).value, isTrue);
     expect(_networkSwitch(tester).onChanged, isNull);
 
     await tester.pump(bridge.activationDelay);
@@ -661,7 +661,6 @@ class _UiTestBridge implements ClientCoreBridge {
   void _enable(ClientCommand command) {
     final previousIp = _state.value.virtualIp;
     _state.value = _state.value.copyWith(
-      networkEnabled: true,
       syncing: true,
       syncReason: command.type.name,
       switchEnabled: false,
@@ -697,7 +696,6 @@ class _UiTestBridge implements ClientCoreBridge {
   void _disable(ClientCommand command) {
     final previousIp = _state.value.virtualIp;
     _state.value = _state.value.copyWith(
-      networkEnabled: false,
       syncing: true,
       syncReason: command.type.name,
       switchEnabled: false,

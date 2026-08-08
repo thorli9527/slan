@@ -385,7 +385,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget _buildActivatedHeader({required ClientViewState state}) {
     final displayedState = _pendingNetworkTarget != null
         ? state.copyWith(
-            networkEnabled: _pendingNetworkTarget,
             syncing: true,
             switchEnabled: false,
           )

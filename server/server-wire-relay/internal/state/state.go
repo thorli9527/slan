@@ -25,6 +25,8 @@ var (
 	ErrSourceAlreadyAttached = errors.New("source already attached")
 )
 
+const participantIdleTimeout = 90 * time.Second
+
 type Session struct {
 	// ID 是 relay ticket 下发的中继会话 ID。
 	ID string
@@ -34,6 +36,8 @@ type Session struct {
 	Path string
 	// Participants 保存参与方 ID 到 UDP 源地址的绑定。
 	Participants map[string]*net.UDPAddr
+	// ParticipantLastSeen 保存参与方最后一次 attach、keepalive 或发包时间。
+	ParticipantLastSeen map[string]time.Time
 	// ExpiresAt 是 ticket 控制的会话失效时间。
 	ExpiresAt time.Time
 }
@@ -185,20 +189,25 @@ func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.
 	session, ok := s.sessions[ticket.SessionID]
 	if !ok {
 		session = &Session{
-			ID:           ticket.SessionID,
-			PeerID:       ticket.PeerID,
-			Path:         "relay_udp",
-			Participants: make(map[string]*net.UDPAddr),
-			ExpiresAt:    ticket.ExpiresAt,
+			ID:                  ticket.SessionID,
+			PeerID:              ticket.PeerID,
+			Path:                "relay_udp",
+			Participants:        make(map[string]*net.UDPAddr),
+			ParticipantLastSeen: make(map[string]time.Time),
+			ExpiresAt:           ticket.ExpiresAt,
 		}
 		s.sessions[ticket.SessionID] = session
 	} else if session.ExpiresAt.IsZero() || session.ExpiresAt.Before(ticket.ExpiresAt) {
 		session.ExpiresAt = ticket.ExpiresAt
 	}
+	if session.ParticipantLastSeen == nil {
+		session.ParticipantLastSeen = make(map[string]time.Time)
+	}
 	if previous, ok := session.Participants[participantID]; ok && !sameUDPAddr(previous, addr) {
 		s.participantAddressChangeCount++
 	}
 	session.Participants[participantID] = cloneAddr(addr)
+	session.ParticipantLastSeen[participantID] = time.Now()
 	s.sources[sourceKey] = sourceBinding{
 		SessionID:     ticket.SessionID,
 		ParticipantID: participantID,
@@ -338,7 +347,8 @@ func parseTicketSecretList(value string) []string {
 func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []byte) (*net.UDPAddr, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
+	now := time.Now()
+	s.pruneExpiredLocked(now)
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -365,8 +375,12 @@ func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []
 		s.lastRefreshParticipantID = participantID
 		s.lastRefreshAddr = addr.String()
 	}
+	if session.ParticipantLastSeen == nil {
+		session.ParticipantLastSeen = make(map[string]time.Time)
+	}
+	session.ParticipantLastSeen[participantID] = now
 	for peerID, peerAddr := range session.Participants {
-		if peerID != participantID {
+		if peerID != participantID && participantIsActive(session, peerID, now) {
 			atomic.AddUint64(&s.forwardCount, 1)
 			s.lastForwardSessionID = sessionID
 			s.lastForwardParticipantID = participantID
@@ -387,7 +401,8 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
+	now := time.Now()
+	s.pruneExpiredLocked(now)
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -405,6 +420,10 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 		}
 	}
 	session.Participants[participantID] = cloneAddr(addr)
+	if session.ParticipantLastSeen == nil {
+		session.ParticipantLastSeen = make(map[string]time.Time)
+	}
+	session.ParticipantLastSeen[participantID] = now
 	s.sources[addr.String()] = sourceBinding{
 		SessionID:     sessionID,
 		ParticipantID: participantID,
@@ -430,11 +449,17 @@ func (s *Store) Detach(addr *net.UDPAddr, sessionID, participantID string) error
 		return ErrParticipantNotFound
 	}
 	delete(session.Participants, participantID)
+	delete(session.ParticipantLastSeen, participantID)
 	delete(s.sources, addr.String())
 	if len(session.Participants) == 0 {
 		delete(s.sessions, sessionID)
 	}
 	return nil
+}
+
+func participantIsActive(session *Session, participantID string, now time.Time) bool {
+	lastSeen, ok := session.ParticipantLastSeen[participantID]
+	return ok && now.Sub(lastSeen) <= participantIdleTimeout
 }
 
 func (s *Store) Session(sessionID string) (SessionView, bool) {

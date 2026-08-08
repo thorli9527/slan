@@ -511,9 +511,8 @@ fn next_operation_id() -> u64 {
     NEXT_PLATFORM_OPERATION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Phase 1 (fast): install/enable adapter only — no IP/routes/DNS configuration.
-/// Returns quickly so the UI can show "network enabled" before the heavier
-/// IP/routes/DNS/relay configuration runs in phase 2 ([configure_network_full]).
+/// Phase 1: install/enable the adapter only. The network remains pending until
+/// [configure_network_full] verifies the complete platform configuration.
 pub(crate) fn activate_network(
     platform: &PlatformNetworkImpl,
     activation: PlatformNetworkActivation<'_>,
@@ -547,14 +546,10 @@ pub(crate) fn activate_network(
         // and relay are configured asynchronously in configure_network_full.
         platform.install_adapter()?;
     }
-    platform.mark_network_enabled(activation.virtual_ip)?;
-    record_network_enabled(activation.virtual_ip);
     Ok(())
 }
 
-/// Phase 2: configure IP, routes, DNS and relay after the adapter is up.
-/// Called after [activate_network] + state commit so the UI already shows
-/// "enabled" while the heavier configuration runs in the background.
+/// Phase 2: configure IP, routes, DNS and relay, then publish enabled state.
 pub(crate) fn configure_network_full(
     platform: &PlatformNetworkImpl,
     activation: PlatformNetworkActivation<'_>,
@@ -564,6 +559,8 @@ pub(crate) fn configure_network_full(
     platform.configure_resolver_map(activation.resolver_zones, activation.resolver_records)?;
     platform.configure_routes(activation.routes)?;
     platform.configure_relay(activation.relay_config)?;
+    platform.mark_network_enabled(activation.virtual_ip)?;
+    record_network_enabled(activation.virtual_ip);
     Ok(())
 }
 

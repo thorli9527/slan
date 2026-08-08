@@ -48,6 +48,42 @@ func TestAttachForwardDetach(t *testing.T) {
 	}
 }
 
+func TestForwardRejectsInactivePeerUntilKeepaliveRefreshesIt(t *testing.T) {
+	store := NewStore()
+	a := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	b := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10002}
+	ticket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	ticket.Signature = signRelayTicket(ticket)
+
+	if _, _, err := store.Attach(a, "node-a", ticket, "udp"); err != nil {
+		t.Fatalf("attach a: %v", err)
+	}
+	if _, _, err := store.Attach(b, "node-b", ticket, "udp"); err != nil {
+		t.Fatalf("attach b: %v", err)
+	}
+	store.sessions["s1"].ParticipantLastSeen["node-b"] = time.Now().Add(-participantIdleTimeout - time.Second)
+
+	if _, _, err := store.Forward(a, "s1", "node-a", []byte("stale")); err != ErrPeerNotAttached {
+		t.Fatalf("want ErrPeerNotAttached for inactive peer, got %v", err)
+	}
+	if err := store.RefreshParticipant(b, "s1", "node-b"); err != nil {
+		t.Fatalf("refresh b: %v", err)
+	}
+	peerAddr, peerID, err := store.Forward(a, "s1", "node-a", []byte("recovered"))
+	if err != nil {
+		t.Fatalf("forward after keepalive: %v", err)
+	}
+	if peerID != "node-b" || peerAddr.String() != b.String() {
+		t.Fatalf("unexpected recovered peer: id=%q addr=%v", peerID, peerAddr)
+	}
+}
+
 func TestAttachRejectsExpiredTicket(t *testing.T) {
 	store := NewStore()
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}

@@ -169,10 +169,30 @@ static WINDOWS_NETWORK_RUNTIME: OnceLock<Mutex<WindowsRuntime>> = OnceLock::new(
 fn windows_network_runtime() -> &'static Mutex<WindowsRuntime> {
     WINDOWS_NETWORK_RUNTIME.get_or_init(|| {
         let cached = load_cached_runtime_state().unwrap_or_default();
+        let recovered_virtual_ip = cached.virtual_ip.clone().filter(|virtual_ip| {
+            cached.network_enabled
+                && verify_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip).is_ok()
+        });
+        let network_enabled = recovered_virtual_ip.is_some();
+        if cached.network_enabled && !network_enabled {
+            debug_log(
+                "windows_network_runtime: discarded stale enabled state because the adapter IP is not ready",
+            );
+            let mut corrected = cached.clone();
+            corrected.network_enabled = false;
+            corrected.virtual_ip = None;
+            corrected.active_path = None;
+            corrected.peer_paths.clear();
+            if let Err(error) = persist_state(&corrected) {
+                debug_log(&format!(
+                    "windows_network_runtime: failed to persist corrected disabled state: {error:#}"
+                ));
+            }
+        }
         Mutex::new(WindowsRuntime {
             adapter_present: cached.adapter_present,
-            network_enabled: cached.network_enabled,
-            virtual_ip: cached.virtual_ip,
+            network_enabled,
+            virtual_ip: recovered_virtual_ip,
             ..WindowsRuntime::default()
         })
     })
@@ -237,12 +257,10 @@ impl PlatformNetwork for WindowsPlatformNetwork {
             .lock()
             .expect("windows network runtime lock poisoned");
         runtime.adapter_present = true;
-        runtime.network_enabled = true;
         runtime.virtual_ip = Some(virtual_ip.to_string());
         runtime.prefix_len = Some(HOST_INTERFACE_PREFIX_LEN);
         let mut state = load_cached_runtime_state().unwrap_or_default();
         state.adapter_present = true;
-        state.network_enabled = true;
         state.virtual_ip = Some(virtual_ip.to_string());
         persist_state(&state)
     }
@@ -360,31 +378,21 @@ impl PlatformNetwork for WindowsPlatformNetwork {
             .lock()
             .expect("windows network runtime lock poisoned");
         let cached = load_cached_runtime_state().unwrap_or_default();
-        // A service/runtime restart resets the process-local cache while the
-        // adapter and persisted desired state remain active. Treat that state
-        // as enabled until an explicit disable clears the persisted state.
-        let recovered_virtual_ip = runtime
-            .virtual_ip
-            .clone()
-            .or_else(|| cached.virtual_ip.clone());
-        let network_enabled =
-            runtime.network_enabled || (cached.network_enabled && recovered_virtual_ip.is_some());
+        // Startup recovery verifies the persisted address once when the
+        // process-local runtime is initialized. Runtime reads must not trust a
+        // stale enabled flag while Windows has only an APIPA address.
+        let network_enabled = runtime.network_enabled;
         if !network_enabled {
             debug_log(&format!(
                 "read_runtime_state: network_enabled=false adapter_present={} virtual_ip={:?} cached_enabled={}",
                 runtime.adapter_present, runtime.virtual_ip, cached.network_enabled,
-            ));
-        } else if !runtime.network_enabled {
-            debug_log(&format!(
-                "read_runtime_state: recovered enabled state from persisted runtime virtual_ip={:?}",
-                recovered_virtual_ip,
             ));
         }
         Ok(NetworkRuntimeState {
             adapter_present: runtime.adapter_present || network_enabled,
             network_enabled,
             virtual_ip: if network_enabled {
-                recovered_virtual_ip
+                runtime.virtual_ip.clone()
             } else {
                 None
             },

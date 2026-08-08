@@ -6,8 +6,7 @@ use super::{
     invalidate_runtime_session, local_status_active_path, maintenance_gap_is_resume,
     method_business_event_type, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
     path_diagnose_health, path_diagnose_resolver, peer_network_id, peer_path_configs,
-    peer_reachability_reconfigure_reason, phase2_network_activation_cancelled,
-    platform_resolver_config, publish_method_business_event,
+    peer_reachability_reconfigure_reason, platform_resolver_config, publish_method_business_event,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_reconfigure_bypasses_retry_window, relay_retry_backoff_ms,
@@ -101,19 +100,6 @@ fn local_request_watch_classification_only_matches_long_polls() {
         r#"{"method":"localNetworkActivate","args":{}}"#
     ));
     assert!(!request_is_watch("not-json"));
-}
-
-#[test]
-fn phase2_activation_follows_actor_target_before_platform_ip_is_configured() {
-    let mut actor_state = ClientViewState::default();
-    actor_state.network_enabled = true;
-    let platform_state = NetworkRuntimeState::default();
-
-    assert!(!platform_state.network_enabled);
-    assert!(!phase2_network_activation_cancelled(&actor_state));
-
-    actor_state.network_enabled = false;
-    assert!(phase2_network_activation_cancelled(&actor_state));
 }
 
 #[test]
@@ -1383,7 +1369,7 @@ fn relay_maintenance_reconfigures_when_attach_failures_increase() {
 }
 
 #[test]
-fn relay_maintenance_reconfigures_when_connect_plan_is_newer() {
+fn relay_maintenance_records_new_connect_plan_without_reconfiguring() {
     let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
     let stats = test_relay_stats("2026-05-03T10:10:00Z", now);
     let mut maintenance = RelayMaintenanceState {
@@ -1396,7 +1382,7 @@ fn relay_maintenance_reconfigures_when_connect_plan_is_newer() {
 
     assert_eq!(
         relay_maintenance_reconfigure_reason(now, Some(&stats), &mut maintenance, now),
-        Some("connect_plan_updated")
+        None
     );
     assert_eq!(maintenance.last_connect_plan_ms, now);
 }

@@ -1155,7 +1155,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }) {
     return _pendingNetworkUiState(
       _state.value,
-      networkEnabled: targetEnabled,
+      networkEnabled: _state.value.networkEnabled,
       syncReason: command.type.name,
       error: null,
       notice: null,

@@ -1254,7 +1254,7 @@ fn try_ingest_connect_plan(
     let persisted = runtime
         .call_named_if_revision(
             "mqtt.connect_plan.commit",
-            peer_node_id,
+            peer_node_id.clone(),
             expected_revision,
             move |_runtime| crate::persist_connect_plan_from_value(&plan),
         )
@@ -1263,7 +1263,7 @@ fn try_ingest_connect_plan(
     if persisted {
         log_service_error("client-core-service accepted connect_plan for relay data plane");
         return Ok(Some(ConnectPlanIngest {
-            should_rebuild: true,
+            should_rebuild: connect_plan_requires_immediate_rebuild(peer_node_id.as_deref()),
             ack_delivery_id: downstream_message_id(&value),
         }));
     }
@@ -1274,6 +1274,30 @@ fn try_ingest_connect_plan(
         should_rebuild: false,
         ack_delivery_id: None,
     }))
+}
+
+fn connect_plan_requires_immediate_rebuild(peer_node_id: Option<&str>) -> bool {
+    let stats = crate::relay_store::load_relay_runtime_stats();
+    connect_plan_requires_immediate_rebuild_with_stats(peer_node_id, stats.as_ref())
+}
+
+fn connect_plan_requires_immediate_rebuild_with_stats(
+    peer_node_id: Option<&str>,
+    stats: Option<&crate::relay_models::RelayRuntimeStats>,
+) -> bool {
+    let Some(peer_node_id) = peer_node_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return true;
+    };
+    let Some(stats) = stats else {
+        return true;
+    };
+    !stats.peers.iter().any(|peer| {
+        peer.peer_node_id.trim() == peer_node_id
+            && peer.last_send_path.as_deref() == Some("lan_udp")
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1963,6 +1987,39 @@ mod tests {
         ));
         assert!(network_event_requires_data_plane_reconfigure(
             &NetworkEventType::NetworkConfigChanged
+        ));
+    }
+
+    #[test]
+    fn connect_plan_update_preserves_healthy_lan_peer() {
+        let stats: crate::relay_models::RelayRuntimeStats =
+            serde_json::from_value(serde_json::json!({
+                "relayAddress": "127.0.0.1:39001",
+                "peers": [{
+                    "peerNodeId": "node-peer",
+                    "lastSendPath": "lan_udp"
+                }],
+                "tunPacketsSent": 1,
+                "relayPacketsReceived": 1,
+                "relayDecodeFailures": 0,
+                "unroutableTunPackets": 0,
+                "oversizedTunPackets": 0,
+                "wintunWriteFailures": 0,
+                "updatedAtMs": 1
+            }))
+            .expect("decode relay stats");
+
+        assert!(!super::connect_plan_requires_immediate_rebuild_with_stats(
+            Some("node-peer"),
+            Some(&stats),
+        ));
+        assert!(super::connect_plan_requires_immediate_rebuild_with_stats(
+            Some("another-peer"),
+            Some(&stats),
+        ));
+        assert!(super::connect_plan_requires_immediate_rebuild_with_stats(
+            Some("node-peer"),
+            None,
         ));
     }
 

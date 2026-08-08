@@ -1605,7 +1605,7 @@ void main() {
     expect(stopwatch.elapsedMilliseconds, lessThan(100));
     expect(bridge.state.value.syncing, isTrue);
     expect(bridge.state.value.switchEnabled, isFalse);
-    expect(bridge.state.value.networkEnabled, isTrue);
+    expect(bridge.state.value.networkEnabled, isFalse);
 
     await _waitFor(
       () => bridge.state.value.virtualIp == '10.0.0.10',
@@ -1908,7 +1908,7 @@ void main() {
     expect(bridge.state.value.switchEnabled, isTrue);
   });
 
-  test('enable exception rolls back optimistic switch state', () async {
+  test('enable exception preserves disabled switch state', () async {
     final service = await _FakeClientService.start([
       const _ServiceReply(
         expectedMethod: 'localNetworkActivate',
@@ -1927,7 +1927,7 @@ void main() {
       const ClientCommand(ClientCommandType.enableNetwork),
     );
 
-    expect(bridge.state.value.networkEnabled, isTrue);
+    expect(bridge.state.value.networkEnabled, isFalse);
     expect(bridge.state.value.switchEnabled, isFalse);
 
     await _waitFor(
@@ -2062,7 +2062,7 @@ void main() {
       const ClientCommand(ClientCommandType.disableNetwork),
     );
 
-    expect(bridge.state.value.networkEnabled, isFalse);
+    expect(bridge.state.value.networkEnabled, isTrue);
     expect(bridge.state.value.virtualIp, '10.0.0.10');
     expect(bridge.state.value.switchEnabled, isFalse);
 
