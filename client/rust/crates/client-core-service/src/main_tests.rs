@@ -1541,14 +1541,14 @@ fn relay_maintenance_does_not_count_stall_when_replies_progress() {
 }
 
 #[test]
-fn relay_failure_total_excludes_local_packet_noise() {
+fn relay_failure_total_excludes_non_actionable_packet_noise() {
     let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
     let mut stats = test_relay_stats("2026-05-03T10:10:00Z", now);
     stats.oversized_tun_packets = 3;
     stats.relay_decode_failures = 2;
     stats.unroutable_tun_packets = 1;
 
-    assert_eq!(relay_runtime_failure_total(&stats), 2);
+    assert_eq!(relay_runtime_failure_total(&stats), 0);
 }
 
 #[test]

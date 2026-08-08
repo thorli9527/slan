@@ -85,11 +85,13 @@ pub(crate) fn refresh_relay_runtime_ticket_timing(stats: &mut RelayRuntimeStats,
 }
 
 pub(crate) fn relay_runtime_failure_total(stats: &RelayRuntimeStats) -> u64 {
+    // Decode failures can be caused by late packets from a replaced transport,
+    // stale probes, or unrelated UDP traffic. Rebinding the tunnel cannot repair
+    // those inputs and turns harmless packet noise into a periodic outage.
     stats
         .relay_send_failures
         .saturating_add(stats.relay_receive_failures)
         .saturating_add(stats.relay_attach_failures)
-        .saturating_add(stats.relay_decode_failures)
         .saturating_add(stats.relay_error_responses)
         .saturating_add(stats.relay_config_hash_mismatches)
         .saturating_add(stats.wintun_write_failures)
