@@ -164,6 +164,7 @@ func TestHandleUpstreamPresenceRejectsDeviceMismatch(t *testing.T) {
 }
 
 func TestReportEndpointUpdatesOnlyReportedNetwork(t *testing.T) {
+	eventPublisher := &networkAccessTestBroadcaster{}
 	networks := &networkRuntimeTestNetworks{
 		networks: map[string]model.Network{
 			"net-a": {NetworkID: "net-a", Status: "active"},
@@ -175,8 +176,9 @@ func TestReportEndpointUpdatesOnlyReportedNetwork(t *testing.T) {
 		},
 	}
 	service := MQTTWebhookService{
-		Networks: networks,
-		Now:      func() time.Time { return time.Unix(1700003000, 0) },
+		Networks:       networks,
+		EventPublisher: eventPublisher,
+		Now:            func() time.Time { return time.Unix(1700003000, 0) },
 	}
 
 	changed, err := service.ReportEndpoint(context.Background(), MQTTEndpointReportInput{
@@ -204,6 +206,12 @@ func TestReportEndpointUpdatesOnlyReportedNetwork(t *testing.T) {
 	}
 	if len(saved.Endpoints) != 1 || saved.Endpoints[0].UpdatedAt != 1700003000 {
 		t.Fatalf("expected endpoint timestamp fallback, got %#v", saved.Endpoints)
+	}
+	if len(eventPublisher.events) != 1 {
+		t.Fatalf("expected only one peer path event, got %#v", eventPublisher.events)
+	}
+	if eventPublisher.events[0].EventType != NetworkEventPeerPathChanged {
+		t.Fatalf("endpoint report must not publish a generic config event, got %q", eventPublisher.events[0].EventType)
 	}
 }
 

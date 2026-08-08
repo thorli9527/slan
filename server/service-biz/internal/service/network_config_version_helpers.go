@@ -17,6 +17,32 @@ func bumpNetworkConfigVersion(
 	networkID string,
 	reason string,
 ) (model.NetworkConfigVersion, error) {
+	return bumpNetworkConfigVersionWithEvent(
+		ctx, networks, eventPublisher, nowFn, networkID, reason, true,
+	)
+}
+
+func bumpNetworkConfigVersionWithoutConfigEvent(
+	ctx context.Context,
+	networks repository.NetworkRepository,
+	nowFn func() time.Time,
+	networkID string,
+	reason string,
+) (model.NetworkConfigVersion, error) {
+	return bumpNetworkConfigVersionWithEvent(
+		ctx, networks, nil, nowFn, networkID, reason, false,
+	)
+}
+
+func bumpNetworkConfigVersionWithEvent(
+	ctx context.Context,
+	networks repository.NetworkRepository,
+	eventPublisher NetworkEventPublisher,
+	nowFn func() time.Time,
+	networkID string,
+	reason string,
+	publishConfigEvent bool,
+) (model.NetworkConfigVersion, error) {
 	networkID = strings.TrimSpace(networkID)
 	reason = strings.TrimSpace(reason)
 	if networkID == "" {
@@ -46,7 +72,7 @@ func bumpNetworkConfigVersion(
 	if err := networks.SaveNetworkVersion(ctx, next); err != nil {
 		return model.NetworkConfigVersion{}, err
 	}
-	if eventPublisher != nil {
+	if publishConfigEvent && eventPublisher != nil {
 		if err := publishNetworkEvent(
 			ctx,
 			eventPublisher,

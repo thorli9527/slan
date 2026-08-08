@@ -226,10 +226,9 @@ func (s MQTTWebhookService) ReportEndpoint(ctx context.Context, input MQTTEndpoi
 		membership.Endpoints,
 		updated.Endpoints,
 	)
-	version, err := bumpNetworkConfigVersion(
+	version, err := bumpNetworkConfigVersionWithoutConfigEvent(
 		ctx,
 		s.Networks,
-		s.EventPublisher,
 		s.Now,
 		input.NetworkID,
 		"peer_endpoint_changed",

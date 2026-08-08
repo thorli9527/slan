@@ -57,7 +57,9 @@ pub fn request_network_generation_reconnect() -> u64 {
 fn network_event_requires_data_plane_reconfigure(event_type: &NetworkEventType) -> bool {
     !matches!(
         event_type,
-        NetworkEventType::MemberOnline | NetworkEventType::MemberOffline
+        NetworkEventType::MemberOnline
+            | NetworkEventType::MemberOffline
+            | NetworkEventType::PeerPathChanged
     )
 }
 
@@ -1949,14 +1951,14 @@ mod tests {
     }
 
     #[test]
-    fn presence_events_do_not_reconfigure_the_data_plane() {
+    fn runtime_observation_events_do_not_reconfigure_the_data_plane() {
         assert!(!network_event_requires_data_plane_reconfigure(
             &NetworkEventType::MemberOnline
         ));
         assert!(!network_event_requires_data_plane_reconfigure(
             &NetworkEventType::MemberOffline
         ));
-        assert!(network_event_requires_data_plane_reconfigure(
+        assert!(!network_event_requires_data_plane_reconfigure(
             &NetworkEventType::PeerPathChanged
         ));
         assert!(network_event_requires_data_plane_reconfigure(

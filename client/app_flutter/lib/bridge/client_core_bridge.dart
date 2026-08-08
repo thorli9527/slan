@@ -143,6 +143,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// iOS PacketTunnel 运行态轮询是否已启动。
   bool _watchingIosPacketTunnelStats = false;
 
+  /// 桌面端 Rust 运行态校准轮询是否已启动。
+  bool _pollingDesktopRuntimeState = false;
+
   /// 是否正在修复移动端 MQTT 控制通道。
   bool _repairingNativeMobileMqtt = false;
 
@@ -202,6 +205,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     ClientUiDiagnostics.unawaitedLog('bridge.start.begin', state: _state.value);
     await _startStateWithFallback();
     _startBusinessEventWatchLoop();
+    _startDesktopRuntimeStateReconciliationLoop();
     _startAndroidNetworkEventWatchLoop();
     _startIosNetworkEventWatchLoop();
     _startAndroidRuntimeStatsLoop();
@@ -468,6 +472,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     _watchingIosNetworkEvents = false;
     _watchingAndroidRuntimeStats = false;
     _watchingIosPacketTunnelStats = false;
+    _pollingDesktopRuntimeState = false;
     _mobileMqttEnsureRunning = false;
     _mobileMqttEnsureInFlight = null;
     _repairingNativeMobileMqtt = false;
@@ -1473,6 +1478,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
     try {
       await _localService.localConnectivityChanged();
+      await _refreshState();
     } catch (error) {
       ClientUiDiagnostics.unawaitedLog(
         'bridge.connectivity.resume.failed',
@@ -1850,6 +1856,51 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         if (_state.value.networkEnabled) {
           await _logIosPacketTunnelStats('bridge.ios.packetTunnel.stats');
         }
+      },
+    );
+  }
+
+  /// 定期以 Rust runtime 为准校准桌面 UI，兜底处理服务重启或事件流中断。
+  void _startDesktopRuntimeStateReconciliationLoop() {
+    if (!_isDesktopHostPlatform) {
+      return;
+    }
+    var initialStateAlreadyLoaded = true;
+    _startPollingLoop(
+      isAlreadyWatching: () => _pollingDesktopRuntimeState,
+      markWatching: () => _pollingDesktopRuntimeState = true,
+      isActive: () => _pollingDesktopRuntimeState && !_closed,
+      interval: const Duration(seconds: 5),
+      errorBackoff: const Duration(seconds: 5),
+      errorEvent: 'bridge.desktop.runtime.reconcileFailed',
+      pollOnce: () async {
+        if (initialStateAlreadyLoaded) {
+          initialStateAlreadyLoaded = false;
+          return;
+        }
+        if (_networkToggleInFlight) {
+          return;
+        }
+        final runtimeState = await _queryCurrentState();
+        if (runtimeState == null || _networkToggleInFlight) {
+          return;
+        }
+        final current = _state.value;
+        if (runtimeState.activated == current.activated &&
+            runtimeState.networkEnabled == current.networkEnabled &&
+            runtimeState.virtualIp == current.virtualIp) {
+          return;
+        }
+        ClientUiDiagnostics.unawaitedLog(
+          'bridge.desktop.runtime.reconciled',
+          state: current,
+          fields: {
+            'runtimeActivated': runtimeState.activated,
+            'runtimeNetworkEnabled': runtimeState.networkEnabled,
+            'runtimeVirtualIp': runtimeState.virtualIp,
+          },
+        );
+        _setStateIfChanged(runtimeState);
       },
     );
   }

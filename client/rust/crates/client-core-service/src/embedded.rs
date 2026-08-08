@@ -2192,7 +2192,13 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
             &envelope.network_id,
             &envelope.event_type,
             envelope.version,
-            matches!(apply_result, ApplyResult::Applied),
+            matches!(apply_result, ApplyResult::Applied)
+                && !matches!(
+                    envelope.event_type,
+                    crate::network_event::NetworkEventType::MemberOnline
+                        | crate::network_event::NetworkEventType::MemberOffline
+                        | crate::network_event::NetworkEventType::PeerPathChanged
+                ),
             "event",
         ),
         &state,
