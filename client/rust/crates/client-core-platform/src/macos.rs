@@ -407,8 +407,9 @@ impl PlatformNetwork for MacosPlatformNetwork {
                 _ => false,
             }
         {
+            runtime.relay_config = relay_config.cloned();
             repair_runtime_network_state(&runtime)?;
-            eprintln!("macos configure_relay reused unchanged config after route verification");
+            macos_trace!("macos configure_relay reused transport config after route verification");
             return Ok(());
         }
         let previous_relay_config = runtime.relay_config.clone();
@@ -1908,7 +1909,7 @@ fn run_udp_data_plane(
                     if packet.len() <= max_frame_payload {
                         if let Some(peer) = relay_peer_for_packet(&peers, packet) {
                             stats.last_tun_peer_node_id = Some(peer.peer_node_id.clone());
-                            eprintln!(
+                            macos_trace!(
                                 "SLAN_MACOS_TUN_PACKET peer={} dst={:?} proto={:?} size={} direct_ready={}",
                                 peer.peer_node_id,
                                 ipv4_destination(packet),
@@ -1960,7 +1961,7 @@ fn run_udp_data_plane(
                                     {
                                         Ok(_) => {
                                             direct_sent = true;
-                                            eprintln!(
+                                            macos_trace!(
                                                 "SLAN_MACOS_DIRECT_SEND_OK peer={} dst={:?} size={}",
                                                 peer.peer_node_id,
                                                 ipv4_destination(&packet),
@@ -2012,7 +2013,7 @@ fn run_udp_data_plane(
                                             match peer.socket.send(&payload) {
                                                 Ok(_) => {
                                                     relay_sent = true;
-                                                    eprintln!(
+                                                    macos_trace!(
                                                         "SLAN_MACOS_RELAY_SEND_OK peer={} dst={:?} size={} attempt={}",
                                                         peer.peer_node_id,
                                                         ipv4_destination(&packet),
@@ -2068,7 +2069,7 @@ fn run_udp_data_plane(
                                                 }
                                                 match send_derp_forward(derp_peer, &frame) {
                                                     Ok(_) => {
-                                                        eprintln!(
+                                                        macos_trace!(
                                                             "SLAN_MACOS_DERP_SEND_OK peer={} dst={:?} size={} attempt={}",
                                                             derp_peer.peer_node_id,
                                                             ipv4_destination(&packet),

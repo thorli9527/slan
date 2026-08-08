@@ -346,11 +346,37 @@ impl RelayDataPlaneConfig {
         if self.acl_policies != other.acl_policies {
             fields.push("acl_policies");
         }
-        if self.sessions != other.sessions {
+        if !relay_session_transport_config_matches(&self.sessions, &other.sessions) {
             fields.push("sessions");
         }
         fields
     }
+}
+
+fn relay_session_transport_config_matches(
+    left: &[RelayPeerSession],
+    right: &[RelayPeerSession],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|left| {
+            right.iter().any(|right| {
+                left.session_id == right.session_id
+                    && left.peer_node_id == right.peer_node_id
+                    && unordered_strings_match(&left.peer_virtual_ips, &right.peer_virtual_ips)
+                    && relay_ticket_transport_config_matches(&left.ticket, &right.ticket)
+            })
+        })
+}
+
+fn relay_ticket_transport_config_matches(left: &RelayTicket, right: &RelayTicket) -> bool {
+    left.network_id == right.network_id
+        && left.session_id == right.session_id
+        && left.src_node_id == right.src_node_id
+        && left.dst_node_id == right.dst_node_id
+        && left.derp_cluster_id == right.derp_cluster_id
+        && unordered_strings_match(&left.allowed_derp_node_ids, &right.allowed_derp_node_ids)
+        && left.relay_url == right.relay_url
+        && left.session_key == right.session_key
 }
 
 fn peer_path_transport_config_matches(left: &[PeerPathConfig], right: &[PeerPathConfig]) -> bool {
@@ -813,6 +839,37 @@ mod tests {
         reordered.peer_paths[1].candidates.reverse();
 
         assert!(current.data_plane_equivalent(&reordered));
+    }
+
+    #[test]
+    fn relay_data_plane_equivalence_ignores_ticket_renewal_metadata() {
+        let current = test_relay_config(test_acl_policy());
+        let mut renewed = current.clone();
+        renewed.sessions[0].ticket.ticket_id = "ticket-2".to_string();
+        renewed.sessions[0].ticket.expires_at = "2026-06-06T00:00:00Z".to_string();
+        renewed.sessions[0].ticket.signature = "renewed-signature".to_string();
+
+        assert!(current.data_plane_equivalent(&renewed));
+        assert!(current.data_plane_change_fields(&renewed).is_empty());
+    }
+
+    #[test]
+    fn relay_data_plane_equivalence_detects_session_transport_changes() {
+        let current = test_relay_config(test_acl_policy());
+
+        let mut changed_key = current.clone();
+        changed_key.sessions[0].ticket.session_key = "rotated-session-key".to_string();
+        assert_eq!(
+            current.data_plane_change_fields(&changed_key),
+            vec!["sessions"]
+        );
+
+        let mut changed_relay = current.clone();
+        changed_relay.sessions[0].ticket.relay_url = "udp://47.245.40.231:39001".to_string();
+        assert_eq!(
+            current.data_plane_change_fields(&changed_relay),
+            vec!["sessions"]
+        );
     }
 
     #[test]

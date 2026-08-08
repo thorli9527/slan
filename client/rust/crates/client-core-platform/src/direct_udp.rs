@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     sync::{Mutex, OnceLock},
@@ -24,6 +24,21 @@ use crate::log_platform_error;
 /// SLAN 默认直连 UDP 端口，刻意避开 Tailscale 默认使用的 41641。
 pub const DEFAULT_DIRECT_UDP_PORT: u16 = 41642;
 const TAILSCALE_DEFAULT_UDP_PORT: u16 = 41641;
+
+fn direct_udp_verbose_trace_enabled() -> bool {
+    matches!(
+        env::var("SLAN_DIRECT_UDP_VERBOSE_TRACE").ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes" | "YES")
+    )
+}
+
+macro_rules! direct_udp_trace {
+    ($($arg:tt)*) => {
+        if direct_udp_verbose_trace_enabled() {
+            eprintln!($($arg)*);
+        }
+    };
+}
 
 /// DirectUdpControlKind 表示 direct UDP 控制包类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,7 +373,7 @@ impl DirectUdpTransport {
                                 peer.quality_leads.remove(&target);
                             }
                         }
-                        eprintln!(
+                        direct_udp_trace!(
                             "SLAN_DIRECT_UDP_PROBE_SENT peer={} path={} target={} bytes={} role={role:?} health={:?}",
                             peer.peer_node_id,
                             path_kind.as_str(),
@@ -453,9 +468,10 @@ impl DirectUdpTransport {
             return true;
         };
         if persist_direct_udp_reflexive_endpoint(&self.socket, endpoint) {
-            eprintln!(
+            direct_udp_trace!(
                 "direct udp punch reflexive endpoint node={} endpoint={}",
-                self.local_node_id, endpoint
+                self.local_node_id,
+                endpoint
             );
         }
         true
