@@ -290,46 +290,22 @@ begin
 end;
 
 procedure VerifyWintunAdapterInstalled();
-var
-  HvciOn: Boolean;
-  TestSigningOn: Boolean;
-  SecureBootOn: Boolean;
 begin
+  // A newly installed Wintun adapter is normally Disconnected until the user
+  // enables a network. Installation only requires the adapter and service to exist.
   if ExecHidden(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(60); do { $adapter=Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq ''SLAN LAN Adapter'' -or $_.InterfaceDescription -like ''*Wintun*'' -or $_.InterfaceDescription -like ''*WireGuard*Tunnel*'' -or $_.InterfaceDescription -like ''*WireGuardNT*'' } | Select-Object -First 1; if ($adapter -and $adapter.Status -eq ''Up'') { exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(60); do { $adapter=Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq ''SLAN LAN Adapter'' -or $_.InterfaceDescription -like ''*Wintun*'' -or $_.InterfaceDescription -like ''*WireGuard*Tunnel*'' -or $_.InterfaceDescription -like ''*WireGuardNT*'' } | Select-Object -First 1; $service=Get-Service -Name ''{#ServiceName}'' -ErrorAction SilentlyContinue; if ($adapter -and $service -and $service.Status -eq ''Running'') { exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
     ewWaitUntilTerminated
   ) then begin
     exit;
   end;
-  // Adapter verification failed — diagnose the cause
-  HvciOn := IsHvciEnabled();
-  TestSigningOn := IsTestSigningEnabled();
-  SecureBootOn := IsSecureBootEnabled();
-  if HvciOn and not TestSigningOn then begin
-    if SecureBootOn then begin
-      RaiseException(
-        'Failed to install SLAN Wintun adapter.' + #13 + #10 +
-        'Secure Boot is ENABLED — Test Signing cannot be enabled.' + #13 + #10 + #13 + #10 +
-        'Please:' + #13 + #10 +
-        '  1. Reboot into BIOS/UEFI and disable Secure Boot' + #13 + #10 +
-        '  2. In Windows: bcdedit /set testsigning on' + #13 + #10 +
-        '  3. Reboot and run the installer again.'
-      );
-    end else begin
-      RaiseException(
-        'Failed to install SLAN Wintun adapter. HVCI is enabled but Test Signing is off.' + #13 + #10 +
-        'Please run in elevated PowerShell: bcdedit /set testsigning on' + #13 + #10 +
-        'Then reboot and run the installer again.'
-      );
-    end;
-  end;
-  RaiseException('Failed to install SLAN Wintun adapter.' + #13 + #10 +
-    'The adapter was not detected within 30 seconds.' + #13 + #10 + #13 + #10 +
+  RaiseException('Failed to initialize the SLAN Windows runtime.' + #13 + #10 +
+    'The Wintun adapter or SLAN service was not detected within 60 seconds.' + #13 + #10 + #13 + #10 +
     'Please try:' + #13 + #10 +
     '  1. Run the installer as Administrator (right-click -> Run as administrator)' + #13 + #10 +
-    '  2. If it still fails, check Device Manager for any Wintun adapter errors' + #13 + #10 +
-    '  3. Reboot and run the installer again.');
+    '  2. Check Windows Services for SLAN Client V2 Service' + #13 + #10 +
+    '  3. Check Device Manager for SLAN LAN Adapter errors.');
 end;
 
 procedure ClearClientV2AppData();
