@@ -1295,7 +1295,14 @@ impl HttpEndpoint {
         stream.flush().context("flush control request")?;
 
         let response = read_control_response(&mut stream).context("read control response")?;
-        decode_http_response(&response)
+        decode_http_response(&response).map_err(|error| {
+            anyhow::anyhow!(
+                "control plane {}:{} returned an invalid HTTP response ({} bytes): {error:#}",
+                self.host,
+                self.port,
+                response.len()
+            )
+        })
     }
 }
 
@@ -1303,6 +1310,9 @@ fn transient_control_request_error(error: &anyhow::Error) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
     message.contains("connect control plane")
         || message.contains("read control response")
+        || message.contains("invalid http response")
+        || message.contains("invalid control response")
+        || message.contains("empty control response")
         || message.contains("try again")
         || message.contains("would block")
         || message.contains("timed out")
@@ -1393,10 +1403,13 @@ fn looks_like_complete_http_response(response: &[u8]) -> bool {
 }
 
 fn decode_http_response(response: &[u8]) -> Result<Vec<u8>> {
+    if response.is_empty() {
+        bail!("empty control response");
+    }
     let separator = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
-        .ok_or_else(|| anyhow::anyhow!("invalid control response"))?;
+        .ok_or_else(|| anyhow::anyhow!("invalid control response headers"))?;
     let headers = String::from_utf8_lossy(&response[..separator]);
     let status_line = headers.lines().next().unwrap_or_default();
     let status = status_line
@@ -1718,8 +1731,9 @@ mod tests {
 
     use super::{
         activation_plan_from_device_network_configs, activation_plan_from_network_config,
-        decode_control_json, device_credential_exchange_body, md5_hex, normalize_control_base_url,
-        punch_auth_headers, punch_mqtt_signature, resolve_control_base_url, ControlPlaneClient,
+        decode_control_json, decode_http_response, device_credential_exchange_body, md5_hex,
+        normalize_control_base_url, punch_auth_headers, punch_mqtt_signature,
+        resolve_control_base_url, transient_control_request_error, ControlPlaneClient,
         MqttCredential, PunchConnectSession, PunchConnectSessionRequest, RelayTicketRequest,
         DEFAULT_CONTROL_BASE_URL,
     };
@@ -2015,6 +2029,21 @@ mod tests {
         )
         .expect("decode first json value");
         assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
+    }
+
+    #[test]
+    fn empty_control_response_is_retryable() {
+        let error = decode_http_response(&[]).expect_err("empty response must fail");
+        assert!(transient_control_request_error(&error));
+        assert!(format!("{error:#}").contains("empty control response"));
+    }
+
+    #[test]
+    fn malformed_control_response_is_retryable() {
+        let error = decode_http_response(b"upstream closed")
+            .expect_err("response without HTTP headers must fail");
+        assert!(transient_control_request_error(&error));
+        assert!(format!("{error:#}").contains("invalid control response headers"));
     }
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> String {
