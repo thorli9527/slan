@@ -3,10 +3,32 @@ use std::net::Ipv4Addr;
 use crate::platform::{PlatformAclPeer, PlatformAclPolicy, PlatformAclRule};
 
 pub fn relay_peer_index_for_packet(peer_virtual_ips: &[&[String]], packet: &[u8]) -> Option<usize> {
-    let destination = ipv4_destination(packet)?;
+    let destination = ipv4_destination_addr(packet)?;
     peer_virtual_ips
         .iter()
-        .position(|ips| ips.iter().any(|ip| normalize_virtual_ip(ip) == destination))
+        .position(|ips| ips.iter().any(|ip| virtual_ip_matches(ip, destination)))
+}
+
+pub fn ipv4_destination_addr(packet: &[u8]) -> Option<Ipv4Addr> {
+    ipv4_addr_at(packet, 16)
+}
+
+pub fn ipv4_source_addr(packet: &[u8]) -> Option<Ipv4Addr> {
+    ipv4_addr_at(packet, 12)
+}
+
+pub fn virtual_ip_matches(value: &str, expected: Ipv4Addr) -> bool {
+    parse_virtual_ipv4(value) == Some(expected)
+}
+
+pub fn parse_virtual_ipv4(value: &str) -> Option<Ipv4Addr> {
+    value
+        .trim()
+        .split_once('/')
+        .map(|(ip, _)| ip.trim())
+        .unwrap_or_else(|| value.trim())
+        .parse()
+        .ok()
 }
 
 pub fn acl_allows_egress_packet(
@@ -31,7 +53,7 @@ fn acl_allows_packet(
     peer: Option<&PlatformAclPeer>,
     direction: &str,
 ) -> bool {
-    if ipv4_source(packet).is_none() || ipv4_destination(packet).is_none() {
+    if ipv4_source_addr(packet).is_none() || ipv4_destination_addr(packet).is_none() {
         return true;
     }
     let mut has_enabled_rule = false;
@@ -60,27 +82,29 @@ fn acl_allows_packet(
 }
 
 fn acl_rule_direction_matches(rule_direction: &str, packet_direction: &str) -> bool {
-    let value = rule_direction.trim().to_ascii_lowercase();
+    let value = rule_direction.trim();
     value.is_empty()
-        || value == "all"
-        || value == "any"
-        || value == packet_direction
-        || (packet_direction == "egress" && matches!(value.as_str(), "out" | "outbound"))
-        || (packet_direction == "ingress" && matches!(value.as_str(), "in" | "inbound"))
+        || value.eq_ignore_ascii_case("all")
+        || value.eq_ignore_ascii_case("any")
+        || value.eq_ignore_ascii_case(packet_direction)
+        || (packet_direction == "egress"
+            && (value.eq_ignore_ascii_case("out") || value.eq_ignore_ascii_case("outbound")))
+        || (packet_direction == "ingress"
+            && (value.eq_ignore_ascii_case("in") || value.eq_ignore_ascii_case("inbound")))
 }
 
 fn acl_rule_protocol_matches(rule_protocol: &str, packet: &[u8]) -> bool {
-    let value = rule_protocol.trim().to_ascii_lowercase();
-    if value.is_empty() || value == "all" || value == "any" {
+    let value = rule_protocol.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("all") || value.eq_ignore_ascii_case("any") {
         return true;
     }
     let Some(protocol) = ipv4_protocol(packet) else {
         return true;
     };
-    matches!(
-        (value.as_str(), protocol),
-        ("icmp", 1) | ("tcp", 6) | ("udp", 17)
-    ) || value == protocol.to_string()
+    (protocol == 1 && value.eq_ignore_ascii_case("icmp"))
+        || (protocol == 6 && value.eq_ignore_ascii_case("tcp"))
+        || (protocol == 17 && value.eq_ignore_ascii_case("udp"))
+        || value.parse::<u8>() == Ok(protocol)
 }
 
 fn acl_rule_port_matches(rule: &PlatformAclRule, packet: &[u8]) -> bool {
@@ -110,39 +134,45 @@ fn acl_rule_peer_matches(
     packet_direction: &str,
     peer: Option<&PlatformAclPeer>,
 ) -> bool {
-    let peer_type = rule.peer_type.trim().to_ascii_lowercase();
+    let peer_type = rule.peer_type.trim();
     let peer_value = rule.peer_value.trim();
-    if matches!(peer_type.as_str(), "" | "all" | "any") {
+    if peer_type.is_empty()
+        || peer_type.eq_ignore_ascii_case("all")
+        || peer_type.eq_ignore_ascii_case("any")
+    {
         return matches!(peer_value, "")
             || peer_value.eq_ignore_ascii_case("all")
             || peer_value.eq_ignore_ascii_case("any")
             || peer_value == "*";
     }
-    if matches!(peer_type.as_str(), "network" | "workspace") {
+    if peer_type.eq_ignore_ascii_case("network") || peer_type.eq_ignore_ascii_case("workspace") {
         return matches!(peer_value, "")
             || peer_value.eq_ignore_ascii_case("self")
             || peer_value.eq_ignore_ascii_case("all")
             || peer_value == network_id;
     }
-    if matches!(peer_type.as_str(), "ip" | "cidr" | "subnet") {
+    if peer_type.eq_ignore_ascii_case("ip")
+        || peer_type.eq_ignore_ascii_case("cidr")
+        || peer_type.eq_ignore_ascii_case("subnet")
+    {
         return acl_subject_ips(rule.direction.as_str(), packet_direction, packet)
-            .iter()
+            .into_iter()
+            .flatten()
             .any(|ip| acl_ip_matches(peer_value, ip));
     }
-    if peer_type == "device" {
+    if peer_type.eq_ignore_ascii_case("device") {
         let subject_ips = acl_subject_ips(rule.direction.as_str(), packet_direction, packet);
         if let Some(peer) = peer {
-            let expected_node_id = format!("node-{peer_value}");
             let peer_is_subject = peer.peer_virtual_ips.iter().any(|ip| {
                 subject_ips
                     .iter()
-                    .any(|subject_ip| normalize_virtual_ip(ip) == *subject_ip)
+                    .flatten()
+                    .any(|subject_ip| virtual_ip_matches(ip, *subject_ip))
             });
             if peer_is_subject
-                && peer
-                    .peer_node_id
-                    .as_deref()
-                    .is_some_and(|node_id| node_id == peer_value || node_id == expected_node_id)
+                && peer.peer_node_id.as_deref().is_some_and(|node_id| {
+                    node_id == peer_value || node_id.strip_prefix("node-") == Some(peer_value)
+                })
             {
                 return true;
             }
@@ -155,61 +185,73 @@ fn acl_rule_peer_matches(
                 return true;
             }
         }
-        return subject_ips.iter().any(|subject_ip| {
+        return subject_ips.into_iter().flatten().any(|subject_ip| {
             rule.resolved_peer_virtual_ips
                 .iter()
-                .any(|ip| normalize_virtual_ip(ip) == *subject_ip)
+                .any(|ip| virtual_ip_matches(ip, subject_ip))
         });
     }
-    if matches!(peer_type.as_str(), "domain" | "device_group") {
+    if peer_type.eq_ignore_ascii_case("domain") || peer_type.eq_ignore_ascii_case("device_group") {
         return acl_subject_ips(rule.direction.as_str(), packet_direction, packet)
-            .iter()
+            .into_iter()
+            .flatten()
             .any(|subject_ip| {
                 rule.resolved_peer_virtual_ips
                     .iter()
-                    .any(|ip| normalize_virtual_ip(ip) == *subject_ip)
+                    .any(|ip| virtual_ip_matches(ip, subject_ip))
             });
     }
     false
 }
 
-fn acl_subject_ips(rule_direction: &str, packet_direction: &str, packet: &[u8]) -> Vec<String> {
-    let rule_direction = rule_direction.trim().to_ascii_lowercase();
-    let source = ipv4_source(packet);
-    let destination = ipv4_destination(packet);
+fn acl_subject_ips(
+    rule_direction: &str,
+    packet_direction: &str,
+    packet: &[u8],
+) -> [Option<Ipv4Addr>; 2] {
+    let rule_direction = rule_direction.trim();
+    let source = ipv4_source_addr(packet);
+    let destination = ipv4_destination_addr(packet);
     if packet_direction.eq_ignore_ascii_case("egress")
-        && matches!(rule_direction.as_str(), "egress" | "out" | "outbound")
+        && (rule_direction.eq_ignore_ascii_case("egress")
+            || rule_direction.eq_ignore_ascii_case("out")
+            || rule_direction.eq_ignore_ascii_case("outbound"))
     {
-        return destination.into_iter().collect();
+        return [destination, None];
     }
     if packet_direction.eq_ignore_ascii_case("ingress")
-        && matches!(rule_direction.as_str(), "ingress" | "in" | "inbound")
+        && (rule_direction.eq_ignore_ascii_case("ingress")
+            || rule_direction.eq_ignore_ascii_case("in")
+            || rule_direction.eq_ignore_ascii_case("inbound"))
     {
-        return destination.into_iter().collect();
+        return [destination, None];
     }
-    if matches!(rule_direction.as_str(), "" | "all" | "any") {
-        return source.into_iter().chain(destination).collect();
+    if rule_direction.is_empty()
+        || rule_direction.eq_ignore_ascii_case("all")
+        || rule_direction.eq_ignore_ascii_case("any")
+    {
+        return [source, destination];
     }
-    destination.into_iter().collect()
+    [destination, None]
 }
 
 pub fn ipv4_destination(packet: &[u8]) -> Option<String> {
-    if packet.len() < 20 || packet[0] >> 4 != 4 {
-        return None;
-    }
-    Some(format!(
-        "{}.{}.{}.{}",
-        packet[16], packet[17], packet[18], packet[19]
-    ))
+    ipv4_destination_addr(packet).map(|address| address.to_string())
 }
 
 pub fn ipv4_source(packet: &[u8]) -> Option<String> {
+    ipv4_source_addr(packet).map(|address| address.to_string())
+}
+
+fn ipv4_addr_at(packet: &[u8], offset: usize) -> Option<Ipv4Addr> {
     if packet.len() < 20 || packet[0] >> 4 != 4 {
         return None;
     }
-    Some(format!(
-        "{}.{}.{}.{}",
-        packet[12], packet[13], packet[14], packet[15]
+    Some(Ipv4Addr::new(
+        packet[offset],
+        packet[offset + 1],
+        packet[offset + 2],
+        packet[offset + 3],
     ))
 }
 
@@ -247,7 +289,7 @@ fn ipv4_destination_port(packet: &[u8]) -> Option<u16> {
     }
 }
 
-fn acl_ip_matches(pattern: &str, ip: &str) -> bool {
+fn acl_ip_matches(pattern: &str, ip: Ipv4Addr) -> bool {
     let value = pattern.trim();
     if value.is_empty() || value.eq_ignore_ascii_case("all") || value == "*" {
         return true;
@@ -255,10 +297,10 @@ fn acl_ip_matches(pattern: &str, ip: &str) -> bool {
     if let Some((network, prefix)) = value.split_once('/') {
         return ipv4_cidr_contains(network.trim(), prefix.trim(), ip);
     }
-    normalize_virtual_ip(value) == normalize_virtual_ip(ip)
+    virtual_ip_matches(value, ip)
 }
 
-fn ipv4_cidr_contains(network: &str, prefix: &str, ip: &str) -> bool {
+fn ipv4_cidr_contains(network: &str, prefix: &str, ip: Ipv4Addr) -> bool {
     let Ok(prefix) = prefix.parse::<u32>() else {
         return false;
     };
@@ -266,9 +308,6 @@ fn ipv4_cidr_contains(network: &str, prefix: &str, ip: &str) -> bool {
         return false;
     }
     let Ok(network) = network.parse::<Ipv4Addr>() else {
-        return false;
-    };
-    let Ok(ip) = normalize_virtual_ip(ip).parse::<Ipv4Addr>() else {
         return false;
     };
     let mask = if prefix == 0 {
@@ -295,7 +334,7 @@ pub fn icmp_echo_reply_for_request(packet: &[u8], local_virtual_ip: &str) -> Opt
     if flags_fragment & 0x1fff != 0 {
         return None;
     }
-    if ipv4_destination(packet)? != normalize_virtual_ip(local_virtual_ip) {
+    if !virtual_ip_matches(local_virtual_ip, ipv4_destination_addr(packet)?) {
         return None;
     }
     let icmp_offset = ihl;

@@ -9,13 +9,12 @@ use std::{
 
 use anyhow::{Context, Result};
 use client_core::{
-    compare_path_candidates, ipv4_source, live_path_quality_is_better, live_path_quality_score,
-    normalize_virtual_ip,
+    compare_path_candidates, ipv4_destination_addr, ipv4_source_addr, live_path_quality_is_better,
+    live_path_quality_score, parse_virtual_ipv4,
     path::{PathProbeController, PathProbeRole},
     path_candidate_score,
     relay_frame::decode_slan_relay_data_frame_full,
-    relay_peer_index_for_packet, NodeConfig, PathKind, PathPolicy, PathQualityTracker, PathState,
-    PeerPathConfig,
+    NodeConfig, PathKind, PathPolicy, PathQualityTracker, PathState, PeerPathConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -26,10 +25,13 @@ pub const DEFAULT_DIRECT_UDP_PORT: u16 = 41642;
 const TAILSCALE_DEFAULT_UDP_PORT: u16 = 41641;
 
 fn direct_udp_verbose_trace_enabled() -> bool {
-    matches!(
-        env::var("SLAN_DIRECT_UDP_VERBOSE_TRACE").ok().as_deref(),
-        Some("1" | "true" | "TRUE" | "yes" | "YES")
-    )
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        matches!(
+            env::var("SLAN_DIRECT_UDP_VERBOSE_TRACE").ok().as_deref(),
+            Some("1" | "true" | "TRUE" | "yes" | "YES")
+        )
+    })
 }
 
 macro_rules! direct_udp_trace {
@@ -73,6 +75,7 @@ pub struct DirectUdpPeer {
     pub peer_node_id: String,
     /// 对端虚拟 IP 列表，用于从 TUN 包匹配 peer。
     pub peer_virtual_ips: Vec<String>,
+    peer_virtual_ipv4s: Vec<std::net::Ipv4Addr>,
     /// 当前使用的直连路径类型：lan_udp/ipv6_udp/direct_udp。
     pub path_kind: PathKind,
     /// 当前记录的对端 UDP 地址。
@@ -178,6 +181,11 @@ impl DirectUdpTransport {
         let mut peers = Vec::new();
         for path in configured_paths {
             let probe_targets = udp_probe_targets_for_peer(path);
+            let peer_virtual_ipv4s = path
+                .peer_virtual_ips
+                .iter()
+                .filter_map(|value| parse_virtual_ipv4(value))
+                .collect();
             let fallback_quality_score = path
                 .candidates
                 .iter()
@@ -191,6 +199,7 @@ impl DirectUdpTransport {
                 peers.push(DirectUdpPeer {
                     peer_node_id: path.peer_node_id.clone(),
                     peer_virtual_ips: path.peer_virtual_ips.clone(),
+                    peer_virtual_ipv4s,
                     path_kind: PathKind::DirectUdp,
                     address: String::new(),
                     socket_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
@@ -207,6 +216,7 @@ impl DirectUdpTransport {
             peers.push(DirectUdpPeer {
                 peer_node_id: path.peer_node_id.clone(),
                 peer_virtual_ips: path.peer_virtual_ips.clone(),
+                peer_virtual_ipv4s,
                 path_kind: primary.path_kind,
                 address: primary.address.clone(),
                 socket_addr: primary.socket_addr,
@@ -265,15 +275,11 @@ impl DirectUdpTransport {
 
     /// 根据 TUN 包目标虚拟 IP 推断应该发送给哪个 peer。
     pub fn peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
-        relay_peer_index_for_packet(
-            &self
-                .peers
-                .iter()
-                .map(|peer| peer.peer_virtual_ips.as_slice())
-                .collect::<Vec<_>>(),
-            payload,
-        )
-        .or_else(|| (self.peers.len() == 1).then_some(0))
+        let destination = ipv4_destination_addr(payload)?;
+        self.peers
+            .iter()
+            .position(|peer| peer.peer_virtual_ipv4s.contains(&destination))
+            .or_else(|| (self.peers.len() == 1).then_some(0))
     }
 
     /// 只在 peer 已经探测 ready 时返回发送目标。
@@ -452,6 +458,9 @@ impl DirectUdpTransport {
 
     /// Consume a punch response and retain the server-observed reflexive endpoint.
     pub fn handle_punch_response(&self, frame: &[u8]) -> bool {
+        if frame.first() != Some(&b'{') {
+            return false;
+        }
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(frame) else {
             return false;
         };
@@ -679,12 +688,10 @@ impl DirectUdpTransport {
                 .position(|peer| peer.peer_node_id == control_packet.peer_node_id());
         }
         let decoded = decode_slan_relay_data_frame_full(frame)?;
-        let source = ipv4_source(decoded.payload)?;
-        self.peers.iter().position(|peer| {
-            peer.peer_virtual_ips
-                .iter()
-                .any(|ip| normalize_virtual_ip(ip) == source)
-        })
+        let source = ipv4_source_addr(decoded.payload)?;
+        self.peers
+            .iter()
+            .position(|peer| peer.peer_virtual_ipv4s.contains(&source))
     }
 }
 
@@ -748,6 +755,9 @@ pub fn direct_udp_control_payload(
 }
 
 pub fn direct_udp_control_packet(frame: &[u8]) -> Option<DirectUdpControlPacket> {
+    if frame.first() != Some(&b'{') {
+        return None;
+    }
     let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
     if value.get("kind").and_then(serde_json::Value::as_str) != Some("direct_udp") {
         return None;
@@ -1077,6 +1087,7 @@ mod tests {
             peers: vec![DirectUdpPeer {
                 peer_node_id: "node-a".to_string(),
                 peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
+                peer_virtual_ipv4s: vec!["10.0.0.9".parse().unwrap()],
                 path_kind: PathKind::DirectUdp,
                 address: known_remote.local_addr().unwrap().to_string(),
                 socket_addr: known_remote.local_addr().unwrap(),

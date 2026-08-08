@@ -17,8 +17,9 @@ pub use dns::resolver_response_for_query;
 pub use error::{ClientCoreError, ClientCoreResult};
 pub use packet::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-    ipv4_destination, ipv4_protocol, ipv4_source, ipv4_transport_checksum_valid,
-    normalize_ipv4_transport_checksums, normalize_virtual_ip, relay_peer_index_for_packet,
+    ipv4_destination, ipv4_destination_addr, ipv4_protocol, ipv4_source, ipv4_source_addr,
+    ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums, normalize_virtual_ip,
+    parse_virtual_ipv4, relay_peer_index_for_packet, virtual_ip_matches,
 };
 pub use path::{
     compare_path_candidates, live_path_quality_is_better, live_path_quality_score,

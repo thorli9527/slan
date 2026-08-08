@@ -8,7 +8,7 @@ use std::{
     io::{BufRead, BufReader, ErrorKind, Read, Write},
     mem,
     net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
-    os::fd::{FromRawFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, RawFd},
     path::PathBuf,
     process::Command,
     sync::{
@@ -22,7 +22,8 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-    ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
+    ipv4_destination_addr, ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
+    parse_virtual_ipv4 as parse_config_virtual_ipv4,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
@@ -57,10 +58,13 @@ const UTUN_REOPEN_ATTEMPTS: usize = 6;
 const UTUN_REOPEN_BACKOFF: Duration = Duration::from_millis(50);
 
 fn macos_verbose_trace_enabled() -> bool {
-    matches!(
-        env::var("SLAN_MACOS_VERBOSE_TRACE").ok().as_deref(),
-        Some("1" | "true" | "TRUE" | "yes" | "YES")
-    )
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        matches!(
+            env::var("SLAN_MACOS_VERBOSE_TRACE").ok().as_deref(),
+            Some("1" | "true" | "TRUE" | "yes" | "YES")
+        )
+    })
 }
 
 macro_rules! macos_trace {
@@ -131,6 +135,8 @@ struct RelayPeer {
     peer_node_id: String,
     local_node_id: String,
     peer_virtual_ips: Vec<String>,
+    peer_virtual_ipv4s: Vec<Ipv4Addr>,
+    acl_peer: PlatformAclPeer,
     socket: UdpSocket,
 }
 
@@ -142,6 +148,8 @@ struct DerpPeer {
     local_node_id: String,
     server_session_id: String,
     peer_virtual_ips: Vec<String>,
+    peer_virtual_ipv4s: Vec<Ipv4Addr>,
+    acl_peer: PlatformAclPeer,
     stream: TcpStream,
     reader: TcpStream,
     read_buffer: Vec<u8>,
@@ -1404,6 +1412,15 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
             peer_node_id: session.peer_node_id.clone(),
             local_node_id: config.local_node_id.clone(),
             peer_virtual_ips: session.peer_virtual_ips.clone(),
+            peer_virtual_ipv4s: session
+                .peer_virtual_ips
+                .iter()
+                .filter_map(|value| parse_config_virtual_ipv4(value))
+                .collect(),
+            acl_peer: PlatformAclPeer {
+                peer_node_id: Some(session.peer_node_id.clone()),
+                peer_virtual_ips: session.peer_virtual_ips.clone(),
+            },
             socket,
         });
     }
@@ -1492,6 +1509,15 @@ fn attach_derp_relay_session(local_node_id: &str, session: &RelayPeerSession) ->
         local_node_id: local_node_id.to_string(),
         server_session_id,
         peer_virtual_ips: session.peer_virtual_ips.clone(),
+        peer_virtual_ipv4s: session
+            .peer_virtual_ips
+            .iter()
+            .filter_map(|value| parse_config_virtual_ipv4(value))
+            .collect(),
+        acl_peer: PlatformAclPeer {
+            peer_node_id: Some(session.peer_node_id.clone()),
+            peer_virtual_ips: session.peer_virtual_ips.clone(),
+        },
         stream: writer,
         reader,
         read_buffer: Vec::new(),
@@ -1858,6 +1884,7 @@ fn run_udp_data_plane(
         .checked_sub(direct_udp_probe_interval)
         .unwrap_or_else(Instant::now);
     let mut relay_send_blocked_until: HashMap<String, Instant> = HashMap::new();
+    let mut poll_fds = data_plane_poll_fds(&file, &peers, &derp_peers, direct_udp.as_ref());
     persist_relay_stats(stats);
     while !stop.load(Ordering::SeqCst) {
         let mut did_work = false;
@@ -1925,7 +1952,7 @@ fn run_udp_data_plane(
                             if !acl_allows_egress_packet(
                                 packet,
                                 &acl_policies,
-                                Some(&acl_peer_for_relay_peer(peer)),
+                                Some(acl_peer_for_relay_peer(peer)),
                             ) {
                                 eprintln!(
                                     "SLAN_MACOS_TUN_DROP reason=acl_egress_denied peer={} dst={:?}",
@@ -2118,7 +2145,7 @@ fn run_udp_data_plane(
                             derp_peer_for_packet_mut(&mut derp_peers, packet)
                         {
                             stats.last_tun_peer_node_id = Some(derp_peer.peer_node_id.clone());
-                            eprintln!(
+                            macos_trace!(
                                 "SLAN_MACOS_TUN_PACKET_DERP peer={} dst={:?} proto={:?} size={}",
                                 derp_peer.peer_node_id,
                                 ipv4_destination(packet),
@@ -2128,7 +2155,7 @@ fn run_udp_data_plane(
                             if !acl_allows_egress_packet(
                                 packet,
                                 &acl_policies,
-                                Some(&acl_peer_for_derp_peer(derp_peer)),
+                                Some(acl_peer_for_derp_peer(derp_peer)),
                             ) {
                                 eprintln!(
                                     "SLAN_MACOS_TUN_DROP reason=acl_egress_denied_derp peer={} dst={:?}",
@@ -2150,7 +2177,7 @@ fn run_udp_data_plane(
                                     }
                                     match send_derp_forward(derp_peer, &frame) {
                                         Ok(_) => {
-                                            eprintln!(
+                                            macos_trace!(
                                                 "SLAN_MACOS_DERP_SEND_OK peer={} dst={:?} size={} attempt={}",
                                                 derp_peer.peer_node_id,
                                                 ipv4_destination(&packet),
@@ -2184,7 +2211,7 @@ fn run_udp_data_plane(
                             }
                         } else if let Some(destination) = ipv4_destination(packet) {
                             if should_ignore_unroutable_destination(&destination) {
-                                eprintln!(
+                                macos_trace!(
                                     "SLAN_MACOS_TUN_DROP reason=ignored_unroutable dst={}",
                                     destination
                                 );
@@ -2283,7 +2310,7 @@ fn run_udp_data_plane(
                         if !acl_allows_ingress_packet(
                             packet,
                             &acl_policies,
-                            Some(&acl_peer_for_relay_peer(peer)),
+                            Some(acl_peer_for_relay_peer(peer)),
                         ) {
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
@@ -2312,7 +2339,7 @@ fn run_udp_data_plane(
                         if !acl_allows_ingress_packet(
                             &packet,
                             &acl_policies,
-                            Some(&acl_peer_for_relay_peer(peer)),
+                            Some(acl_peer_for_relay_peer(peer)),
                         ) {
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
@@ -2400,7 +2427,7 @@ fn run_udp_data_plane(
                         if !acl_allows_ingress_packet(
                             packet,
                             &acl_policies,
-                            Some(&acl_peer_for_derp_peer(peer)),
+                            Some(acl_peer_for_derp_peer(peer)),
                         ) {
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
@@ -2409,7 +2436,7 @@ fn run_udp_data_plane(
                         if !acl_allows_ingress_packet(
                             &packet,
                             &acl_policies,
-                            Some(&acl_peer_for_derp_peer(peer)),
+                            Some(acl_peer_for_derp_peer(peer)),
                         ) {
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
@@ -2579,7 +2606,7 @@ fn run_udp_data_plane(
             }
         }
         if !did_work {
-            thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            wait_for_data_plane_activity(&mut poll_fds);
         }
         if last_stats_flush.elapsed() >= RELAY_STATS_FLUSH_INTERVAL {
             persist_relay_stats_async(stats);
@@ -3147,26 +3174,18 @@ fn write_packet_with_retry(file: &mut File, packet: &[u8]) -> std::io::Result<()
 }
 
 fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'a RelayPeer> {
-    let destination = ipv4_destination(packet)?;
-    peers.iter().find(|peer| {
-        peer.peer_virtual_ips
-            .iter()
-            .any(|ip| normalize_virtual_ip(ip) == destination)
-    })
+    let destination = ipv4_destination_addr(packet)?;
+    peers
+        .iter()
+        .find(|peer| peer.peer_virtual_ipv4s.contains(&destination))
 }
 
-fn acl_peer_for_relay_peer(peer: &RelayPeer) -> PlatformAclPeer {
-    PlatformAclPeer {
-        peer_node_id: Some(peer.peer_node_id.clone()),
-        peer_virtual_ips: peer.peer_virtual_ips.clone(),
-    }
+fn acl_peer_for_relay_peer(peer: &RelayPeer) -> &PlatformAclPeer {
+    &peer.acl_peer
 }
 
-fn acl_peer_for_derp_peer(peer: &DerpPeer) -> PlatformAclPeer {
-    PlatformAclPeer {
-        peer_node_id: Some(peer.peer_node_id.clone()),
-        peer_virtual_ips: peer.peer_virtual_ips.clone(),
-    }
+fn acl_peer_for_derp_peer(peer: &DerpPeer) -> &PlatformAclPeer {
+    &peer.acl_peer
 }
 
 fn run_local_data_plane(
@@ -3188,6 +3207,7 @@ fn run_local_data_plane(
     let mut last_direct_udp_probe = Instant::now()
         .checked_sub(direct_udp_probe_interval)
         .unwrap_or_else(Instant::now);
+    let mut poll_fds = data_plane_poll_fds(&file, &[], &[], direct_udp.as_ref());
     while !stop.load(Ordering::SeqCst) {
         let mut did_work = false;
         if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
@@ -3294,8 +3314,50 @@ fn run_local_data_plane(
             }
         }
         if !did_work {
-            thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            wait_for_data_plane_activity(&mut poll_fds);
         }
+    }
+}
+
+fn data_plane_poll_fds(
+    file: &File,
+    relay_peers: &[RelayPeer],
+    derp_peers: &[DerpPeer],
+    direct_udp: Option<&DirectUdpTransport>,
+) -> Vec<libc::pollfd> {
+    let mut fds = Vec::with_capacity(
+        1 + relay_peers.len() + derp_peers.len() + usize::from(direct_udp.is_some()),
+    );
+    fds.push(read_poll_fd(file.as_raw_fd()));
+    fds.extend(
+        relay_peers
+            .iter()
+            .map(|peer| read_poll_fd(peer.socket.as_raw_fd())),
+    );
+    fds.extend(
+        derp_peers
+            .iter()
+            .map(|peer| read_poll_fd(peer.reader.as_raw_fd())),
+    );
+    if let Some(direct_udp) = direct_udp {
+        fds.push(read_poll_fd(direct_udp.socket.as_raw_fd()));
+    }
+    fds
+}
+
+fn read_poll_fd(fd: RawFd) -> libc::pollfd {
+    libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    }
+}
+
+fn wait_for_data_plane_activity(fds: &mut [libc::pollfd]) {
+    let timeout_ms = i32::try_from(DATA_PLANE_IDLE_SLEEP.as_millis()).unwrap_or(1);
+    // The descriptors remain owned by the data-plane runtime for this thread's lifetime.
+    unsafe {
+        libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms);
     }
 }
 
@@ -3303,17 +3365,15 @@ fn derp_peer_for_packet_mut<'a>(
     peers: &'a mut [DerpPeer],
     packet: &[u8],
 ) -> Option<&'a mut DerpPeer> {
-    let destination = ipv4_destination(packet)?;
-    peers.iter_mut().find(|peer| {
-        peer.peer_virtual_ips
-            .iter()
-            .any(|ip| normalize_virtual_ip(ip) == destination)
-    })
+    let destination = ipv4_destination_addr(packet)?;
+    peers
+        .iter_mut()
+        .find(|peer| peer.peer_virtual_ipv4s.contains(&destination))
 }
 
 fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> bool {
-    ipv4_destination(packet)
-        .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
+    ipv4_destination_addr(packet)
+        .map(|destination| parse_config_virtual_ipv4(local_virtual_ip) == Some(destination))
         .unwrap_or(false)
 }
 
@@ -3376,15 +3436,6 @@ fn hedge_udp_packet_to_relay(peer: &RelayPeer, frame: &[u8], stats: &mut RelayDa
         }
         Err(error) => record_relay_send_failure(stats, peer, error.to_string()),
     }
-}
-
-fn normalize_virtual_ip(value: &str) -> String {
-    value
-        .trim()
-        .split_once('/')
-        .map(|(ip, _)| ip)
-        .unwrap_or_else(|| value.trim())
-        .to_string()
 }
 
 fn detach_udp_relay_sessions(peers: &[RelayPeer], local_node_id: &str) {

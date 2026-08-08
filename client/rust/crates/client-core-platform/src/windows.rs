@@ -20,16 +20,16 @@ use anyhow::{bail, Context, Result};
 use client_core::path::{PathProbeController, PathProbeRole};
 use client_core::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-    ipv4_destination, ipv4_source, ipv4_transport_checksum_valid, live_path_quality_is_better,
-    live_path_quality_score, mark_peer_path_probe_success, normalize_ipv4_transport_checksums,
-    normalize_virtual_ip, path_candidate_score,
+    ipv4_destination, ipv4_destination_addr, ipv4_source_addr, ipv4_transport_checksum_valid,
+    live_path_quality_is_better, live_path_quality_score, mark_peer_path_probe_success,
+    normalize_ipv4_transport_checksums, path_candidate_score,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
     relay_peer_index_for_packet, resolver_response_for_query, selected_runtime_paths,
-    update_peer_active_path, NetworkRuntimeState, NodeConfig, PathKind, PathPolicy,
-    PathQualitySample, PathQualityTracker, PathState, PathTracker, PeerPathRuntime,
+    update_peer_active_path, virtual_ip_matches, NetworkRuntimeState, NodeConfig, PathKind,
+    PathPolicy, PathQualitySample, PathQualityTracker, PathState, PathTracker, PeerPathRuntime,
     PlatformAclPeer, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
     PlatformResolverRecord, RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
@@ -52,6 +52,24 @@ const PATH_SEND_FAILURES_BEFORE_DOWNGRADE: u32 = 3;
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
+
+fn windows_verbose_trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        matches!(
+            std::env::var("SLAN_WINDOWS_VERBOSE_TRACE").ok().as_deref(),
+            Some("1" | "true" | "TRUE" | "yes" | "YES")
+        )
+    })
+}
+
+macro_rules! windows_trace {
+    ($($arg:tt)*) => {
+        if windows_verbose_trace_enabled() {
+            eprintln!($($arg)*);
+        }
+    };
+}
 
 type WintunAdapterHandle = *mut c_void;
 type WintunCreateAdapterFunc =
@@ -286,7 +304,7 @@ impl PlatformNetwork for WindowsPlatformNetwork {
 
     fn configure_relay(&self, config: Option<&RelayDataPlaneConfig>) -> Result<()> {
         // Fast path: skip if relay config hasn't changed.
-        let runtime = windows_network_runtime()
+        let mut runtime = windows_network_runtime()
             .lock()
             .expect("windows network runtime lock poisoned");
         if match (runtime.relay_config.as_ref(), config) {
@@ -294,6 +312,7 @@ impl PlatformNetwork for WindowsPlatformNetwork {
             (None, None) => true,
             _ => false,
         } {
+            runtime.relay_config = config.cloned();
             debug_log("configure_relay: fast path — relay config unchanged, skipping");
             return Ok(());
         }
@@ -843,15 +862,15 @@ impl DirectUdpTransport {
     }
 
     fn peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
-        relay_peer_index_for_packet(
-            &self
-                .peers
-                .iter()
-                .map(|peer| peer.peer_virtual_ips.as_slice())
-                .collect::<Vec<_>>(),
-            payload,
-        )
-        .or_else(|| (self.peers.len() == 1).then_some(0))
+        let destination = ipv4_destination_addr(payload)?;
+        self.peers
+            .iter()
+            .position(|peer| {
+                peer.peer_virtual_ips
+                    .iter()
+                    .any(|ip| virtual_ip_matches(ip, destination))
+            })
+            .or_else(|| (self.peers.len() == 1).then_some(0))
     }
 
     fn peer_count(&self) -> usize {
@@ -923,11 +942,11 @@ impl DirectUdpTransport {
                 .position(|peer| peer.peer_node_id == control_packet.peer_node_id());
         }
         let payload = decode_slan_relay_data_frame(frame)?;
-        let source = ipv4_source(payload)?;
+        let source = ipv4_source_addr(payload)?;
         self.peers.iter().position(|peer| {
             peer.peer_virtual_ips
                 .iter()
-                .any(|ip| normalize_virtual_ip(ip) == source)
+                .any(|ip| virtual_ip_matches(ip, source))
         })
     }
 
@@ -989,7 +1008,7 @@ impl DirectUdpTransport {
                             self.quality_leads
                                 .remove(&(peer.peer_node_id.clone(), target.socket_addr));
                         }
-                        eprintln!(
+                        windows_trace!(
                             "SLAN_DIRECT_UDP_PROBE_SENT peer={} path={} target={} bytes={} role={role:?} health={:?}",
                             peer.peer_node_id,
                             target.path_kind.as_str(),
@@ -1123,7 +1142,7 @@ impl DirectUdpTransport {
                         || incoming_successful_samples == self.path_policy.upgrade_successes.max(1)
                 })
             {
-                eprintln!(
+                windows_trace!(
                     "SLAN_DIRECT_UDP_PATH_SWITCH_HELD peer={} currentPath={} currentEndpoint={} currentScore={} candidatePath={} candidateEndpoint={} candidateScore={} leadCount={} requiredLeads={} hysteresis={}",
                     peer_node_id,
                     current_path_kind.as_str(),
@@ -1180,6 +1199,9 @@ impl DirectUdpTransport {
     }
 
     fn handle_punch_response(&self, frame: &[u8]) -> bool {
+        if frame.first() != Some(&b'{') {
+            return false;
+        }
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(frame) else {
             return false;
         };
@@ -1360,15 +1382,15 @@ impl RelayUdpTransport {
     }
 
     fn peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
-        relay_peer_index_for_packet(
-            &self
-                .peers
-                .iter()
-                .map(|peer| peer.peer_virtual_ips.as_slice())
-                .collect::<Vec<_>>(),
-            payload,
-        )
-        .or_else(|| (self.peers.len() == 1).then_some(0))
+        let destination = ipv4_destination_addr(payload)?;
+        self.peers
+            .iter()
+            .position(|peer| {
+                peer.peer_virtual_ips
+                    .iter()
+                    .any(|ip| virtual_ip_matches(ip, destination))
+            })
+            .or_else(|| (self.peers.len() == 1).then_some(0))
     }
 
     fn send_to_peer(&self, peer_index: usize, frame: &[u8], payload: &[u8]) -> PathSendResult {
@@ -1477,15 +1499,15 @@ impl DerpTcpTransport {
     }
 
     fn peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
-        relay_peer_index_for_packet(
-            &self
-                .peers
-                .iter()
-                .map(|peer| peer.peer_virtual_ips.as_slice())
-                .collect::<Vec<_>>(),
-            payload,
-        )
-        .or_else(|| (self.peers.len() == 1).then_some(0))
+        let destination = ipv4_destination_addr(payload)?;
+        self.peers
+            .iter()
+            .position(|peer| {
+                peer.peer_virtual_ips
+                    .iter()
+                    .any(|ip| virtual_ip_matches(ip, destination))
+            })
+            .or_else(|| (self.peers.len() == 1).then_some(0))
     }
 
     fn peer_index_by_node(&self, peer_node_id: &str) -> Option<usize> {
@@ -2248,6 +2270,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
         let mut consecutive_data_plane_failures = 0_u32;
         persist_relay_stats(&mut stats);
         while !thread_stop.load(Ordering::SeqCst) {
+            let mut did_work = false;
             path_manager.update_peer_paths(&selected_peer_paths);
             if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
                 send_relay_keepalives(path_manager.relay_udp_peers());
@@ -2329,6 +2352,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             let mut packet_size = 0_u32;
             let packet = unsafe { receive_packet(session, &mut packet_size as *mut u32) };
             if !packet.is_null() && packet_size > 0 {
+                did_work = true;
                 let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
                 if payload.first().map(|byte| byte >> 4) == Some(4) {
                     if let Some(reply) = local_dns_reply(payload, &dns_servers, &dns_records) {
@@ -2361,7 +2385,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                         unsafe {
                             release_receive_packet(session, packet);
                         }
-                        thread::sleep(DATA_PLANE_IDLE_SLEEP);
                         continue;
                     }
                     stats.last_tun_packet_at_ms = Some(current_timestamp_ms());
@@ -2379,7 +2402,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                     unsafe {
                         release_receive_packet(session, packet);
                     }
-                    thread::sleep(DATA_PLANE_IDLE_SLEEP);
                     continue;
                 }
                 let payload = normalize_ipv4_transport_checksums(payload);
@@ -2395,7 +2417,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                         unsafe {
                             release_receive_packet(session, packet);
                         }
-                        thread::sleep(DATA_PLANE_IDLE_SLEEP);
                         continue;
                     }
                 }
@@ -2603,6 +2624,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             for peer in path_manager.relay_udp_peers_mut() {
                 match peer.socket.recv(&mut relay_buffer) {
                     Ok(frame_len) => {
+                        did_work = true;
                         if let Some(error) = relay_error_message(&relay_buffer[..frame_len]) {
                             stats.relay_error_responses =
                                 stats.relay_error_responses.saturating_add(1);
@@ -2714,6 +2736,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             for peer in path_manager.derp_peers_mut() {
                 match recv_derp_packet(peer) {
                     Ok(Some(frame)) => {
+                        did_work = true;
                         if let Some(packet) = decode_slan_relay_data_frame(&frame) {
                             stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                             record_relay_tcp_packet(&mut stats, packet);
@@ -2805,6 +2828,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             if let Some(direct_udp) = path_manager.direct_udp_transport_mut() {
                 match direct_udp.recv_from_peer(&mut relay_buffer) {
                     Ok(Some(received)) => {
+                        did_work = true;
                         let peer_index = received.peer_index;
                         let frame_len = received.frame_len;
                         let control_packet = direct_udp_control_packet(&relay_buffer[..frame_len]);
@@ -2982,7 +3006,9 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 persist_relay_stats_async(&mut stats);
                 last_stats_flush = Instant::now();
             }
-            thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            if !did_work {
+                thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            }
         }
         persist_relay_stats(&mut stats);
     });
@@ -3905,8 +3931,8 @@ fn is_direct_udp_path(path_kind: PathKind) -> bool {
 }
 
 fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> bool {
-    ipv4_destination(packet)
-        .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
+    ipv4_destination_addr(packet)
+        .map(|destination| virtual_ip_matches(local_virtual_ip, destination))
         .unwrap_or(false)
 }
 
@@ -4050,6 +4076,9 @@ impl DirectUdpControlPacket {
 }
 
 fn direct_udp_control_packet(payload: &[u8]) -> Option<DirectUdpControlPacket> {
+    if payload.first() != Some(&b'{') {
+        return None;
+    }
     let value = serde_json::from_slice::<serde_json::Value>(payload).ok()?;
     if value.get("kind").and_then(serde_json::Value::as_str) != Some("direct_udp") {
         return None;
