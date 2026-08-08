@@ -78,6 +78,7 @@ try {
   Assert-ZipEntry -Entries $zip.Entries -Name 'client_core_plugin_plugin.dll'
   Assert-ZipEntry -Entries $zip.Entries -Name 'tools/SlanWindowsInstall.psm1'
   Assert-ZipEntry -Entries $zip.Entries -Name 'tools/slan-console.ps1'
+  Assert-ZipEntry -Entries $zip.Entries -Name 'tools/upload-installer-log.ps1'
 } finally {
   $zip.Dispose()
 }

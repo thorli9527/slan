@@ -19,10 +19,16 @@ func Routes(deps RouteDependencies) []serviceapi.Route {
 		deviceRoutes(deps),
 		networkRoutes(deps),
 	), "/api/app")
-	return serviceapi.CombineRoutes(DeviceCredentialHandler{
-		Credentials: deps.DeviceCredential,
-		Limiter:     newDeviceCredentialExchangeLimiter(),
-	}.Routes(), appRoutes)
+	return serviceapi.CombineRoutes(
+		DeviceCredentialHandler{
+			Credentials: deps.DeviceCredential,
+			Limiter:     newDeviceCredentialExchangeLimiter(),
+		}.Routes(),
+		InstallerLogHandler{
+			Limiter: newDeviceRequestLimiter(installerLogIdentityLimit, installerLogIPLimit),
+		}.Routes(),
+		appRoutes,
+	)
 }
 
 func deviceRoutes(deps RouteDependencies) []serviceapi.Route {

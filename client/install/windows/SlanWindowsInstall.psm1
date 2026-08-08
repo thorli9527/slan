@@ -33,6 +33,11 @@ function Get-SlanWindowsInstallManifest {
     Destination = 'tools\SlanWindowsInstall.psm1'
     Required = $true
   }
+  $installerLogUploadTool = [pscustomobject]@{
+    Source = 'install\windows\upload-installer-log.ps1'
+    Destination = 'tools\upload-installer-log.ps1'
+    Required = $true
+  }
 
   [pscustomobject]@{
     ClientRoot = $clientRoot
@@ -60,7 +65,8 @@ function Get-SlanWindowsInstallManifest {
     PackagedTools = @(
       $relayDiagnoseTool,
       $consoleTool,
-      $installModuleTool
+      $installModuleTool,
+      $installerLogUploadTool
     )
     LegacyTaskNames = @(
       'SLAN Client V2 Helper',
@@ -171,7 +177,8 @@ function New-SlanWindowsInnoSetupScript {
   $defines = @(
     "#define SourceDir `"$sourceDir`"",
     "#define OutputDir `"$outputDir`"",
-    "#define MyAppVersion `"$($Manifest.AppVersion)`""
+    "#define MyAppVersion `"$($Manifest.AppVersion)`"",
+    "#define ServerApiBaseUrl `"$($Manifest.DefaultControlBaseUrl)`""
   ) -join "`r`n"
   Set-Content -Path $GeneratedPath -Value ($defines + "`r`n" + $content) -Encoding UTF8
 }

@@ -18,6 +18,10 @@
   #define OutputDir "."
 #endif
 
+#ifndef ServerApiBaseUrl
+  #define ServerApiBaseUrl "http://47.245.40.231:28080"
+#endif
+
 [Setup]
 AppId={{77F0F18E-A325-4A23-9983-F4E67133A702}
 AppName={#MyAppName}
@@ -34,6 +38,7 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -289,23 +294,44 @@ begin
   ) and (ResultCode = 0);
 end;
 
-procedure VerifyWintunAdapterInstalled();
+function VerifyWintunAdapterInstalled(): Boolean;
 begin
   // A newly installed Wintun adapter is normally Disconnected until the user
   // enables a network. Installation only requires the adapter and service to exist.
-  if ExecHidden(
+  Result := ExecHidden(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(60); do { $adapter=Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq ''SLAN LAN Adapter'' -or $_.InterfaceDescription -like ''*Wintun*'' -or $_.InterfaceDescription -like ''*WireGuard*Tunnel*'' -or $_.InterfaceDescription -like ''*WireGuardNT*'' } | Select-Object -First 1; $service=Get-Service -Name ''{#ServiceName}'' -ErrorAction SilentlyContinue; if ($adapter -and $service -and $service.Status -eq ''Running'') { exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
     ewWaitUntilTerminated
-  ) then begin
-    exit;
-  end;
-  RaiseException('Failed to initialize the SLAN Windows runtime.' + #13 + #10 +
-    'The Wintun adapter or SLAN service was not detected within 60 seconds.' + #13 + #10 + #13 + #10 +
-    'Please try:' + #13 + #10 +
-    '  1. Run the installer as Administrator (right-click -> Run as administrator)' + #13 + #10 +
-    '  2. Check Windows Services for SLAN Client V2 Service' + #13 + #10 +
-    '  3. Check Device Manager for SLAN LAN Adapter errors.');
+  );
+end;
+
+procedure UploadInstallerFailure(const Stage: string; const ErrorMessage: string);
+var
+  DiagnosticsDir: string;
+  ErrorPath: string;
+  ResultCode: Integer;
+begin
+  DiagnosticsDir := ExpandConstant('{commonappdata}\SLAN\diagnostics');
+  ForceDirectories(DiagnosticsDir);
+  ErrorPath := DiagnosticsDir + '\installer-error.txt';
+  SaveStringToFile(ErrorPath, ErrorMessage, False);
+  Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+      ExpandConstant('{app}\tools\upload-installer-log.ps1') + '"' +
+      ' -ApiBaseUrl "{#ServerApiBaseUrl}"' +
+      ' -Stage "' + Stage + '"' +
+      ' -ErrorPath "' + ErrorPath + '"' +
+      ' -InstallerLogPath "' + ExpandConstant('{log}') + '"' +
+      ' -Version "{#MyAppVersion}"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode
+  );
+end;
+
+procedure FailInstallation(const Stage: string; const ErrorMessage: string);
+begin
+  UploadInstallerFailure(Stage, ErrorMessage);
+  RaiseException(ErrorMessage);
 end;
 
 procedure ClearClientV2AppData();
@@ -423,12 +449,22 @@ begin
   if CurStep = ssPostInstall then begin
     ConfigureDirectUdpFirewall();
     if not PrepareDedicatedAdapter() then begin
-      RaiseException('Failed to prepare the SLAN Wintun adapter.');
+      FailInstallation('adapter.prepare', 'Failed to prepare the SLAN Wintun adapter.');
     end;
     if not RegisterAndStartWindowsService() then begin
-      RaiseException('Failed to register the SLAN Client V2 Windows service.');
+      FailInstallation('service.register', 'Failed to register the SLAN Client V2 Windows service.');
     end;
-    VerifyWintunAdapterInstalled();
+    if not VerifyWintunAdapterInstalled() then begin
+      FailInstallation(
+        'runtime.verify',
+        'Failed to initialize the SLAN Windows runtime.' + #13 + #10 +
+        'The Wintun adapter or SLAN service was not detected within 60 seconds.' + #13 + #10 + #13 + #10 +
+        'Please try:' + #13 + #10 +
+        '  1. Run the installer as Administrator (right-click -> Run as administrator)' + #13 + #10 +
+        '  2. Check Windows Services for SLAN Client V2 Service' + #13 + #10 +
+        '  3. Check Device Manager for SLAN LAN Adapter errors.'
+      );
+    end;
   end;
 end;
 
