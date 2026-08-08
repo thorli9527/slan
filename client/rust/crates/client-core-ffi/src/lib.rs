@@ -870,31 +870,39 @@ mod android_tun {
                             let frame_len = received.frame_len;
                             let control_packet =
                                 direct_udp_control_packet(&relay_buffer[..frame_len]);
-                            if control_packet
+                            if let Some(packet) = control_packet
                                 .as_ref()
-                                .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
+                                .filter(|packet| packet.kind == DirectUdpControlKind::Probe)
                             {
-                                direct_udp
-                                    .mark_peer_ready(received.peer_index, received.remote_addr);
+                                direct_udp.mark_peer_ready(
+                                    received.peer_index,
+                                    received.remote_addr,
+                                    None,
+                                );
                                 thread_stats
                                     .direct_udp_ready_peer_count
                                     .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
                                 thread_stats
                                     .direct_udp_probes_received
                                     .fetch_add(1, Ordering::Relaxed);
-                                if direct_udp.send_pong_to_peer(received.peer_index) {
+                                if direct_udp
+                                    .send_pong_to_remote(received.remote_addr, packet.probe_id)
+                                {
                                     thread_stats
                                         .direct_udp_pongs_sent
                                         .fetch_add(1, Ordering::Relaxed);
                                 }
                                 continue;
                             }
-                            if control_packet
+                            if let Some(packet) = control_packet
                                 .as_ref()
-                                .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
+                                .filter(|packet| packet.kind == DirectUdpControlKind::Pong)
                             {
-                                direct_udp
-                                    .mark_peer_ready(received.peer_index, received.remote_addr);
+                                direct_udp.mark_peer_ready(
+                                    received.peer_index,
+                                    received.remote_addr,
+                                    Some(packet.probe_id),
+                                );
                                 thread_stats
                                     .direct_udp_ready_peer_count
                                     .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
@@ -906,8 +914,11 @@ mod android_tun {
                             if let Some(packet) =
                                 decode_slan_relay_data_frame(&relay_buffer[..frame_len])
                             {
-                                direct_udp
-                                    .mark_peer_ready(received.peer_index, received.remote_addr);
+                                direct_udp.mark_peer_ready(
+                                    received.peer_index,
+                                    received.remote_addr,
+                                    None,
+                                );
                                 thread_stats
                                     .direct_udp_ready_peer_count
                                     .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
@@ -1637,6 +1648,7 @@ mod android_tun {
             DirectUdpTransport::attach_with_socket(
                 relay_config.local_node_id.as_str(),
                 &relay_config.peer_paths,
+                &relay_config.path_policy,
                 || Ok(socket),
             )
         });

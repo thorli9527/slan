@@ -122,6 +122,117 @@ pub struct ClientPathProbePolicy {
     pub max_timeout_ms: u64,
 }
 
+/// 客户端对单条 endpoint 的实时质量观测。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathQualitySample {
+    pub rtt_ms: u32,
+    pub jitter_ms: u32,
+    pub packet_loss_ppm: u32,
+}
+
+/// 使用 EWMA 跟踪单条 endpoint 的 RTT、抖动和丢包。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PathQualityTracker {
+    last_probe_at_ms: Option<u64>,
+    pending_probe_id: Option<u64>,
+    rtt_ewma_ms: Option<u32>,
+    jitter_ewma_ms: Option<u32>,
+    last_rtt_ms: Option<u32>,
+    loss_ewma_ppm: u32,
+    successful_samples: u32,
+}
+
+impl PathQualityTracker {
+    pub fn record_probe_sent(&mut self, now_ms: u64, probe_id: u64) -> bool {
+        let previous_probe_missed = self.pending_probe_id.is_some();
+        if previous_probe_missed {
+            self.record_loss_sample(1_000_000);
+            self.successful_samples = 0;
+        }
+        self.last_probe_at_ms = Some(now_ms);
+        self.pending_probe_id = Some(probe_id);
+        previous_probe_missed
+    }
+
+    pub fn record_probe_success(&mut self, now_ms: u64, probe_id: u64) -> bool {
+        if self.pending_probe_id != Some(probe_id) {
+            return false;
+        }
+        let Some(sent_at_ms) = self.last_probe_at_ms else {
+            return false;
+        };
+        let rtt_ms = u32::try_from(now_ms.saturating_sub(sent_at_ms).max(1)).unwrap_or(u32::MAX);
+        let jitter_sample = self
+            .last_rtt_ms
+            .map(|previous| previous.abs_diff(rtt_ms))
+            .unwrap_or(0);
+        self.rtt_ewma_ms = Some(ewma(self.rtt_ewma_ms, rtt_ms));
+        self.jitter_ewma_ms = Some(ewma(self.jitter_ewma_ms, jitter_sample));
+        self.last_rtt_ms = Some(rtt_ms);
+        self.record_loss_sample(0);
+        self.successful_samples = self.successful_samples.saturating_add(1);
+        self.pending_probe_id = None;
+        true
+    }
+
+    pub fn sample(&self) -> Option<PathQualitySample> {
+        Some(PathQualitySample {
+            rtt_ms: self.rtt_ewma_ms?,
+            jitter_ms: self.jitter_ewma_ms.unwrap_or(0),
+            packet_loss_ppm: self.loss_ewma_ppm,
+        })
+    }
+
+    pub fn successful_samples(&self) -> u32 {
+        self.successful_samples
+    }
+
+    fn record_loss_sample(&mut self, loss_ppm: u32) {
+        self.loss_ewma_ppm = if self.successful_samples == 0 && self.loss_ewma_ppm == 0 {
+            loss_ppm
+        } else {
+            self.loss_ewma_ppm
+                .saturating_mul(7)
+                .saturating_add(loss_ppm)
+                / 8
+        };
+    }
+}
+
+fn ewma(previous: Option<u32>, sample: u32) -> u32 {
+    previous
+        .map(|value| value.saturating_mul(7).saturating_add(sample) / 8)
+        .unwrap_or(sample)
+}
+
+/// 实时链路评分，越低越优。
+pub fn live_path_quality_score(kind: PathKind, sample: PathQualitySample) -> u32 {
+    let transport_cost: u32 = match kind {
+        PathKind::LanUdp => 0,
+        PathKind::Ipv6Udp => 15,
+        PathKind::DirectUdp => 30,
+        PathKind::RelayUdp => 80,
+        PathKind::DerpTcpTls443 => 180,
+    };
+    transport_cost
+        .saturating_add(sample.rtt_ms)
+        .saturating_add(sample.jitter_ms.saturating_mul(2))
+        .saturating_add(sample.packet_loss_ppm / 2_000)
+}
+
+/// 候选必须在加上迟滞分后仍优于当前路径，才具备切换资格。
+pub fn live_path_quality_is_better(
+    policy: &PathPolicy,
+    current_kind: PathKind,
+    current: PathQualitySample,
+    candidate_kind: PathKind,
+    candidate: PathQualitySample,
+) -> bool {
+    live_path_quality_score(candidate_kind, candidate)
+        .saturating_add(policy.switch_hysteresis_score)
+        < live_path_quality_score(current_kind, current)
+}
+
 impl Default for ClientPathProbePolicy {
     fn default() -> Self {
         Self {
@@ -187,6 +298,11 @@ impl PathProbeController {
             .map(|rtt| rtt.saturating_mul(3))
             .unwrap_or(self.policy.min_timeout_ms)
             .clamp(self.policy.min_timeout_ms, self.policy.max_timeout_ms)
+    }
+
+    pub fn rtt_ewma_ms(&self) -> Option<u32> {
+        self.rtt_ewma_ms
+            .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
     }
 
     /// 推进状态并判断此刻是否应发送探测包。
@@ -587,6 +703,10 @@ impl PathTracker {
     /// 返回策略配置中的路径偏好顺序。
     pub fn preferred_paths(&self) -> Vec<PathKind> {
         preferred_path_order(&self.policy)
+    }
+
+    pub fn switch_hysteresis_score(&self) -> u32 {
+        self.policy.switch_hysteresis_score
     }
 
     fn clear_peer_send_failures(&mut self, peer_node_id: &str) {
@@ -1298,5 +1418,72 @@ mod tests {
         controller.on_probe_sent(20_000);
         controller.on_inbound(25_000);
         assert_eq!(controller.probe_timeout_ms(), 3_000);
+    }
+
+    #[test]
+    fn live_quality_requires_candidate_to_clear_hysteresis() {
+        let policy = PathPolicy::default();
+        let current = PathQualitySample {
+            rtt_ms: 20,
+            jitter_ms: 2,
+            packet_loss_ppm: 0,
+        };
+        let marginal_candidate = PathQualitySample {
+            rtt_ms: 10,
+            jitter_ms: 1,
+            packet_loss_ppm: 0,
+        };
+        assert!(!live_path_quality_is_better(
+            &policy,
+            PathKind::LanUdp,
+            current,
+            PathKind::LanUdp,
+            marginal_candidate,
+        ));
+
+        let degraded_current = PathQualitySample {
+            rtt_ms: 120,
+            jitter_ms: 30,
+            packet_loss_ppm: 80_000,
+        };
+        assert!(live_path_quality_is_better(
+            &policy,
+            PathKind::LanUdp,
+            degraded_current,
+            PathKind::DirectUdp,
+            marginal_candidate,
+        ));
+    }
+
+    #[test]
+    fn quality_tracker_combines_rtt_jitter_and_loss() {
+        let mut tracker = PathQualityTracker::default();
+        tracker.record_probe_sent(1_000, 1);
+        assert!(tracker.record_probe_success(1_020, 1));
+        tracker.record_probe_sent(2_000, 2);
+        assert!(tracker.record_probe_success(2_030, 2));
+        let healthy = tracker.sample().unwrap();
+        assert!(healthy.rtt_ms >= 20 && healthy.rtt_ms <= 30);
+        assert!(healthy.jitter_ms <= 10);
+        assert_eq!(healthy.packet_loss_ppm, 0);
+
+        tracker.record_probe_sent(3_000, 3);
+        tracker.record_probe_sent(4_000, 4);
+        assert!(tracker.sample().unwrap().packet_loss_ppm > 0);
+        assert_eq!(tracker.successful_samples(), 0);
+        assert!(tracker.record_probe_success(4_010, 4));
+        assert_eq!(tracker.successful_samples(), 1);
+    }
+
+    #[test]
+    fn quality_tracker_rejects_stale_or_duplicate_probe_responses() {
+        let mut tracker = PathQualityTracker::default();
+        tracker.record_probe_sent(1_000, 7);
+
+        assert!(!tracker.record_probe_success(1_010, 6));
+        assert!(tracker.sample().is_none());
+        assert!(tracker.record_probe_success(1_020, 7));
+        assert!(!tracker.record_probe_success(1_030, 7));
+        assert_eq!(tracker.successful_samples(), 1);
     }
 }

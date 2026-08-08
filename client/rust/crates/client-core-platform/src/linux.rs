@@ -704,7 +704,11 @@ fn start_udp_data_plane(
     if peers.is_empty() && derp_peers.is_empty() {
         bail!("attach Linux relay sessions failed: no UDP relay or DERP sessions attached");
     }
-    let direct_udp = DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths);
+    let direct_udp = DirectUdpTransport::attach(
+        config.local_node_id.as_str(),
+        &config.peer_paths,
+        &config.path_policy,
+    );
     let config_hash = stable_hash64(&serde_json::to_string(&config)?);
     let max_frame_payload = usize::from(config.max_frame_payload.unwrap_or(1200).clamp(512, 1400));
     let direct_udp_probe_interval = Duration::from_secs(1);
@@ -1518,24 +1522,28 @@ fn run_udp_data_plane(
                 Ok(Some(received)) => {
                     let frame_len = received.frame_len;
                     let control_packet = direct_udp_control_packet(&relay_buffer[..frame_len]);
-                    if control_packet
+                    if let Some(packet) = control_packet
                         .as_ref()
-                        .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
+                        .filter(|packet| packet.kind == DirectUdpControlKind::Probe)
                     {
-                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr, None);
                         stats.direct_udp_ready_peer_count = direct_udp.ready_peer_count() as u64;
                         stats.direct_udp_probes_received =
                             stats.direct_udp_probes_received.saturating_add(1);
-                        if direct_udp.send_pong_to_peer(received.peer_index) {
+                        if direct_udp.send_pong_to_remote(received.remote_addr, packet.probe_id) {
                             stats.direct_udp_pongs_sent =
                                 stats.direct_udp_pongs_sent.saturating_add(1);
                         }
                         mark_direct_peer_ready(stats, direct_udp, received.peer_index);
-                    } else if control_packet
+                    } else if let Some(packet) = control_packet
                         .as_ref()
-                        .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
+                        .filter(|packet| packet.kind == DirectUdpControlKind::Pong)
                     {
-                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        direct_udp.mark_peer_ready(
+                            received.peer_index,
+                            received.remote_addr,
+                            Some(packet.probe_id),
+                        );
                         stats.direct_udp_ready_peer_count = direct_udp.ready_peer_count() as u64;
                         stats.direct_udp_pongs_received =
                             stats.direct_udp_pongs_received.saturating_add(1);
@@ -1543,7 +1551,7 @@ fn run_udp_data_plane(
                     } else if let Some(packet) =
                         decode_slan_relay_data_frame(&relay_buffer[..frame_len])
                     {
-                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr, None);
                         stats.direct_udp_ready_peer_count = direct_udp.ready_peer_count() as u64;
                         stats.direct_udp_frames_received =
                             stats.direct_udp_frames_received.saturating_add(1);
