@@ -30,7 +30,8 @@ func WithOperatorAuth(next http.Handler, sessions servicepkg.OpsAuthSessionUseCa
 }
 
 func operatorAdminPath(path string) bool {
-	return strings.HasPrefix(path, "/api/ops/operators") || strings.HasPrefix(path, "/api/opt/operators")
+	return strings.HasPrefix(path, "/api/ops/operators") || strings.HasPrefix(path, "/api/opt/operators") ||
+		strings.HasPrefix(path, "/api/ops/server-nodes") || strings.HasPrefix(path, "/api/opt/server-nodes")
 }
 
 func operatorProtectedPath(path string) bool {

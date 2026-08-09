@@ -38,7 +38,7 @@ func (s NetworkAccessService) CreateSecurityGroup(ctx context.Context, input Cre
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
 	return securityGroupView(item), nil
@@ -64,7 +64,7 @@ func (s NetworkAccessService) UpdateSecurityGroup(ctx context.Context, input Upd
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityGroupView{}, err
 	}
 	return securityGroupView(item), nil
@@ -89,7 +89,7 @@ func (s NetworkAccessService) DeleteSecurityGroup(ctx context.Context, input Del
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return err
 	}
-	return publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
+	return publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
 }
 
 func (s NetworkAccessService) ListSecurityRules(ctx context.Context, securityGroupID string) ([]SecurityRuleView, error) {
@@ -137,7 +137,7 @@ func (s NetworkAccessService) AddSecurityRule(ctx context.Context, input CreateS
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
 	return securityRuleView(item), nil
@@ -166,7 +166,7 @@ func (s NetworkAccessService) UpdateSecurityRule(ctx context.Context, input Upda
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return SecurityRuleView{}, err
 	}
 	return securityRuleView(item), nil
@@ -191,5 +191,5 @@ func (s NetworkAccessService) DeleteSecurityRule(ctx context.Context, input Dele
 	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason); err != nil {
 		return err
 	}
-	return publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
+	return publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, group.NetworkID, version.Version, version.Reason)
 }

@@ -2,7 +2,7 @@ package service
 
 import "github.com/slan/service-biz/internal/pkg/wirekit"
 
-type OpsRelayNodeView struct {
+type RuntimeRelayNodeView struct {
 	NodeID            string                   `json:"nodeId"`
 	Name              string                   `json:"name"`
 	Endpoint          string                   `json:"endpoint"`
@@ -21,7 +21,7 @@ type OpsRelayNodeView struct {
 	Health            string                   `json:"health"`
 }
 
-type OpsPunchNodeView struct {
+type RuntimePunchNodeView struct {
 	NodeID         string `json:"nodeId"`
 	Name           string `json:"name"`
 	Endpoint       string `json:"endpoint"`

@@ -48,6 +48,10 @@ func (h NodeHandler) Routes() []serviceapi.Route {
 		serviceapi.NewRoute(http.MethodPost, "/internal/wire/admin/derp-nodes/{regionId}/{nodeId}/heartbeat", h.HeartbeatDerpNode),
 		serviceapi.NewRoute(http.MethodPatch, "/internal/wire/admin/derp-nodes/{regionId}/{nodeId}/status", h.UpdateDerpNodeStatus),
 		serviceapi.NewRoute(http.MethodDelete, "/internal/wire/admin/derp-nodes/{regionId}/{nodeId}", h.DeleteDerpNode),
+		serviceapi.NewRoute(http.MethodGet, "/internal/wire/admin/punch-nodes", h.ListPunchNodes),
+		serviceapi.NewRoute(http.MethodPut, "/internal/wire/admin/punch-nodes", h.UpsertPunchNode),
+		serviceapi.NewRoute(http.MethodPost, "/internal/wire/admin/punch-nodes/{nodeId}/heartbeat", h.HeartbeatPunchNode),
+		serviceapi.NewRoute(http.MethodDelete, "/internal/wire/admin/punch-nodes/{nodeId}", h.DeletePunchNode),
 		serviceapi.NewRoute(http.MethodGet, "/internal/wire/derp-map", h.GetDerpMap),
 	}
 }
@@ -81,6 +85,18 @@ func (h NodeHandler) ListDerpNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serviceapi.WriteItems(w, serviceapi.MapPayloads(items, wireNodePayload))
+}
+
+func (h NodeHandler) ListPunchNodes(w http.ResponseWriter, r *http.Request) {
+	if !authorizeOrError(w, r, h.Wire) {
+		return
+	}
+	items, err := h.Wire.ListPunchNodes(r.Context())
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteItems(w, items)
 }
 
 func (h NodeHandler) UpsertRelayNode(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +152,30 @@ func (h NodeHandler) UpsertDerpNode(w http.ResponseWriter, r *http.Request) {
 	serviceapi.WriteJSON(w, http.StatusOK, wireNodePayload(item))
 }
 
+func (h NodeHandler) UpsertPunchNode(w http.ResponseWriter, r *http.Request) {
+	if !authorizeOrError(w, r, h.Wire) {
+		return
+	}
+	var req nodeRequest
+	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	item, err := h.Wire.UpsertPunchNode(r.Context(), servicepkg.WireUpsertNodeInput{
+		NodeID:   req.NodeID,
+		Name:     req.Name,
+		Host:     req.Host,
+		UDPPort:  req.UDPPort,
+		Priority: req.Priority,
+		Enabled:  req.Enabled,
+		Healthy:  req.Healthy,
+	})
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteJSON(w, http.StatusOK, item)
+}
+
 func (h NodeHandler) HeartbeatRelayNode(w http.ResponseWriter, r *http.Request) {
 	if !authorizeOrError(w, r, h.Wire) {
 		return
@@ -176,6 +216,25 @@ func (h NodeHandler) HeartbeatDerpNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serviceapi.WriteJSON(w, http.StatusOK, wireNodePayload(item))
+}
+
+func (h NodeHandler) HeartbeatPunchNode(w http.ResponseWriter, r *http.Request) {
+	if !authorizeOrError(w, r, h.Wire) {
+		return
+	}
+	var req nodeHeartbeatRequest
+	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	item, err := h.Wire.HeartbeatPunchNode(r.Context(), servicepkg.WireNodeStatusInput{
+		NodeID:  r.PathValue("nodeId"),
+		Healthy: &req.Healthy,
+	})
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteJSON(w, http.StatusOK, item)
 }
 
 func (h NodeHandler) UpdateRelayNodeStatus(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +300,19 @@ func (h NodeHandler) DeleteDerpNode(w http.ResponseWriter, r *http.Request) {
 	if err := h.Wire.DeleteDerpNode(r.Context(), servicepkg.WireNodeDeleteInput{
 		RegionID: r.PathValue("regionId"),
 		NodeID:   r.PathValue("nodeId"),
+	}); err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteNoContent(w)
+}
+
+func (h NodeHandler) DeletePunchNode(w http.ResponseWriter, r *http.Request) {
+	if !authorizeOrError(w, r, h.Wire) {
+		return
+	}
+	if err := h.Wire.DeletePunchNode(r.Context(), servicepkg.WireNodeDeleteInput{
+		NodeID: r.PathValue("nodeId"),
 	}); err != nil {
 		serviceapi.WriteError(w, err)
 		return

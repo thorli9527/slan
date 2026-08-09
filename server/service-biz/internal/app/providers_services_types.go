@@ -30,7 +30,7 @@ type OpsServices struct {
 	OperatorSecurity  servicepkg.OpsOperatorPasswordService
 	DashboardOverview servicepkg.OpsDashboardService
 	AuditOverview     servicepkg.OpsAuditService
-	NodeRegistry      servicepkg.OpsNodeService
+	ServerNodes       servicepkg.OpsServerNodeService
 	CustomerDirectory servicepkg.OpsCustomerService
 	DeviceDirectory   servicepkg.OpsManagedDeviceService
 	DeviceCredentials servicepkg.DeviceCredentialService

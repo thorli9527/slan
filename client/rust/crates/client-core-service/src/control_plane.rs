@@ -23,6 +23,8 @@ const API_RUNTIME_ENDPOINTS: &str = "/api/app/runtime/endpoints";
 const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static CONTROL_PROXY_BASE_URLS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static MQTT_PROXY_URLS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 fn null_vec_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
@@ -85,6 +87,47 @@ pub(crate) fn effective_control_base_url() -> String {
         control_base_url_override(),
         env::var("SLAN_CONTROL_BASE_URL").ok(),
     )
+}
+
+pub(crate) fn mqtt_proxy_urls() -> Vec<String> {
+    MQTT_PROXY_URLS
+        .get()
+        .and_then(|values| values.lock().ok().map(|values| values.clone()))
+        .unwrap_or_default()
+}
+
+fn install_runtime_proxy_endpoints(runtime: &RuntimeEndpointsResponse) {
+    install_runtime_proxy_urls(&runtime.api_proxy_urls, &runtime.mqtt_proxy_urls);
+}
+
+pub(crate) fn install_runtime_proxy_urls(api_proxy_urls: &[String], mqtt_proxy_urls: &[String]) {
+    replace_proxy_urls(&CONTROL_PROXY_BASE_URLS, api_proxy_urls, |value| {
+        normalize_control_base_url(value).ok()
+    });
+    replace_proxy_urls(&MQTT_PROXY_URLS, mqtt_proxy_urls, |value| {
+        let value = value.trim().trim_end_matches('/');
+        (value.starts_with("mqtt://") || value.starts_with("mqtts://")).then(|| value.to_string())
+    });
+}
+
+fn replace_proxy_urls<F>(
+    store: &'static OnceLock<Mutex<Vec<String>>>,
+    values: &[String],
+    normalize: F,
+) where
+    F: Fn(&str) -> Option<String>,
+{
+    let mut normalized = Vec::new();
+    for value in values {
+        if let Some(value) = normalize(value) {
+            if !normalized.contains(&value) {
+                normalized.push(value);
+            }
+        }
+    }
+    if let Ok(mut current) = store.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        *current = normalized;
+    }
 }
 
 pub(crate) fn normalize_control_base_url(value: &str) -> Result<String> {
@@ -199,6 +242,10 @@ pub(crate) struct RuntimeEndpointsResponse {
     pub mqtt: Option<MqttCredential>,
     #[serde(default, deserialize_with = "null_vec_default")]
     pub node_configs: Vec<RuntimeNodeConfig>,
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub api_proxy_urls: Vec<String>,
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub mqtt_proxy_urls: Vec<String>,
     #[serde(default)]
     pub country_code: String,
     #[serde(default)]
@@ -537,6 +584,9 @@ impl ControlPlaneClient {
         )?;
         let mut payload: DeviceSessionResponse =
             serde_json::from_value(response).context("decode device credential session")?;
+        if let Some(runtime) = payload.runtime_endpoints.as_ref() {
+            install_runtime_proxy_endpoints(runtime);
+        }
         normalize_control_device(&mut payload.device);
         Ok(payload)
     }
@@ -562,6 +612,9 @@ impl ControlPlaneClient {
             self.request_json("POST", API_DEVICE_SESSION_RENEW, device_token, Some(body))?;
         let mut payload: DeviceSessionResponse =
             serde_json::from_value(response).context("decode device session renew")?;
+        if let Some(runtime) = payload.runtime_endpoints.as_ref() {
+            install_runtime_proxy_endpoints(runtime);
+        }
         normalize_control_device(&mut payload.device);
         Ok(payload)
     }
@@ -652,7 +705,9 @@ impl ControlPlaneClient {
 
     pub(crate) fn runtime_endpoints(&self, access_token: &str) -> Result<RuntimeEndpointsResponse> {
         let response = self.request_json("GET", API_RUNTIME_ENDPOINTS, access_token, None)?;
-        serde_json::from_value(response).context("decode runtime endpoints")
+        let runtime = serde_json::from_value(response).context("decode runtime endpoints")?;
+        install_runtime_proxy_endpoints(&runtime);
+        Ok(runtime)
     }
 
     pub fn network_snapshot(
@@ -800,14 +855,12 @@ impl ControlPlaneClient {
         headers: &[(&str, &str)],
         body: Option<Value>,
     ) -> Result<Value> {
-        let endpoint = HttpEndpoint::parse(&self.base_url)?;
         let body = body
             .map(|value| serde_json::to_vec(&value))
             .transpose()
             .context("encode control request")?
             .unwrap_or_default();
-        let response = endpoint.request(method, path, access_token, headers, &body)?;
-        decode_control_json(&response)
+        self.request_with_proxy_failover(method, path, access_token, headers, &body)
     }
 
     fn request_json_without_auth(
@@ -816,14 +869,63 @@ impl ControlPlaneClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value> {
-        let endpoint = HttpEndpoint::parse(&self.base_url)?;
         let body = body
             .map(|value| serde_json::to_vec(&value))
             .transpose()
             .context("encode control request")?
             .unwrap_or_default();
-        let response = endpoint.request(method, path, "", &[], &body)?;
-        decode_control_json(&response)
+        self.request_with_proxy_failover(method, path, "", &[], &body)
+    }
+
+    fn request_with_proxy_failover(
+        &self,
+        method: &str,
+        path: &str,
+        access_token: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<Value> {
+        let mut candidates = vec![self.base_url.clone()];
+        if let Some(proxies) = CONTROL_PROXY_BASE_URLS
+            .get()
+            .and_then(|values| values.lock().ok().map(|values| values.clone()))
+        {
+            for proxy in proxies {
+                if !candidates.contains(&proxy) {
+                    candidates.push(proxy);
+                }
+            }
+        }
+        let mut last_error = None;
+        let attempts_per_endpoint = if candidates.len() > 1 { 2 } else { 5 };
+        for (index, candidate) in candidates.iter().enumerate() {
+            let result = HttpEndpoint::parse(candidate)
+                .and_then(|endpoint| {
+                    endpoint.request_with_attempts(
+                        method,
+                        path,
+                        access_token,
+                        headers,
+                        body,
+                        attempts_per_endpoint,
+                    )
+                })
+                .and_then(|response| decode_control_json(&response));
+            match result {
+                Ok(value) => return Ok(value),
+                Err(error)
+                    if transient_control_request_error(&error) && index + 1 < candidates.len() =>
+                {
+                    eprintln!(
+                        "SLAN_CONTROL_PROXY_FAILOVER_FAILED endpoint={} error={error:#}",
+                        candidate
+                    );
+                    last_error = Some(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("control request failed")))
     }
 }
 
@@ -1234,19 +1336,21 @@ impl HttpEndpoint {
         })
     }
 
-    fn request(
+    fn request_with_attempts(
         &self,
         method: &str,
         path: &str,
         access_token: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_attempts: u64,
     ) -> Result<Vec<u8>> {
         let mut last_error = None;
-        for attempt in 1..=5 {
+        let max_attempts = max_attempts.max(1);
+        for attempt in 1..=max_attempts {
             match self.request_once(method, path, access_token, headers, body) {
                 Ok(response) => return Ok(response),
-                Err(error) if transient_control_request_error(&error) && attempt < 5 => {
+                Err(error) if transient_control_request_error(&error) && attempt < max_attempts => {
                     last_error = Some(error);
                     thread::sleep(Duration::from_millis(120 * attempt));
                 }

@@ -24,6 +24,10 @@ func (s WireService) ListDerpNodes(ctx context.Context) ([]WireNodeView, error) 
 	return s.Nodes.ListDerpNodes(ctx)
 }
 
+func (s WireService) ListPunchNodes(ctx context.Context) ([]RuntimePunchNodeView, error) {
+	return s.Nodes.ListPunchNodes(ctx)
+}
+
 func (s WireService) UpsertRelayNode(ctx context.Context, input WireUpsertNodeInput) (WireNodeView, error) {
 	return s.Nodes.UpsertRelayNode(ctx, input)
 }
@@ -32,12 +36,20 @@ func (s WireService) UpsertDerpNode(ctx context.Context, input WireUpsertNodeInp
 	return s.Nodes.UpsertDerpNode(ctx, input)
 }
 
+func (s WireService) UpsertPunchNode(ctx context.Context, input WireUpsertNodeInput) (RuntimePunchNodeView, error) {
+	return s.Nodes.UpsertPunchNode(ctx, input)
+}
+
 func (s WireService) HeartbeatRelayNode(ctx context.Context, input WireNodeStatusInput) (WireNodeView, error) {
 	return s.Nodes.HeartbeatRelayNode(ctx, input)
 }
 
 func (s WireService) HeartbeatDerpNode(ctx context.Context, input WireNodeStatusInput) (WireNodeView, error) {
 	return s.Nodes.HeartbeatDerpNode(ctx, input)
+}
+
+func (s WireService) HeartbeatPunchNode(ctx context.Context, input WireNodeStatusInput) (RuntimePunchNodeView, error) {
+	return s.Nodes.HeartbeatPunchNode(ctx, input)
 }
 
 func (s WireService) UpdateRelayNodeStatus(ctx context.Context, input WireNodeStatusInput) (WireNodeView, error) {
@@ -54,6 +66,10 @@ func (s WireService) DeleteRelayNode(ctx context.Context, input WireNodeDeleteIn
 
 func (s WireService) DeleteDerpNode(ctx context.Context, input WireNodeDeleteInput) error {
 	return s.Nodes.DeleteDerpNode(ctx, input)
+}
+
+func (s WireService) DeletePunchNode(ctx context.Context, input WireNodeDeleteInput) error {
+	return s.Nodes.DeletePunchNode(ctx, input)
 }
 
 func (s WireService) DerpMap(ctx context.Context) (WireDerpMapView, error) {

@@ -1,4 +1,4 @@
-.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-macos-build client-macos-package client-windows-package client-linux-build client-linux-package client-macos-service-smoke client-macos-service-upgrade-smoke client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
+.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-macos-build client-macos-package client-windows-package client-linux-build client-linux-package client-macos-service-smoke client-macos-service-upgrade-smoke client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check server-docker-build server-docker-package server-docker-publish
 
 help:
 	@echo "Available targets:"
@@ -15,6 +15,11 @@ help:
 	@echo "    make client-multidevice-dev       # run macOS/iOS/Android against one local client-core-service"
 	@echo "    make flutter-analyze-safe         # run Flutter analyze with stale Dart language-server cleanup"
 	@echo "    make protocol-contract-check      # run lightweight protocol metadata and compile checks"
+	@echo ""
+	@echo "  Server Docker"
+	@echo "    make server-docker-build          # build each unique server image once"
+	@echo "    make server-docker-package        # export Linux AMD64 server images as a verified archive"
+	@echo "    make server-docker-publish        # package and publish to the configured remote server"
 	@echo ""
 	@echo "  Wire Stack"
 	@echo "    make wire-stack-smoke             # run the isolated server-wire + relay + DERP smoke"
@@ -99,6 +104,15 @@ ifeq ($(OS),Windows_NT)
 else
 	./scripts/check_protocol_contracts.sh
 endif
+
+server-docker-build:
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f docker-compose.local.yml build server-biz server-wire server-wire-relay server-wire-punch server-wire-derp opt-ui
+
+server-docker-package:
+	./scripts/package_server_docker.sh
+
+server-docker-publish:
+	./scripts/publish_server_docker.sh
 
 local-stack-smoke:
 ifeq ($(OS),Windows_NT)

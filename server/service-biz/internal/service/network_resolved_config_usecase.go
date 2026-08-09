@@ -7,7 +7,7 @@ func (s NetworkCoreService) ResolvedNetworkConfig(ctx context.Context, networkID
 	if err != nil {
 		return NetworkResolvedConfigView{}, err
 	}
-	relayCandidates, err := relayCandidates(ctx, s.Networks, s.Ops, s.Now, networkID)
+	relayCandidates, err := relayCandidates(ctx, s.Networks, s.RuntimeNodes, s.Now, networkID)
 	if err != nil {
 		return NetworkResolvedConfigView{}, err
 	}

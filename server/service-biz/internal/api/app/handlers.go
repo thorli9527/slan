@@ -12,6 +12,7 @@ type RouteDependencies struct {
 	ClientMessages   servicepkg.ClientMessageUseCase
 	NetworkCore      servicepkg.NetworkCoreUseCase
 	NetworkRuntime   servicepkg.NetworkRuntimeUseCase
+	ServerNodes      servicepkg.OpsServerNodeUseCase
 }
 
 func Routes(deps RouteDependencies) []serviceapi.Route {
@@ -42,6 +43,7 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 			DeviceSessions:    deps.DeviceSession,
 			NetworkRuntime:    deps.NetworkRuntime,
 			NetworkConfigView: deps.NetworkCore,
+			ServerNodes:       deps.ServerNodes,
 			Limiter:           newDeviceRequestLimiter(deviceSessionRenewLimit, deviceSessionRenewIPLimit),
 		}.Routes(),
 		DeviceConfigHandler{Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore}.Routes(),
@@ -57,6 +59,7 @@ func networkRoutes(deps RouteDependencies) []serviceapi.Route {
 			NetworkRuntime:    deps.NetworkRuntime,
 			DeviceSessions:    deps.DeviceSession,
 			NetworkConfigView: deps.NetworkCore,
+			ServerNodes:       deps.ServerNodes,
 		}.Routes(),
 	)
 }

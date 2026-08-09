@@ -103,9 +103,6 @@ wirePunchImage: $IMAGE_NAME
 wirePunchUdp: ${PUBLIC_HOST}:${PUBLIC_UDP_PORT}
 wirePunchHttp: http://${PUBLIC_HOST}:${HTTP_PORT}
 
-Configure service-biz with:
-  SLAN_WIRE_PUNCH_NODES=${PUBLIC_HOST}:${HTTP_PORT}
-
 Health check:
   curl http://${PUBLIC_HOST}:${HTTP_PORT}/healthz
 

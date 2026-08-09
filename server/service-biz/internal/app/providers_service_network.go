@@ -13,7 +13,7 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 		CoreAccess: servicepkg.NetworkCoreService{
 			Devices:            repos.Devices,
 			Networks:           repos.Networks,
-			Ops:                repos.Ops,
+			RuntimeNodes:       repos.RuntimeNodes,
 			EventPublisher:     eventPublisher,
 			VersionPushTracker: servicepkg.NewNetworkVersionPushTracker(),
 			NewNetworkID:       ids.NewNetworkID,
@@ -22,21 +22,21 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 		DNSManagement: servicepkg.NetworkDNSService{
 			Devices:        repos.Devices,
 			Networks:       repos.Networks,
-			Ops:            repos.Ops,
+			RuntimeNodes:   repos.RuntimeNodes,
 			EventPublisher: eventPublisher,
 			Now:            deps.now(),
 		},
 		AccessManagement: servicepkg.NetworkAccessService{
 			Devices:        repos.Devices,
 			Networks:       repos.Networks,
-			Ops:            repos.Ops,
+			RuntimeNodes:   repos.RuntimeNodes,
 			EventPublisher: eventPublisher,
 			Now:            deps.now(),
 		},
 		RuntimeControl: servicepkg.NetworkRuntimeService{
-			Devices:  repos.Devices,
-			Networks: repos.Networks,
-			Ops:      repos.Ops,
+			Devices:      repos.Devices,
+			Networks:     repos.Networks,
+			RuntimeNodes: repos.RuntimeNodes,
 			LocateIP: func(ip string) (servicepkg.DeviceLocation, bool) {
 				location, ok := geoip.DefaultLookup(ip)
 				return servicepkg.DeviceLocation{

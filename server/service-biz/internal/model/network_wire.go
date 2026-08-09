@@ -38,6 +38,34 @@ type PunchNode struct {
 	UpdatedAt      int64  `json:"updatedAt"`
 }
 
+type ServerNode struct {
+	NodeID                string `json:"nodeId"`
+	Name                  string `json:"name"`
+	Host                  string `json:"host"`
+	SSHPort               int    `json:"sshPort"`
+	SSHUsername           string `json:"sshUsername"`
+	SSHPasswordCiphertext string `json:"-"`
+	SSHHostKeyFingerprint string `json:"sshHostKeyFingerprint"`
+	RelayUDPPort          int    `json:"relayUdpPort"`
+	RelayAdminPort        int    `json:"relayAdminPort"`
+	RelayTCPPort          int    `json:"relayTcpPort"`
+	PunchUDPPort          int    `json:"punchUdpPort"`
+	PunchHTTPPort         int    `json:"punchHttpPort"`
+	APIProxyPort          int    `json:"apiProxyPort"`
+	MQTTProxyPort         int    `json:"mqttProxyPort"`
+	RelayEnabled          bool   `json:"relayEnabled"`
+	PunchEnabled          bool   `json:"punchEnabled"`
+	ProxyEnabled          bool   `json:"proxyEnabled"`
+	RelayNodeID           string `json:"relayNodeId"`
+	RelayTCPNodeID        string `json:"relayTcpNodeId"`
+	PunchNodeID           string `json:"punchNodeId"`
+	DeployStatus          string `json:"deployStatus"`
+	LastDeployError       string `json:"lastDeployError"`
+	LastDeployedAt        int64  `json:"lastDeployedAt"`
+	CreatedAt             int64  `json:"createdAt"`
+	UpdatedAt             int64  `json:"updatedAt"`
+}
+
 type PunchEndpoint struct {
 	NetworkID    string `json:"networkId"`
 	NodeID       string `json:"nodeId"`

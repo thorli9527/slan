@@ -69,3 +69,20 @@ func (s *GormStore) SavePunchNode(_ context.Context, item model.PunchNode) error
 func (s *GormStore) DeletePunchNode(_ context.Context, nodeID string) error {
 	return s.db.Delete(&gormPunchNodeRecord{}, "node_id = ?", nodeID).Error
 }
+
+func (s *GormStore) ListServerNodes(_ context.Context) ([]model.ServerNode, error) {
+	return listModels(s.db.Order("created_at desc"), func(row gormServerNodeRecord) model.ServerNode { return row.model() })
+}
+
+func (s *GormStore) GetServerNode(_ context.Context, nodeID string) (model.ServerNode, bool, error) {
+	return firstModel(s.db.Where("node_id = ?", nodeID), func(row gormServerNodeRecord) model.ServerNode { return row.model() })
+}
+
+func (s *GormStore) SaveServerNode(_ context.Context, item model.ServerNode) error {
+	row := serverNodeRecordFromModel(item)
+	return upsertByColumns(s.db, &row, []string{"node_id"}, []string{"name", "host", "ssh_port", "ssh_username", "ssh_password_ciphertext", "ssh_host_key_fingerprint", "relay_udp_port", "relay_admin_port", "relay_tcp_port", "punch_udp_port", "punch_http_port", "api_proxy_port", "mqtt_proxy_port", "relay_enabled", "punch_enabled", "proxy_enabled", "relay_node_id", "relay_tcp_node_id", "punch_node_id", "deploy_status", "last_deploy_error", "last_deployed_at", "created_at", "updated_at"})
+}
+
+func (s *GormStore) DeleteServerNode(_ context.Context, nodeID string) error {
+	return s.db.Delete(&gormServerNodeRecord{}, "node_id = ?", nodeID).Error
+}

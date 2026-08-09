@@ -10,12 +10,14 @@ func runtimeSessionPayload(
 	ctx context.Context,
 	runtime servicepkg.NetworkRuntimeUseCase,
 	networks servicepkg.NetworkCoreUseCase,
+	serverNodes servicepkg.OpsServerNodeUseCase,
 	deviceID string,
-	build func([]servicepkg.PunchNodeView, []map[string]any) map[string]any,
+	build func([]servicepkg.PunchNodeView, []servicepkg.OpsServerNodeView, []map[string]any) map[string]any,
 ) map[string]any {
 	punchNodes, _ := runtime.ListPunchNodes(ctx)
+	proxyNodes, _ := serverNodes.ListServerNodes(ctx)
 	networkConfigs := buildDeviceNetworkConfigPayloads(ctx, networks, deviceID)
-	return build(punchNodes, networkConfigs)
+	return build(punchNodes, proxyNodes, networkConfigs)
 }
 
 func renewedDeviceRuntimePayload(

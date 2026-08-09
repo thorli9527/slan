@@ -51,8 +51,14 @@ curl --silent --fail "$BIZ_BASE/healthz" | grep -q '"status":"ok"' || fail "biz 
 
 echo "==> Ops resource checks"
 OPS_TOKEN="$(slan_ops_login "$OPS_BASE")"
-for endpoint in dashboard operators relay-nodes punch-nodes customers devices device-credentials networks device-groups audit-events; do
+for endpoint in dashboard operators server-nodes customers devices device-credentials networks device-groups audit-events; do
   auth_curl "$OPS_BASE/api/ops/$endpoint" >/dev/null || fail "Ops list failed: $endpoint"
+done
+for legacy_endpoint in relay-nodes punch-nodes; do
+  legacy_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -H "Authorization: Bearer $OPS_TOKEN" \
+    "$OPS_BASE/api/ops/$legacy_endpoint")"
+  [[ "$legacy_status" == "404" ]] || fail "legacy $legacy_endpoint endpoint still available: HTTP $legacy_status"
 done
 
 CREDENTIAL="$(slan_ops_create_device_credential "$OPS_BASE" "$OPS_TOKEN" "Remote UI Device")"

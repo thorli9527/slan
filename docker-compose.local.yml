@@ -48,8 +48,8 @@ services:
   server-biz:
     image: slan-service-biz:latest
     build:
-      context: ./server/service-biz
-      dockerfile: Dockerfile
+      context: ./server
+      dockerfile: service-biz/Dockerfile
     environment:
       SLAN_BIZ_ADDR: ":8080"
       SLAN_BIZ_ROUTE_SET: "all"
@@ -71,10 +71,11 @@ services:
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
-      SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-}"
-      SLAN_WIRE_RELAY_PUBLIC_HOST: "${SLAN_WIRE_RELAY_PUBLIC_HOST:-47.245.40.231}"
-      SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: "${SLAN_WIRE_RELAY_PUBLIC_UDP_PORT:-29110}"
-      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-}"
+      SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-}"
+      SLAN_NODE_DEPLOY_ASSETS_DIR: "/opt/slan/node-assets"
+      SLAN_NODE_DEPLOY_BIZ_URL: "${SLAN_NODE_DEPLOY_BIZ_URL:-http://47.245.40.231:28080}"
+      SLAN_NODE_DEPLOY_API_UPSTREAM_URL: "${SLAN_NODE_DEPLOY_API_UPSTREAM_URL:-http://47.245.40.231:28080}"
+      SLAN_NODE_DEPLOY_MQTT_UPSTREAM_ADDR: "${SLAN_NODE_DEPLOY_MQTT_UPSTREAM_ADDR:-47.245.40.231:1883}"
       SLAN_SERVICE_BIZ_DB_HOST: postgres
       SLAN_SERVICE_BIZ_DB_PORT: 5432
       SLAN_SERVICE_BIZ_DB_USER: postgres
@@ -99,8 +100,8 @@ services:
   server-biz-ops:
     image: slan-service-biz:latest
     build:
-      context: ./server/service-biz
-      dockerfile: Dockerfile
+      context: ./server
+      dockerfile: service-biz/Dockerfile
     environment:
       SLAN_BIZ_ADDR: ":8080"
       SLAN_BIZ_ROUTE_SET: "ops"
@@ -122,10 +123,11 @@ services:
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
-      SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-}"
-      SLAN_WIRE_RELAY_PUBLIC_HOST: "${SLAN_WIRE_RELAY_PUBLIC_HOST:-47.245.40.231}"
-      SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: "${SLAN_WIRE_RELAY_PUBLIC_UDP_PORT:-29110}"
-      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-}"
+      SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-}"
+      SLAN_NODE_DEPLOY_ASSETS_DIR: "/opt/slan/node-assets"
+      SLAN_NODE_DEPLOY_BIZ_URL: "${SLAN_NODE_DEPLOY_BIZ_URL:-http://47.245.40.231:28080}"
+      SLAN_NODE_DEPLOY_API_UPSTREAM_URL: "${SLAN_NODE_DEPLOY_API_UPSTREAM_URL:-http://47.245.40.231:28080}"
+      SLAN_NODE_DEPLOY_MQTT_UPSTREAM_ADDR: "${SLAN_NODE_DEPLOY_MQTT_UPSTREAM_ADDR:-47.245.40.231:1883}"
       SLAN_SERVICE_BIZ_DB_HOST: postgres
       SLAN_SERVICE_BIZ_DB_PORT: 5432
       SLAN_SERVICE_BIZ_DB_USER: postgres
@@ -146,6 +148,7 @@ services:
         condition: service_healthy
 
   server-wire:
+    image: slan-server-wire:latest
     build:
       context: ./server/server-wire
       dockerfile: Dockerfile
@@ -165,6 +168,7 @@ services:
         condition: service_started
 
   server-wire-b:
+    image: slan-server-wire:latest
     build:
       context: ./server/server-wire
       dockerfile: Dockerfile
@@ -184,6 +188,7 @@ services:
         condition: service_started
 
   server-wire-relay:
+    image: slan-server-wire-relay:latest
     build:
       context: ./server/server-wire-relay
       dockerfile: Dockerfile
@@ -209,6 +214,7 @@ services:
         condition: service_started
 
   server-wire-relay-b:
+    image: slan-server-wire-relay:latest
     build:
       context: ./server/server-wire-relay
       dockerfile: Dockerfile
@@ -234,12 +240,15 @@ services:
         condition: service_started
 
   server-wire-punch:
+    image: slan-server-wire-punch:latest
     build:
       context: ./server/server-wire-punch
       dockerfile: Dockerfile
     environment:
       SLAN_WIRE_PUNCH_LISTEN_ADDR: ":29130"
       SLAN_WIRE_PUNCH_HTTP_LISTEN_ADDR: ":29131"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_WIRE_PUNCH_NODE_ID: "${SLAN_WIRE_PUNCH_NODE_ID:-punch-local}"
       SLAN_WIRE_PUNCH_PUBLIC_HOST: "${SLAN_WIRE_PUNCH_PUBLIC_HOST:-47.245.40.231}"
       SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT: "${SLAN_WIRE_PUNCH_PORT:-29130}"
       SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
@@ -251,12 +260,15 @@ services:
         condition: service_started
 
   server-wire-punch-b:
+    image: slan-server-wire-punch:latest
     build:
       context: ./server/server-wire-punch
       dockerfile: Dockerfile
     environment:
       SLAN_WIRE_PUNCH_LISTEN_ADDR: ":29130"
       SLAN_WIRE_PUNCH_HTTP_LISTEN_ADDR: ":29131"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_WIRE_PUNCH_NODE_ID: "${SLAN_WIRE_PUNCH_B_NODE_ID:-punch-local-b}"
       SLAN_WIRE_PUNCH_PUBLIC_HOST: "${SLAN_WIRE_PUNCH_B_PUBLIC_HOST:-47.245.40.231}"
       SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT: "${SLAN_WIRE_PUNCH_B_PORT:-29132}"
       SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
@@ -268,12 +280,15 @@ services:
         condition: service_started
 
   server-wire-punch-c:
+    image: slan-server-wire-punch:latest
     build:
       context: ./server/server-wire-punch
       dockerfile: Dockerfile
     environment:
       SLAN_WIRE_PUNCH_LISTEN_ADDR: ":29130"
       SLAN_WIRE_PUNCH_HTTP_LISTEN_ADDR: ":29131"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_WIRE_PUNCH_NODE_ID: "${SLAN_WIRE_PUNCH_C_NODE_ID:-punch-local-c}"
       SLAN_WIRE_PUNCH_PUBLIC_HOST: "${SLAN_WIRE_PUNCH_C_PUBLIC_HOST:-47.245.40.231}"
       SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT: "${SLAN_WIRE_PUNCH_C_PORT:-29134}"
       SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
@@ -285,6 +300,7 @@ services:
         condition: service_started
 
   server-wire-derp:
+    image: slan-server-wire-derp:latest
     build:
       context: ./server/server-wire-derp
       dockerfile: Dockerfile
@@ -310,6 +326,7 @@ services:
         condition: service_started
 
   server-wire-derp-b:
+    image: slan-server-wire-derp:latest
     build:
       context: ./server/server-wire-derp
       dockerfile: Dockerfile

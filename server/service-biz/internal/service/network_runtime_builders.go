@@ -5,12 +5,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/slan/service-biz/internal/bootstrap"
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
 )
 
-func listRelayNodeEntities(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsNodeRepository, nowFn func() time.Time, networkID string) ([]model.RelayNode, error) {
+func listRelayNodeEntities(ctx context.Context, networks repository.NetworkRepository, ops repository.RuntimeNodeRepository, nowFn func() time.Time, networkID string) ([]model.RelayNode, error) {
 	networkID = normalizeNetworkID(networkID)
 	if networkID == "" {
 		return nil, ErrInvalidArgument
@@ -18,17 +17,14 @@ func listRelayNodeEntities(ctx context.Context, networks repository.NetworkRepos
 	if _, err := requireManagedNetwork(ctx, networks, networkID); err != nil {
 		return nil, err
 	}
-	if ops != nil {
-		items, err := ops.ListRelayNodes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		nodes := buildActiveRelayNodes(items, networkNow(nowFn).Unix())
-		if len(nodes) > 0 {
-			return nodes, nil
-		}
+	if ops == nil {
+		return nil, nil
 	}
-	return defaultRelayNodes(nowFn), nil
+	items, err := ops.ListRelayNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return buildActiveRelayNodes(items, networkNow(nowFn).Unix()), nil
 }
 
 func buildActiveRelayNodes(items []model.RelayNode, nowUnix int64) []model.RelayNode {
@@ -58,22 +54,6 @@ func buildActiveRelayNodes(items []model.RelayNode, nowUnix int64) []model.Relay
 	return nodes
 }
 
-func defaultRelayNodes(nowFn func() time.Time) []model.RelayNode {
-	now := networkNow(nowFn).Unix()
-	return []model.RelayNode{{
-		NodeID:    "relay-default",
-		Name:      "Default Relay",
-		Region:    "global",
-		Endpoint:  bootstrap.DefaultRelayEndpoint(),
-		Transport: "relay_udp",
-		Priority:  100,
-		Status:    "active",
-		Health:    "healthy",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}}
-}
-
 func sortRelayNodes(nodes []model.RelayNode) {
 	sort.SliceStable(nodes, func(i, j int) bool {
 		left := firstPositive(nodes[i].Priority, 100)
@@ -96,24 +76,21 @@ func relayCandidatesFromNodes(items []model.RelayNode) []RelayCandidateView {
 	return views
 }
 
-func listPunchNodeEntities(ctx context.Context, ops repository.OpsNodeRepository, nowFn func() time.Time) ([]model.PunchNode, error) {
-	if ops != nil {
-		items, err := ops.ListPunchNodes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		nodes := buildActivePunchNodes(items)
-		if len(nodes) > 0 {
-			return nodes, nil
-		}
+func listPunchNodeEntities(ctx context.Context, runtimeNodes repository.RuntimeNodeRepository, nowFn func() time.Time) ([]model.PunchNode, error) {
+	if runtimeNodes == nil {
+		return nil, nil
 	}
-	return defaultPunchNodes(nowFn), nil
+	items, err := runtimeNodes.ListPunchNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return buildActivePunchNodes(items, networkNow(nowFn).Unix()), nil
 }
 
-func buildActivePunchNodes(items []model.PunchNode) []model.PunchNode {
+func buildActivePunchNodes(items []model.PunchNode, nowUnix int64) []model.PunchNode {
 	nodes := make([]model.PunchNode, 0, len(items))
 	for _, item := range items {
-		if item.Status != "active" || item.Health != "healthy" {
+		if item.Status != "active" || item.Health != "healthy" || wireNodeStale(item.UpdatedAt, nowUnix) {
 			continue
 		}
 		if item.Endpoint == "" {
@@ -132,24 +109,6 @@ func buildActivePunchNodes(items []model.PunchNode) []model.PunchNode {
 	}
 	sortPunchNodes(nodes)
 	return nodes
-}
-
-func defaultPunchNodes(nowFn func() time.Time) []model.PunchNode {
-	now := networkNow(nowFn).Unix()
-	endpoint := bootstrap.DefaultPunchEndpoint()
-	if endpoint == "" {
-		return nil
-	}
-	return []model.PunchNode{{
-		NodeID:    "punch-default",
-		Name:      "Default Punch",
-		Endpoint:  endpoint,
-		Status:    "active",
-		Health:    "healthy",
-		Priority:  100,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}}
 }
 
 func sortPunchNodes(nodes []model.PunchNode) {

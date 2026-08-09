@@ -15,7 +15,7 @@ type OpsResourceService struct {
 	NetworkGroups  repository.NetworkDeviceGroupRepository
 	GroupRuntime   DeviceGroupService
 	EventPublisher NetworkEventPublisher
-	Ops            repository.OpsNodeRepository
+	RuntimeNodes   repository.RuntimeNodeRepository
 	NewNetworkID   func() string
 	Now            func() time.Time
 }
@@ -86,7 +86,7 @@ func (s OpsResourceService) CreateOpsNetwork(ctx context.Context, input OpsNetwo
 	if err != nil {
 		return OpsNetworkView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return OpsNetworkView{}, err
 	}
 	return s.opsNetworkView(ctx, item)
@@ -115,7 +115,7 @@ func (s OpsResourceService) UpdateOpsNetwork(ctx context.Context, networkID stri
 	if err != nil {
 		return OpsNetworkView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Devices, s.Networks, s.RuntimeNodes, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return OpsNetworkView{}, err
 	}
 	return s.opsNetworkView(ctx, item)

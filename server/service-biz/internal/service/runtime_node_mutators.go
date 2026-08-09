@@ -2,7 +2,7 @@ package service
 
 import "github.com/slan/service-biz/internal/model"
 
-func newRelayNode(nodeID string, now int64, input UpsertNodeInput) model.RelayNode {
+func newRelayNode(nodeID string, now int64, input UpsertRuntimeNodeInput) model.RelayNode {
 	return model.RelayNode{
 		NodeID:           nodeID,
 		Name:             input.Name,
@@ -22,7 +22,7 @@ func newRelayNode(nodeID string, now int64, input UpsertNodeInput) model.RelayNo
 	}
 }
 
-func mergeRelayNode(current model.RelayNode, input UpsertNodeInput, now int64) model.RelayNode {
+func mergeRelayNode(current model.RelayNode, input UpsertRuntimeNodeInput, now int64) model.RelayNode {
 	item := newRelayNode(current.NodeID, now, input)
 	item.CreatedAt = current.CreatedAt
 	if item.Name == "" {
@@ -83,7 +83,7 @@ func mergeRelayNode(current model.RelayNode, input UpsertNodeInput, now int64) m
 	return item
 }
 
-func newPunchNode(nodeID string, now int64, input UpsertNodeInput) model.PunchNode {
+func newPunchNode(nodeID string, now int64, input UpsertRuntimeNodeInput) model.PunchNode {
 	return model.PunchNode{
 		NodeID:         nodeID,
 		Name:           input.Name,
@@ -98,7 +98,7 @@ func newPunchNode(nodeID string, now int64, input UpsertNodeInput) model.PunchNo
 	}
 }
 
-func mergePunchNode(current model.PunchNode, input UpsertNodeInput, now int64) model.PunchNode {
+func mergePunchNode(current model.PunchNode, input UpsertRuntimeNodeInput, now int64) model.PunchNode {
 	item := newPunchNode(current.NodeID, now, input)
 	item.CreatedAt = current.CreatedAt
 	if item.Name == "" {

@@ -69,3 +69,12 @@ func TestOperatorAuthMiddlewareRequiresAdminForOperatorManagement(t *testing.T) 
 		t.Fatalf("operator management status = %d, want %d", response.Code, http.StatusForbidden)
 	}
 }
+
+func TestOperatorAuthMiddlewareRequiresAdminForServerNodeDeployment(t *testing.T) {
+	if !operatorAdminPath("/api/ops/server-nodes/server123/deploy") {
+		t.Fatal("server node deployment must require admin")
+	}
+	if !operatorAdminPath("/api/opt/server-nodes") {
+		t.Fatal("legacy ops alias must require admin")
+	}
+}

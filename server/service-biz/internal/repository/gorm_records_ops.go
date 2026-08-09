@@ -69,3 +69,31 @@ type gormPunchNodeRecord struct {
 	CreatedAt      int64  `gorm:"not null"`
 	UpdatedAt      int64  `gorm:"not null"`
 }
+
+type gormServerNodeRecord struct {
+	NodeID                string `gorm:"primaryKey;size:64"`
+	Name                  string `gorm:"size:255"`
+	Host                  string `gorm:"size:255;uniqueIndex"`
+	SSHPort               int    `gorm:"not null"`
+	SSHUsername           string `gorm:"size:128"`
+	SSHPasswordCiphertext string `gorm:"type:text"`
+	SSHHostKeyFingerprint string `gorm:"size:255"`
+	RelayUDPPort          int    `gorm:"not null"`
+	RelayAdminPort        int    `gorm:"not null"`
+	RelayTCPPort          int    `gorm:"not null"`
+	PunchUDPPort          int    `gorm:"not null"`
+	PunchHTTPPort         int    `gorm:"not null"`
+	APIProxyPort          int    `gorm:"not null"`
+	MQTTProxyPort         int    `gorm:"not null"`
+	RelayEnabled          bool   `gorm:"not null"`
+	PunchEnabled          bool   `gorm:"not null"`
+	ProxyEnabled          bool   `gorm:"not null"`
+	RelayNodeID           string `gorm:"size:64;index"`
+	RelayTCPNodeID        string `gorm:"size:64;index"`
+	PunchNodeID           string `gorm:"size:64;index"`
+	DeployStatus          string `gorm:"size:64;index"`
+	LastDeployError       string `gorm:"size:1024"`
+	LastDeployedAt        int64  `gorm:"not null"`
+	CreatedAt             int64  `gorm:"not null"`
+	UpdatedAt             int64  `gorm:"not null"`
+}

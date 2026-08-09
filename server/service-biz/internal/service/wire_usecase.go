@@ -9,10 +9,10 @@ import (
 )
 
 type WireServiceBase struct {
-	Ops      OpsNodeUseCase
+	Registry RuntimeNodeRegistryUseCase
 	Devices  repository.DeviceRepository
 	Networks repository.NetworkRepository
-	Nodes    repository.OpsNodeRepository
+	Nodes    repository.RuntimeNodeRepository
 	Now      func() time.Time
 }
 
@@ -43,6 +43,10 @@ func (s WireNodeService) ListDerpNodes(ctx context.Context) ([]WireNodeView, err
 	return derpWireNodeViews(items), nil
 }
 
+func (s WireNodeService) ListPunchNodes(ctx context.Context) ([]RuntimePunchNodeView, error) {
+	return s.Registry.ListPunchNodes(ctx)
+}
+
 func (s WireNodeService) DerpMap(ctx context.Context) (WireDerpMapView, error) {
 	items, err := s.Nodes.ListRelayNodes(ctx)
 	if err != nil {
@@ -52,7 +56,7 @@ func (s WireNodeService) DerpMap(ctx context.Context) (WireDerpMapView, error) {
 }
 
 func (s WireNodeService) UpsertRelayNode(ctx context.Context, input WireUpsertNodeInput) (WireNodeView, error) {
-	item, err := s.Ops.UpsertRelayNode(ctx, UpsertNodeInput{
+	item, err := s.Registry.UpsertRelayNode(ctx, UpsertRuntimeNodeInput{
 		NodeID:       normalizeWireNodeID(input.NodeID),
 		Name:         normalizeWireName(input.NodeID, input.Name, "Relay Node"),
 		DERPRegionID: normalizeWireRegion(input.RegionID),
@@ -75,7 +79,7 @@ func (s WireNodeService) UpsertRelayNode(ctx context.Context, input WireUpsertNo
 }
 
 func (s WireNodeService) UpsertDerpNode(ctx context.Context, input WireUpsertNodeInput) (WireNodeView, error) {
-	item, err := s.Ops.UpsertRelayNode(ctx, UpsertNodeInput{
+	item, err := s.Registry.UpsertRelayNode(ctx, UpsertRuntimeNodeInput{
 		NodeID:       normalizeWireNodeID(input.NodeID),
 		Name:         normalizeWireName(input.NodeID, input.Name, "DERP Node"),
 		DERPRegionID: normalizeWireRegion(input.RegionID),
@@ -97,6 +101,17 @@ func (s WireNodeService) UpsertDerpNode(ctx context.Context, input WireUpsertNod
 	return derpNodeView(relayNodeModel(node, "derp_tcp_tls_443")), nil
 }
 
+func (s WireNodeService) UpsertPunchNode(ctx context.Context, input WireUpsertNodeInput) (RuntimePunchNodeView, error) {
+	return s.Registry.UpsertPunchNode(ctx, UpsertRuntimeNodeInput{
+		NodeID:   normalizeWireNodeID(input.NodeID),
+		Name:     normalizeWireName(input.NodeID, input.Name, "Punch Node"),
+		Endpoint: wirekit.HostPort(input.Host, input.UDPPort),
+		Priority: input.Priority,
+		Status:   wireNodeStatus(input.Enabled, input.Healthy),
+		Health:   wirePunchNodeHealth(input.Enabled, input.Healthy),
+	})
+}
+
 func (s WireNodeService) HeartbeatRelayNode(ctx context.Context, input WireNodeStatusInput) (WireNodeView, error) {
 	return s.UpdateRelayNodeStatus(ctx, WireNodeStatusInput{
 		RegionID:          input.RegionID,
@@ -113,6 +128,22 @@ func (s WireNodeService) HeartbeatDerpNode(ctx context.Context, input WireNodeSt
 		Healthy:           input.Healthy,
 		TicketKeyRotation: input.TicketKeyRotation,
 	})
+}
+
+func (s WireNodeService) HeartbeatPunchNode(ctx context.Context, input WireNodeStatusInput) (RuntimePunchNodeView, error) {
+	item, ok, err := s.Nodes.GetPunchNode(ctx, normalizeWireNodeID(input.NodeID))
+	if err != nil {
+		return RuntimePunchNodeView{}, err
+	}
+	if !ok {
+		return RuntimePunchNodeView{}, ErrNotFound
+	}
+	applyWirePunchNodeHealth(&item, input.Enabled, input.Healthy)
+	item.UpdatedAt = wirekit.NowUnix()
+	if err := s.Nodes.SavePunchNode(ctx, item); err != nil {
+		return RuntimePunchNodeView{}, err
+	}
+	return runtimePunchNodeViewFromModel(item), nil
 }
 
 func (s WireNodeService) UpdateRelayNodeStatus(ctx context.Context, input WireNodeStatusInput) (WireNodeView, error) {
@@ -153,14 +184,23 @@ func (s WireNodeService) DeleteRelayNode(ctx context.Context, input WireNodeDele
 	if _, err := s.requireRelayNodeRegion(ctx, input.RegionID, input.NodeID); err != nil {
 		return err
 	}
-	return s.Ops.DeleteRelayNode(ctx, input.NodeID)
+	return s.Registry.DeleteRelayNode(ctx, input.NodeID)
 }
 
 func (s WireNodeService) DeleteDerpNode(ctx context.Context, input WireNodeDeleteInput) error {
 	if _, err := s.requireDerpNodeRegion(ctx, input.RegionID, input.NodeID); err != nil {
 		return err
 	}
-	return s.Ops.DeleteRelayNode(ctx, input.NodeID)
+	return s.Registry.DeleteRelayNode(ctx, input.NodeID)
+}
+
+func (s WireNodeService) DeletePunchNode(ctx context.Context, input WireNodeDeleteInput) error {
+	if _, ok, err := s.Nodes.GetPunchNode(ctx, normalizeWireNodeID(input.NodeID)); err != nil {
+		return err
+	} else if !ok {
+		return ErrNotFound
+	}
+	return s.Registry.DeletePunchNode(ctx, input.NodeID)
 }
 
 func (s WirePeerService) PeerAuthz(ctx context.Context, peerID string) (WirePeerAuthzView, error) {

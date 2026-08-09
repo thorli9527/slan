@@ -8,12 +8,11 @@ import { NetworksPageComponent } from './features/networks/networks-page.compone
 import { NetworkDetailPageComponent } from './features/networks/network-detail-page.component';
 import { OperatorsPageComponent } from './features/operators/operators-page.component';
 import { OverviewPageComponent } from './features/overview/overview-page.component';
-import { PunchNodesPageComponent } from './features/punch-nodes/punch-nodes-page.component';
-import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
+import { ServerNodesPageComponent } from './features/server-nodes/server-nodes-page.component';
 import { OPS_API } from './api-paths';
 
 // 运营后台左侧导航的页面标识，必须和模板中的条件渲染保持一致。
-type NavId = 'overview' | 'operators' | 'auditEvents' | 'relayNodes' | 'punchNodes' | 'networks' | 'devices' | 'deviceGroups';
+type NavId = 'overview' | 'operators' | 'auditEvents' | 'serverNodes' | 'networks' | 'devices' | 'deviceGroups';
 type NavItem = { id: NavId; label: string; desc: string };
 type NavMenu = { id: string; label: string; defaultId: NavId; items: NavItem[] };
 type QuickRenameKind = 'device' | 'network' | 'deviceGroup' | 'securityGroup';
@@ -34,40 +33,17 @@ type OperatorForm = Partial<OperatorUser> & {
   confirmPassword?: string;
 };
 
-// Relay/DERP 中继节点模型，描述中继容量、协议入口和健康状态。
-type RelayNode = {
-  nodeId: string;
-  name: string;
-  transport: 'relay_udp' | 'derp_tcp_tls_443';
-  publicAddr: string;
-  maxBandwidthMbps: number;
-  monthlyTrafficGb: number;
-  usedTrafficGb: number;
-  maxSessions: number;
-  activeSessions: number;
-  status: 'active' | 'maintenance' | 'disabled';
-  health: 'healthy' | 'warning' | 'down';
+type ServerNode = {
+  nodeId: string; name: string; host: string; sshPort: number; sshUsername: string;
+  sshPasswordConfigured: boolean; sshHostKeyFingerprint: string;
+  relayUdpPort: number; relayAdminPort: number; relayTcpPort: number; punchUdpPort: number; punchHttpPort: number;
+  apiProxyPort: number; mqttProxyPort: number; apiProxyUrl: string; mqttProxyUrl: string;
+  relayEnabled: boolean; punchEnabled: boolean; proxyEnabled: boolean;
+  relayNodeId: string; punchNodeId: string; deployStatus: 'not_deployed' | 'deploying' | 'succeeded' | 'failed';
+  lastDeployError: string; lastDeployedAt: string; createdAt: string; updatedAt: string;
 };
 
-type RelayNodeForm = Partial<Omit<RelayNode, 'publicAddr'>> & {
-  publicIp?: string;
-  publicPort?: number;
-};
-
-// P2P 打洞节点模型，biz 以公网 UDP IP 和端口直接管理 punch-service。
-type PunchNode = {
-  nodeId: string;
-  name: string;
-  publicUdpIp: string;
-  publicUdpPort: number;
-  maxSessions: number;
-  activeSessions: number;
-  status: 'active' | 'maintenance' | 'disabled';
-  health: 'healthy' | 'warning' | 'down';
-  priority?: number;
-  createdAt: string;
-  updatedAt: string;
-};
+type ServerNodeForm = Partial<ServerNode> & { sshPassword?: string };
 
 // 客户资源模型，聚合地域、Relay 用量和状态。
 type Customer = {
@@ -156,8 +132,7 @@ type NetworkPolicyDetail = {
     AuditEventsPageComponent,
     OverviewPageComponent,
     OperatorsPageComponent,
-    RelayNodesPageComponent,
-    PunchNodesPageComponent,
+    ServerNodesPageComponent,
     DevicesPageComponent,
     NetworksPageComponent,
     NetworkDetailPageComponent,
@@ -186,10 +161,9 @@ export class AppComponent implements OnInit, OnDestroy {
     {
       id: 'nodes',
       label: '节点管理',
-      defaultId: 'punchNodes',
+      defaultId: 'serverNodes',
       items: [
-        { id: 'punchNodes', label: '打洞节点', desc: 'P2P Punch 节点管理' },
-        { id: 'relayNodes', label: '中继节点', desc: 'Relay/DERP 容量管理' },
+        { id: 'serverNodes', label: '服务器节点', desc: 'SSH 自动部署网络与边缘代理服务' },
       ],
     },
   ];
@@ -208,10 +182,7 @@ export class AppComponent implements OnInit, OnDestroy {
   showCurrentPasswordDialog = false;
   showOperatorPasswordDialog = false;
   showOperatorDialog = false;
-  showRelayNodeDialog = false;
-  showPunchNodeDialog = false;
-  relayNodeMessage = '';
-  punchNodeMessage = '';
+  showServerNodeDialog = false;
   showCustomerDialog = false;
   showDeviceDialog = false;
   showDeviceGroupAssignmentDialog = false;
@@ -224,8 +195,7 @@ export class AppComponent implements OnInit, OnDestroy {
   showQuickRenameDialog = false;
   selectedCustomer: Customer | null = null;
   selectedOperator: OperatorUser | null = null;
-  selectedRelayNode: RelayNode | null = null;
-  selectedPunchNode: PunchNode | null = null;
+  selectedServerNode: ServerNode | null = null;
   selectedDevice: OpsDevice | null = null;
   deviceGroupAssignmentDevice: OpsDevice | null = null;
   oldPassword = '';
@@ -235,8 +205,9 @@ export class AppComponent implements OnInit, OnDestroy {
   operatorConfirmPassword = '';
   passwordMessage = '';
   operatorForm: OperatorForm = {};
-  relayNodeForm: RelayNodeForm = {};
-  punchNodeForm: Partial<PunchNode> = {};
+  serverNodeForm: ServerNodeForm = {};
+  serverNodeMessage = '';
+  deployingServerNodeId = '';
   customerForm: Partial<Customer> = {};
   deviceForm: Partial<OpsDevice> = {};
   deviceKeyword = '';
@@ -340,8 +311,7 @@ export class AppComponent implements OnInit, OnDestroy {
   };
 
   operators: OperatorUser[] = [];
-  relayNodes: RelayNode[] = [];
-  punchNodes: PunchNode[] = [];
+  serverNodes: ServerNode[] = [];
   customers: Customer[] = [];
   devices: OpsDevice[] = [];
   deviceCredentials: DeviceCredential[] = [];
@@ -401,13 +371,14 @@ export class AppComponent implements OnInit, OnDestroy {
     this.loading = true;
     this.apiMessage = '';
     try {
-      const [operators, auditEvents, relayNodes, punchNodes, customers, devices, credentials, networks, groups] = await Promise.all([
+      const [operators, auditEvents, serverNodes, customers, devices, credentials, networks, groups] = await Promise.all([
 		this.operatorRole === 'admin'
 		  ? this.request<{ items: OperatorUser[] }>('GET', OPS_API.operators)
 		  : Promise.resolve({ items: [] as OperatorUser[] }),
         this.request<{ items: AuditEvent[] }>('GET', `${OPS_API.auditEvents}?limit=200`),
-        this.request<{ items: RelayNode[] }>('GET', OPS_API.relayNodes),
-        this.request<{ items: PunchNode[] }>('GET', OPS_API.punchNodes),
+			this.operatorRole === 'admin'
+		  ? this.request<{ items: ServerNode[] }>('GET', OPS_API.serverNodes)
+		  : Promise.resolve({ items: [] as ServerNode[] }),
         this.request<{ items: Customer[] }>('GET', OPS_API.customers),
         this.request<{ items: OpsDevice[] }>('GET', OPS_API.devices),
         this.request<{ items: DeviceCredential[] }>('GET', OPS_API.deviceCredentials),
@@ -416,12 +387,7 @@ export class AppComponent implements OnInit, OnDestroy {
       ]);
       this.operators = operators.items.map((item) => ({ ...item, lastLoginAt: this.formatDateTime(item.lastLoginAt) }));
       this.auditEvents = auditEvents.items.map((item) => ({ ...item, createdAt: this.formatDateTime(item.createdAt) }));
-      this.relayNodes = relayNodes.items;
-      this.punchNodes = punchNodes.items.map((item) => ({
-        ...item,
-        createdAt: this.formatDateTime(item.createdAt),
-        updatedAt: this.formatDateTime(item.updatedAt),
-      }));
+      this.serverNodes = serverNodes.items.map((item) => this.formatServerNode(item));
       this.customers = customers.items;
       this.devices = devices.items.map((item) => this.formatDevice(item));
       this.deviceCredentials = credentials.items.map((item) => this.formatDeviceCredential(item));
@@ -432,8 +398,7 @@ export class AppComponent implements OnInit, OnDestroy {
     } catch (error) {
       this.operators = [];
       this.auditEvents = [];
-      this.relayNodes = [];
-      this.punchNodes = [];
+      this.serverNodes = [];
       this.customers = [];
       this.devices = [];
       this.deviceCredentials = [];
@@ -532,11 +497,12 @@ export class AppComponent implements OnInit, OnDestroy {
 	return this.visibleNavItems.find((item) => item.id === this.active) ?? this.visibleNavItems[0];
   }
 
-	get visibleNavItems(): NavItem[] {
+  get visibleNavItems(): NavItem[] {
 	  const standalone = this.operatorRole === 'admin'
       ? this.navItems
       : this.navItems.filter((item) => item.id !== 'operators');
-    return [...standalone, ...this.resourceNavItems, ...this.navMenus.flatMap((menu) => menu.items)];
+	const nodeItems = this.navMenus.flatMap((menu) => menu.items).filter((item) => this.operatorRole === 'admin' || item.id !== 'serverNodes');
+    return [...standalone, ...this.resourceNavItems, ...nodeItems];
 	}
 
   get activeNavMenu(): NavMenu | undefined {
@@ -594,36 +560,8 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.customers.filter((customer) => customer.status === 'limited').length;
   }
 
-  get activeRelayNodes(): number {
-    return this.relayNodes.filter((node) => node.status === 'active').length;
-  }
-
-  get udpRelayNodes(): RelayNode[] {
-    return this.relayNodes.filter((node) => node.transport === 'relay_udp');
-  }
-
-  get tcpRelayNodes(): RelayNode[] {
-    return this.relayNodes.filter((node) => node.transport === 'derp_tcp_tls_443');
-  }
-
-  get activeUdpRelayNodes(): number {
-    return this.udpRelayNodes.filter((node) => node.status === 'active').length;
-  }
-
-  get activeTcpRelayNodes(): number {
-    return this.tcpRelayNodes.filter((node) => node.status === 'active').length;
-  }
-
-  get activePunchNodes(): number {
-    return this.punchNodes.filter((node) => node.status === 'active').length;
-  }
-
-  get healthyPunchNodes(): number {
-    return this.punchNodes.filter((node) => node.health === 'healthy').length;
-  }
-
-  get totalPunchSessions(): number {
-    return this.punchNodes.reduce((sum, node) => sum + node.activeSessions, 0);
+  get failedServerNodeCount(): number {
+    return this.serverNodes.filter((node) => node.deployStatus === 'failed').length;
   }
 
   get addressStats(): Array<{ label: string; count: number; percent: number }> {
@@ -659,18 +597,6 @@ export class AppComponent implements OnInit, OnDestroy {
       window.history.pushState({}, '', '/');
     }
     this.active = id;
-  }
-
-  relayNodePercent(node: RelayNode): number {
-    return Math.min(100, Math.round((node.usedTrafficGb / node.monthlyTrafficGb) * 100));
-  }
-
-  relayTransportLabel(transport: RelayNode['transport']): string {
-    return transport === 'derp_tcp_tls_443' ? 'TCP 中继' : 'UDP 中继';
-  }
-
-  punchNodePercent(node: PunchNode): number {
-    return Math.min(100, Math.round((node.activeSessions / Math.max(1, node.maxSessions)) * 100));
   }
 
   formatBytes(value: number | undefined): string {
@@ -755,97 +681,121 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
-  openRelayNodeDialog(node?: RelayNode): void {
-    this.selectedRelayNode = node ?? null;
-    this.relayNodeMessage = '';
-    this.relayNodeForm = node ? {
-      ...node,
-      ...this.parseRelayPublicAddress(node.publicAddr, node.transport),
-    } : {
-      name: '',
-      transport: 'relay_udp',
-      publicIp: '',
-      publicPort: 29110,
-      maxBandwidthMbps: 1000,
-      monthlyTrafficGb: 10240,
-      usedTrafficGb: 0,
-      maxSessions: 5000,
-      activeSessions: 0,
-      status: 'active',
-      health: 'healthy',
+  openServerNodeDialog(node?: ServerNode): void {
+    this.selectedServerNode = node ?? null;
+    this.serverNodeMessage = '';
+    this.serverNodeForm = node ? { ...node, sshPassword: '' } : {
+      name: '', host: '', sshPort: 22, sshUsername: 'root', sshPassword: '',
+      relayUdpPort: 29110, relayAdminPort: 29111, relayTcpPort: 29120, punchUdpPort: 29130, punchHttpPort: 29131,
+      apiProxyPort: 28080, mqttProxyPort: 1883,
+      relayEnabled: true, punchEnabled: true, proxyEnabled: true,
     };
-    this.showRelayNodeDialog = true;
+    this.showServerNodeDialog = true;
   }
 
-  closeRelayNodeDialog(): void {
-    this.showRelayNodeDialog = false;
-    this.selectedRelayNode = null;
-    this.relayNodeMessage = '';
+  closeServerNodeDialog(): void {
+    this.showServerNodeDialog = false;
+    this.selectedServerNode = null;
+    this.serverNodeMessage = '';
   }
 
-  async saveRelayNodeDialog(): Promise<void> {
-    this.relayNodeMessage = '';
-    const transport = this.relayNodeForm.transport ?? 'relay_udp';
-    const publicIp = this.relayNodeForm.publicIp?.trim() ?? '';
-    const publicPort = Number(this.relayNodeForm.publicPort ?? 0);
-    if (!this.relayNodeForm.name?.trim() || !publicIp) {
-      this.relayNodeMessage = '请输入节点名称和公网 IP';
+  async saveServerNode(): Promise<void> {
+    this.serverNodeMessage = '';
+    const form = this.serverNodeForm;
+    if (!form.name?.trim() || !form.host?.trim() || form.sshUsername?.trim() !== 'root') {
+      this.serverNodeMessage = '请输入名称、公网 IP，并使用 root SSH 用户';
       return;
     }
-    if (!this.isIPv4Address(publicIp)) {
-      this.relayNodeMessage = '公网 IP 必须使用 IPv4 地址，不能使用域名';
+    if (!this.isIPv4Address(form.host.trim())) {
+      this.serverNodeMessage = '服务器地址必须使用公网 IPv4 地址';
       return;
     }
-    if (publicPort <= 0 || publicPort > 65535) {
-      this.relayNodeMessage = '公网端口必须在 1-65535 范围内';
-      return;
-    }
-    const publicAddr = this.relayPublicAddress(transport, publicIp, publicPort);
-    const duplicated = this.relayNodes.some((node) => node.publicAddr === publicAddr && node.nodeId !== this.selectedRelayNode?.nodeId);
-    if (duplicated) {
-      this.relayNodeMessage = '公网地址已存在，不能重复配置到多个中继节点';
-      return;
-    }
-    if (this.selectedRelayNode?.status === 'active' && this.relayNodeForm.status !== 'active' &&
-        !await this.requestConfirmation('变更中继节点状态', `节点 ${this.selectedRelayNode.name} 将停止承载新的中继连接。`, '确认变更')) {
+    if (!this.selectedServerNode && !form.sshPassword) {
+      this.serverNodeMessage = '请输入 SSH 密码';
       return;
     }
     try {
-      const isEdit = Boolean(this.selectedRelayNode);
-      const path = isEdit ? OPS_API.relayNode(this.selectedRelayNode!.nodeId) : OPS_API.relayNodes;
-      const node = await this.request<RelayNode>(isEdit ? 'PATCH' : 'POST', path, {
-        nodeId: this.selectedRelayNode?.nodeId,
-        name: this.relayNodeForm.name,
-        transport,
-        publicAddr,
-        maxBandwidthMbps: this.relayNodeForm.maxBandwidthMbps,
-        monthlyTrafficGb: this.relayNodeForm.monthlyTrafficGb,
-        maxSessions: this.relayNodeForm.maxSessions,
-        status: this.relayNodeForm.status,
+      const isEdit = Boolean(this.selectedServerNode);
+      const path = isEdit ? OPS_API.serverNode(this.selectedServerNode!.nodeId) : OPS_API.serverNodes;
+      const node = await this.request<ServerNode>(isEdit ? 'PATCH' : 'POST', path, {
+        nodeId: this.selectedServerNode?.nodeId,
+        name: form.name.trim(), host: form.host.trim(), sshPort: Number(form.sshPort),
+        sshUsername: 'root', sshPassword: form.sshPassword || '',
+        relayUdpPort: Number(form.relayUdpPort), relayAdminPort: Number(form.relayAdminPort), relayTcpPort: Number(form.relayTcpPort),
+        punchUdpPort: Number(form.punchUdpPort), punchHttpPort: Number(form.punchHttpPort),
+        apiProxyPort: Number(form.apiProxyPort), mqttProxyPort: Number(form.mqttProxyPort),
+        relayEnabled: Boolean(form.relayEnabled), punchEnabled: Boolean(form.punchEnabled), proxyEnabled: Boolean(form.proxyEnabled),
       });
-      this.relayNodes = [node, ...this.relayNodes.filter((item) => item.nodeId !== node.nodeId)];
-      this.apiMessage = `${this.relayTransportLabel(node.transport)} ${node.name} 已保存`;
-      this.closeRelayNodeDialog();
+      const formatted = this.formatServerNode(node);
+      this.serverNodes = [formatted, ...this.serverNodes.filter((item) => item.nodeId !== node.nodeId)];
+      this.apiMessage = `服务器节点 ${node.name} 已保存`;
+      this.closeServerNodeDialog();
       this.notifyStateChanged();
     } catch (error) {
-      this.relayNodeMessage = this.errorMessage(error);
+      this.serverNodeMessage = this.errorMessage(error);
       this.notifyStateChanged();
     }
   }
 
-  private relayPublicAddress(transport: RelayNode['transport'], publicIp: string, publicPort: number): string {
-    const scheme = transport === 'derp_tcp_tls_443' ? 'derp' : 'udp';
-    return `${scheme}://${publicIp}:${publicPort}`;
+  async deployServerNode(node: ServerNode): Promise<void> {
+	const enabled = [node.relayEnabled ? '中继' : '', node.punchEnabled ? '打洞' : '', node.proxyEnabled ? 'API/MQTT 代理' : ''].filter(Boolean).join('、') || '无';
+	let confirmedHostKey = node.sshHostKeyFingerprint || '';
+	if (!confirmedHostKey) {
+	  this.apiMessage = `正在读取 ${node.host} 的 SSH 主机指纹`;
+	  this.notifyStateChanged();
+	  try {
+		const hostKey = await this.request<{ fingerprint: string }>('POST', OPS_API.serverNodeHostKey(node.nodeId), {});
+		confirmedHostKey = hostKey.fingerprint;
+	  } catch (error) {
+		this.apiMessage = this.errorMessage(error);
+		this.notifyStateChanged();
+		return;
+	  }
+	  if (!await this.requestConfirmation(
+		'确认 SSH 主机指纹',
+		`首次部署 ${node.host}:${node.sshPort}，请确认主机指纹：${confirmedHostKey}`,
+		'信任并部署',
+	  )) return;
+	} else if (!await this.requestConfirmation('部署节点服务', `将在 ${node.host} 应用能力配置：${enabled}；未启用的服务会被停止。`, '开始部署')) return;
+    this.deployingServerNodeId = node.nodeId;
+    this.apiMessage = `正在部署 ${node.name}，请勿重复操作`;
+    this.notifyStateChanged();
+    try {
+      const updated = await this.request<ServerNode>('POST', OPS_API.serverNodeDeploy(node.nodeId), { sshHostKeyFingerprint: confirmedHostKey });
+      const formatted = this.formatServerNode(updated);
+      this.serverNodes = [formatted, ...this.serverNodes.filter((item) => item.nodeId !== node.nodeId)];
+	  this.apiMessage = `${node.name} 的节点能力配置已部署`;
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      try {
+        const response = await this.request<{ items: ServerNode[] }>('GET', OPS_API.serverNodes);
+        this.serverNodes = response.items.map((item) => this.formatServerNode(item));
+      } catch (_) {}
+    } finally {
+      this.deployingServerNodeId = '';
+      this.notifyStateChanged();
+    }
   }
 
-  private parseRelayPublicAddress(publicAddr: string, transport: RelayNode['transport']): Pick<RelayNodeForm, 'publicIp' | 'publicPort'> {
-    const fallbackPort = transport === 'derp_tcp_tls_443' ? 29120 : 29110;
-    const value = publicAddr.trim();
-    const match = value.match(/^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?([^:/]+):(\d+)$/);
-    if (!match) {
-      return { publicIp: value, publicPort: fallbackPort };
+  async deleteServerNode(node: ServerNode): Promise<void> {
+    if (!await this.requestConfirmation('删除服务器节点', `仅删除 ${node.name} 的管理记录，不会卸载远端服务。`, '确认删除')) return;
+    try {
+      await this.request('DELETE', OPS_API.serverNode(node.nodeId));
+      this.serverNodes = this.serverNodes.filter((item) => item.nodeId !== node.nodeId);
+      this.apiMessage = `服务器节点 ${node.name} 已删除`;
+      this.notifyStateChanged();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      this.notifyStateChanged();
     }
-    return { publicIp: match[1], publicPort: Number(match[2]) || fallbackPort };
+  }
+
+  serverNodeStatusLabel(status: ServerNode['deployStatus']): string {
+    return ({ not_deployed: '未部署', deploying: '部署中', succeeded: '部署成功', failed: '部署失败' })[status] || status;
+  }
+
+  private formatServerNode(node: ServerNode): ServerNode {
+    return { ...node, lastDeployedAt: this.formatDateTime(node.lastDeployedAt), createdAt: this.formatDateTime(node.createdAt), updatedAt: this.formatDateTime(node.updatedAt) };
   }
 
   private isIPv4Address(value: string): boolean {
@@ -857,86 +807,6 @@ export class AppComponent implements OnInit, OnDestroy {
       const number = Number(part);
       return number >= 0 && number <= 255 && String(number) === part;
     });
-  }
-
-  openPunchNodeDialog(node?: PunchNode): void {
-    this.selectedPunchNode = node ?? null;
-    this.punchNodeMessage = '';
-    this.punchNodeForm = node ? { ...node } : {
-      name: '',
-      publicUdpIp: '',
-      publicUdpPort: 29130,
-      maxSessions: 10000,
-      activeSessions: 0,
-      status: 'active',
-      health: 'healthy',
-      priority: this.punchNodes.length + 1,
-    };
-    this.showPunchNodeDialog = true;
-  }
-
-  closePunchNodeDialog(): void {
-    this.showPunchNodeDialog = false;
-    this.selectedPunchNode = null;
-    this.punchNodeMessage = '';
-  }
-
-  async savePunchNodeDialog(): Promise<void> {
-    this.punchNodeMessage = '';
-    if (!this.punchNodeForm.name?.trim() || !this.punchNodeForm.publicUdpIp?.trim()) {
-      this.punchNodeMessage = '请输入打洞节点名称和公网 UDP IP';
-      return;
-    }
-    const publicUdpIp = this.punchNodeForm.publicUdpIp.trim();
-    if (!this.isIPv4Address(publicUdpIp)) {
-      this.punchNodeMessage = '公网 UDP IP 必须使用 IPv4 地址，不能使用域名';
-      return;
-    }
-    const publicUdpPort = Number(this.punchNodeForm.publicUdpPort ?? 0);
-    if (publicUdpPort <= 0 || publicUdpPort > 65534) {
-      this.punchNodeMessage = '公网 UDP 端口必须在 1-65534 范围内';
-      return;
-    }
-    const duplicated = this.punchNodes.some((node) =>
-      node.publicUdpIp === publicUdpIp &&
-      node.publicUdpPort === publicUdpPort &&
-      node.nodeId !== this.selectedPunchNode?.nodeId
-    );
-    if (duplicated) {
-      this.punchNodeMessage = '公网 UDP IP 和端口已存在，不能重复配置到多个打洞节点';
-      return;
-    }
-    if (this.selectedPunchNode?.status === 'active' && this.punchNodeForm.status !== 'active' &&
-        !await this.requestConfirmation('变更打洞节点状态', `节点 ${this.selectedPunchNode.name} 将停止承载新的打洞会话。`, '确认变更')) {
-      return;
-    }
-    try {
-      const isEdit = Boolean(this.selectedPunchNode);
-      const path = isEdit ? OPS_API.punchNode(this.selectedPunchNode!.nodeId) : OPS_API.punchNodes;
-      const node = await this.request<PunchNode>(isEdit ? 'PATCH' : 'POST', path, {
-        nodeId: this.selectedPunchNode?.nodeId,
-        name: this.punchNodeForm.name,
-        publicUdpIp,
-        publicUdpPort,
-        maxSessions: Number(this.punchNodeForm.maxSessions ?? 0),
-        status: this.punchNodeForm.status,
-        health: this.punchNodeForm.health,
-        priority: Number(this.punchNodeForm.priority ?? 0),
-      });
-      const formatted = {
-        ...node,
-        createdAt: this.formatDateTime(node.createdAt),
-        updatedAt: this.formatDateTime(node.updatedAt),
-      };
-      this.punchNodes = [formatted, ...this.punchNodes.filter((item) => item.nodeId !== node.nodeId)]
-        .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0));
-      this.apiMessage = `UDP 打洞 ${formatted.name} 已保存`;
-      this.closePunchNodeDialog();
-      this.notifyStateChanged();
-    } catch (error) {
-      this.punchNodeMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
   }
 
   openCustomerDialog(customer?: Customer): void {
@@ -1158,78 +1028,6 @@ export class AppComponent implements OnInit, OnDestroy {
 	  return '新密码长度需为 12 至 72 位';
     }
     return '';
-  }
-
-  async toggleRelayNode(node: RelayNode): Promise<void> {
-    const enabled = node.status !== 'active';
-    if (!enabled &&
-        !await this.requestConfirmation('停用中继节点', `停用 ${node.name} 后，该节点将不再承载新的中继连接。`, '确认停用')) {
-      return;
-    }
-    try {
-      const updated = await this.request<RelayNode>('PATCH', OPS_API.relayNodeStatus(node.nodeId), {
-        enabled,
-      });
-      Object.assign(node, updated);
-      this.apiMessage = `${this.relayTransportLabel(node.transport)} ${node.name} 已${enabled ? '启用' : '停用'}`;
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  async deleteRelayNode(node: RelayNode): Promise<void> {
-    if (!await this.requestConfirmation('删除中继节点', `删除 ${node.name} 后无法恢复，请确认该节点已不再承载业务。`, '确认删除')) {
-      return;
-    }
-    try {
-      await this.request('DELETE', OPS_API.relayNode(node.nodeId));
-      this.relayNodes = this.relayNodes.filter((item) => item.nodeId !== node.nodeId);
-      this.apiMessage = `${this.relayTransportLabel(node.transport)} ${node.name} 已删除`;
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  async togglePunchNode(node: PunchNode): Promise<void> {
-    const enabled = node.status !== 'active';
-    if (!enabled &&
-        !await this.requestConfirmation('停用打洞节点', `停用 ${node.name} 后，该节点将不再承载新的打洞会话。`, '确认停用')) {
-      return;
-    }
-    try {
-      const updated = await this.request<PunchNode>('PATCH', OPS_API.punchNodeStatus(node.nodeId), {
-        enabled,
-      });
-      Object.assign(node, {
-        ...updated,
-        createdAt: this.formatDateTime(updated.createdAt),
-        updatedAt: this.formatDateTime(updated.updatedAt),
-      });
-      this.apiMessage = `UDP 打洞 ${node.name} 已${enabled ? '启用' : '停用'}`;
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
-  }
-
-  async deletePunchNode(node: PunchNode): Promise<void> {
-    if (!await this.requestConfirmation('删除打洞节点', `删除 ${node.name} 后无法恢复，请确认该节点已不再承载业务。`, '确认删除')) {
-      return;
-    }
-    try {
-      await this.request('DELETE', OPS_API.punchNode(node.nodeId));
-      this.punchNodes = this.punchNodes.filter((item) => item.nodeId !== node.nodeId);
-      this.apiMessage = `UDP 打洞 ${node.name} 已删除`;
-      this.notifyStateChanged();
-    } catch (error) {
-      this.apiMessage = this.errorMessage(error);
-      this.notifyStateChanged();
-    }
   }
 
   async toggleDevice(device: OpsDevice): Promise<void> {

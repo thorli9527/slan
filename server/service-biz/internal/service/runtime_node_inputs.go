@@ -1,6 +1,6 @@
 package service
 
-type UpsertNodeInput struct {
+type UpsertRuntimeNodeInput struct {
 	NodeID           string `json:"nodeId"`
 	Name             string `json:"name"`
 	DERPRegionID     string `json:"-"`

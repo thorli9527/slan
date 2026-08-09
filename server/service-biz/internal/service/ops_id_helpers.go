@@ -8,7 +8,7 @@ func newOpsOperatorID(operators repository.OperatorRepository) string {
 	})
 }
 
-func opsNodeID(nodes repository.OpsNodeRepository, current, kind string) string {
+func runtimeNodeID(nodes repository.RuntimeNodeRepository, current, kind string) string {
 	if current != "" {
 		return current
 	}

@@ -12,6 +12,7 @@ type DeviceSessionHandler struct {
 	DeviceSessions    servicepkg.DeviceSessionUseCase
 	NetworkRuntime    servicepkg.NetworkRuntimeUseCase
 	NetworkConfigView servicepkg.NetworkCoreUseCase
+	ServerNodes       servicepkg.OpsServerNodeUseCase
 	Limiter           *deviceRequestLimiter
 }
 
@@ -44,9 +45,10 @@ func (h DeviceSessionHandler) RenewDeviceSession(w http.ResponseWriter, r *http.
 		r.Context(),
 		h.NetworkRuntime,
 		h.NetworkConfigView,
+		h.ServerNodes,
 		item.Profile.Device.DeviceID,
-		func(punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any) map[string]any {
-			return boundDeviceSessionPayload(item, punchNodes, networkConfigs)
+		func(punchNodes []servicepkg.PunchNodeView, proxyNodes []servicepkg.OpsServerNodeView, networkConfigs []map[string]any) map[string]any {
+			return boundDeviceSessionPayload(item, punchNodes, proxyNodes, networkConfigs)
 		},
 	))
 }

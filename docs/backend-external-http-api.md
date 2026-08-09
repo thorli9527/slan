@@ -165,18 +165,19 @@ DNS 管理能力只挂在 Opt 下。
 | PATCH | `/api/ops/devices/{deviceId}` | `{alias,status,enabled}` | `OpsDeviceView` | 更新设备状态 |
 | DELETE | `/api/ops/devices/{deviceId}` | - | `204` | 删除设备 |
 
-## Ops Network Nodes
+## Ops Server Nodes
 
 | Method | Path | Request | Response | 用途 |
 | --- | --- | --- | --- | --- |
-| GET | `/api/ops/relay-nodes` | - | `{items}` | relay 节点列表 |
-| POST | `/api/ops/relay-nodes` | `OpsRelayNode` | `OpsRelayNode` | 创建 relay 节点 |
-| PATCH | `/api/ops/relay-nodes/{nodeId}` | `OpsRelayNode` | `OpsRelayNode` | 更新 relay 节点 |
-| DELETE | `/api/ops/relay-nodes/{nodeId}` | - | `204 No Content` | 删除 relay/DERP 节点 |
-| GET | `/api/ops/punch-nodes` | - | `{items}` | punch 节点列表 |
-| POST | `/api/ops/punch-nodes` | `{name,region,publicUdpIp,publicUdpPort,maxSessions,status,health,priority}` | `OpsPunchNode` | 创建 punch 节点 |
-| PATCH | `/api/ops/punch-nodes/{nodeId}` | same as create | `OpsPunchNode` | 更新 punch 节点 |
-| DELETE | `/api/ops/punch-nodes/{nodeId}` | - | `204 No Content` | 删除 punch 节点 |
+| GET | `/api/ops/server-nodes` | - | `{items}` | 服务器节点列表 |
+| POST | `/api/ops/server-nodes` | 服务器、SSH 和服务端口配置 | `OpsServerNode` | 创建服务器节点 |
+| PATCH | `/api/ops/server-nodes/{nodeId}` | same as create | `OpsServerNode` | 更新服务器节点及启用的服务 |
+| POST | `/api/ops/server-nodes/{nodeId}/ssh-host-key` | `{}` | `{fingerprint}` | 首次部署前探测 SSH 主机指纹 |
+| POST | `/api/ops/server-nodes/{nodeId}/deploy` | `{sshHostKeyFingerprint}` | `OpsServerNode` | 确认首次主机指纹后，通过 SSH 部署中继、打洞和代理服务 |
+| DELETE | `/api/ops/server-nodes/{nodeId}` | - | `{ok:true}` | 删除服务器节点及其运行时注册记录 |
+
+服务器节点是运营侧唯一的节点管理入口。Relay 与 Punch 进程通过内部 Wire API 自注册并
+维持心跳，其运行时记录仅用于路径调度，不提供独立的外部 CRUD API。
 
 ## MQTT Broker Webhooks
 

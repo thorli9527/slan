@@ -11,7 +11,7 @@ type RouteDependencies struct {
 	OperatorPasswords servicepkg.OpsOperatorPasswordUseCase
 	OverviewDashboard servicepkg.OpsDashboardUseCase
 	OverviewAudit     servicepkg.OpsAuditUseCase
-	Node              servicepkg.OpsNodeUseCase
+	ServerNode        servicepkg.OpsServerNodeUseCase
 	Customer          servicepkg.OpsCustomerUseCase
 	ManagedDevice     servicepkg.OpsManagedDeviceUseCase
 	DeviceCredential  servicepkg.DeviceCredentialUseCase
@@ -46,7 +46,7 @@ func overviewRoutes(deps RouteDependencies) []serviceapi.Route {
 
 func managementRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
-		NodeHandler{OpsNodes: deps.Node}.Routes(),
+		ServerNodeHandler{ServerNodes: deps.ServerNode}.Routes(),
 		CustomerHandler{OpsCustomers: deps.Customer}.Routes(),
 		DeviceHandler{OpsDevices: deps.ManagedDevice}.Routes(),
 		DeviceCredentialHandler{Credentials: deps.DeviceCredential}.Routes(),

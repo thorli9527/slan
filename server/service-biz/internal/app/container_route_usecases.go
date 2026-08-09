@@ -16,6 +16,7 @@ type AppRouteUseCases struct {
 	ClientMessages    servicepkg.ClientMessageUseCase
 	NetworkCore       servicepkg.NetworkCoreUseCase
 	NetworkRuntime    servicepkg.NetworkRuntimeUseCase
+	ServerNodes       servicepkg.OpsServerNodeUseCase
 }
 
 type OpsRouteUseCases struct {
@@ -24,7 +25,7 @@ type OpsRouteUseCases struct {
 	OperatorSecurity  servicepkg.OpsOperatorPasswordUseCase
 	DashboardOverview servicepkg.OpsDashboardUseCase
 	AuditOverview     servicepkg.OpsAuditUseCase
-	NodeRegistry      servicepkg.OpsNodeUseCase
+	ServerNodes       servicepkg.OpsServerNodeUseCase
 	CustomerDirectory servicepkg.OpsCustomerUseCase
 	DeviceDirectory   servicepkg.OpsManagedDeviceUseCase
 	DeviceCredentials servicepkg.DeviceCredentialUseCase
@@ -42,6 +43,7 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			ClientMessages:    useCases.Devices.ClientMessages,
 			NetworkCore:       useCases.Network.CoreAccess,
 			NetworkRuntime:    useCases.Network.RuntimeControl,
+			ServerNodes:       useCases.Ops.ServerNodes,
 		},
 		Ops: OpsRouteUseCases{
 			SessionAuth:       useCases.Ops.SessionAuth,
@@ -49,7 +51,7 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			OperatorSecurity:  useCases.Ops.OperatorSecurity,
 			DashboardOverview: useCases.Ops.DashboardOverview,
 			AuditOverview:     useCases.Ops.AuditOverview,
-			NodeRegistry:      useCases.Ops.NodeRegistry,
+			ServerNodes:       useCases.Ops.ServerNodes,
 			CustomerDirectory: useCases.Ops.CustomerDirectory,
 			DeviceDirectory:   useCases.Ops.DeviceDirectory,
 			DeviceCredentials: useCases.Ops.DeviceCredentials,

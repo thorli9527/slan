@@ -21,7 +21,7 @@ const (
 	nodeHealthDown        = "down"
 )
 
-func validateRelayNodeModel(ctx context.Context, nodes repository.OpsNodeRepository, item model.RelayNode) error {
+func validateRelayNodeModel(ctx context.Context, nodes repository.RuntimeNodeRepository, item model.RelayNode) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return invalidArgumentError("请输入节点名称")
 	}
@@ -53,7 +53,7 @@ func validateRelayNodeModel(ctx context.Context, nodes repository.OpsNodeReposit
 	return ensureRelayEndpointUnique(ctx, nodes, item.NodeID, net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
-func validatePunchNodeModel(ctx context.Context, nodes repository.OpsNodeRepository, item model.PunchNode) error {
+func validatePunchNodeModel(ctx context.Context, nodes repository.RuntimeNodeRepository, item model.PunchNode) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return invalidArgumentError("请输入打洞节点名称")
 	}
@@ -117,7 +117,7 @@ func isIPv4Address(value string) bool {
 	return ip != nil && ip.To4() != nil
 }
 
-func ensureRelayEndpointUnique(ctx context.Context, nodes repository.OpsNodeRepository, currentNodeID, endpoint string) error {
+func ensureRelayEndpointUnique(ctx context.Context, nodes repository.RuntimeNodeRepository, currentNodeID, endpoint string) error {
 	items, err := nodes.ListRelayNodes(ctx)
 	if err != nil {
 		return err
@@ -133,7 +133,7 @@ func ensureRelayEndpointUnique(ctx context.Context, nodes repository.OpsNodeRepo
 	return nil
 }
 
-func ensurePunchEndpointUnique(ctx context.Context, nodes repository.OpsNodeRepository, currentNodeID, endpoint string) error {
+func ensurePunchEndpointUnique(ctx context.Context, nodes repository.RuntimeNodeRepository, currentNodeID, endpoint string) error {
 	items, err := nodes.ListPunchNodes(ctx)
 	if err != nil {
 		return err

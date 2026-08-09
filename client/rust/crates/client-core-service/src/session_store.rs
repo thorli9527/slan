@@ -54,6 +54,10 @@ pub(crate) struct PersistedSession {
     pub(crate) relay_candidates: Vec<PersistedRelayCandidate>,
     #[serde(default)]
     pub(crate) node_configs: Vec<NodeConfig>,
+    #[serde(default)]
+    pub(crate) api_proxy_urls: Vec<String>,
+    #[serde(default)]
+    pub(crate) mqtt_proxy_urls: Vec<String>,
     pub(crate) mqtt: Option<MqttCredential>,
     pub(crate) expires_in: Option<u64>,
     pub(crate) authenticated_at_ms: u64,
@@ -114,6 +118,8 @@ impl PersistedSession {
             virtual_ip: None,
             relay_candidates: Vec::new(),
             node_configs: Vec::new(),
+            api_proxy_urls: Vec::new(),
+            mqtt_proxy_urls: Vec::new(),
             mqtt: None,
             expires_in: None,
             authenticated_at_ms: current_timestamp_ms(),
@@ -344,6 +350,7 @@ fn persisted_session_from_device_session(
     let relay_candidates =
         relay_candidates_from_device_session_response(&response, active_network_id.as_deref());
     let node_configs = node_configs_from_device_session_response(&response);
+    let (api_proxy_urls, mqtt_proxy_urls) = proxy_urls_from_device_session_response(&response);
     let mqtt = mqtt_from_device_session_response(&response);
     PersistedSession {
         access_token: device_token.clone(),
@@ -359,6 +366,8 @@ fn persisted_session_from_device_session(
         virtual_ip,
         relay_candidates,
         node_configs,
+        api_proxy_urls,
+        mqtt_proxy_urls,
         mqtt,
         expires_in: response
             .device_session
@@ -556,6 +565,7 @@ fn apply_device_session_fields(
 ) {
     let mqtt = mqtt_from_device_session_response(&response);
     let node_configs = node_configs_from_device_session_response(&response);
+    let (api_proxy_urls, mqtt_proxy_urls) = proxy_urls_from_device_session_response(&response);
     session.device_session_id = Some(response.device_session.session_id);
     let device_token = response.device_session.device_token;
     if renew_device_access_token && session.session_kind == "device" {
@@ -578,6 +588,12 @@ fn apply_device_session_fields(
         .collect();
     session.mqtt = mqtt.or(session.mqtt.take());
     session.node_configs = node_configs;
+    session.api_proxy_urls = api_proxy_urls;
+    session.mqtt_proxy_urls = mqtt_proxy_urls;
+    crate::control_plane::install_runtime_proxy_urls(
+        &session.api_proxy_urls,
+        &session.mqtt_proxy_urls,
+    );
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
         let items = configs.items;
@@ -646,6 +662,12 @@ pub(crate) fn refresh_session_runtime_endpoints(
 ) -> Result<()> {
     let runtime = client.runtime_endpoints(session_device_api_token(session))?;
     session.node_configs = node_configs_from_runtime_endpoints(&runtime);
+    session.api_proxy_urls = runtime.api_proxy_urls;
+    session.mqtt_proxy_urls = runtime.mqtt_proxy_urls;
+    crate::control_plane::install_runtime_proxy_urls(
+        &session.api_proxy_urls,
+        &session.mqtt_proxy_urls,
+    );
     Ok(())
 }
 
@@ -704,6 +726,21 @@ fn mqtt_from_device_session_response(response: &DeviceSessionResponse) -> Option
         .or_else(|| response.mqtt.clone())
         .or_else(|| response.device.mqtt.clone())
         .map(normalize_mqtt_credential)
+}
+
+fn proxy_urls_from_device_session_response(
+    response: &DeviceSessionResponse,
+) -> (Vec<String>, Vec<String>) {
+    response
+        .runtime_endpoints
+        .as_ref()
+        .map(|runtime| {
+            (
+                runtime.api_proxy_urls.clone(),
+                runtime.mqtt_proxy_urls.clone(),
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn relay_candidates_from_device_session_response(
@@ -1051,6 +1088,10 @@ pub(crate) fn load_session() -> Result<PersistedSession> {
     .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "session not found"))?;
     session.relay_candidates.clear();
     normalize_session_mqtt_topic_prefix(&mut session);
+    crate::control_plane::install_runtime_proxy_urls(
+        &session.api_proxy_urls,
+        &session.mqtt_proxy_urls,
+    );
     Ok(session)
 }
 

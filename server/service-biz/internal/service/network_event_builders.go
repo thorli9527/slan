@@ -65,7 +65,7 @@ func buildNetworkEventSnapshotFromRepositories(
 	ctx context.Context,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsNodeRepository,
+	runtimeNodes repository.RuntimeNodeRepository,
 	nowFn func() time.Time,
 	networkID string,
 ) (NetworkSnapshotPayload, error) {
@@ -96,10 +96,10 @@ func buildNetworkEventSnapshotFromRepositories(
 		}, nil
 	}
 	core := NetworkCoreService{
-		Devices:  devices,
-		Networks: networks,
-		Ops:      ops,
-		Now:      nowFn,
+		Devices:      devices,
+		Networks:     networks,
+		RuntimeNodes: runtimeNodes,
+		Now:          nowFn,
 	}
 	resolved, err := core.ResolvedNetworkConfig(ctx, networkID, primaryDeviceID)
 	if err != nil {

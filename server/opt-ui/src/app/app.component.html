@@ -72,13 +72,12 @@
         <strong>{{ item.label }}</strong>
         <span>{{ item.desc }}</span>
       </button>
-      <section class="nav-menu" *ngFor="let menu of navMenus">
-        <button class="nav-menu-trigger" type="button" [class.active]="isNavMenuActive(menu)" [attr.aria-expanded]="isNavMenuActive(menu)" (click)="selectNavMenu(menu)">
+      <section class="nav-menu" *ngFor="let menu of navMenus" [hidden]="menu.id === 'nodes' && operatorRole !== 'admin'">
+        <button class="nav-menu-trigger" type="button" [class.active]="isNavMenuActive(menu)" aria-expanded="true" (click)="selectNavMenu(menu)">
           <strong>{{ menu.label }}</strong>
-          <span aria-hidden="true">{{ isNavMenuActive(menu) ? '−' : '+' }}</span>
         </button>
-        <div class="nav-submenu" *ngIf="isNavMenuActive(menu)">
-          <button class="nav-sub-item" type="button" *ngFor="let item of menu.items" [class.active]="active === item.id" [attr.aria-current]="active === item.id ? 'page' : null" (click)="setActive(item.id)">
+        <div class="nav-submenu">
+          <button class="nav-sub-item" type="button" *ngFor="let item of menu.items" [class.active]="active === item.id" [attr.aria-current]="active === item.id ? 'page' : null" [hidden]="item.id === 'serverNodes' && operatorRole !== 'admin'" (click)="setActive(item.id)">
             <strong>{{ item.label }}</strong>
             <span>{{ item.desc }}</span>
           </button>
@@ -115,8 +114,7 @@
     <ops-overview-page *ngIf="active === 'overview'" [vm]="vm"></ops-overview-page>
 	<ops-operators-page *ngIf="active === 'operators' && operatorRole === 'admin'" [vm]="vm"></ops-operators-page>
     <ops-audit-events-page *ngIf="active === 'auditEvents'" [vm]="vm"></ops-audit-events-page>
-    <ops-relay-nodes-page *ngIf="active === 'relayNodes'" [vm]="vm"></ops-relay-nodes-page>
-    <ops-punch-nodes-page *ngIf="active === 'punchNodes'" [vm]="vm"></ops-punch-nodes-page>
+    <ops-server-nodes-page *ngIf="active === 'serverNodes'" [vm]="vm"></ops-server-nodes-page>
     <ops-devices-page *ngIf="active === 'devices'" [vm]="vm"></ops-devices-page>
     <ops-networks-page *ngIf="active === 'networks' && !networkDetailNetwork" [vm]="vm"></ops-networks-page>
     <ops-network-detail-page *ngIf="active === 'networks' && networkDetailNetwork" [vm]="vm"></ops-network-detail-page>
@@ -309,94 +307,59 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="showRelayNodeDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="showServerNodeDialog">
+  <section class="modal server-node-modal">
     <div class="modal-header">
-      <div>
-        <h2>{{ selectedRelayNode ? '修改中继节点' : '新增中继节点' }}</h2>
-        <p>节点容量会用于 Relay/DERP 调度和运营统计。</p>
+      <div><h2>{{ selectedServerNode ? '修改服务器节点' : '新增服务器节点' }}</h2><p>分别配置中继、打洞和边缘代理能力；部署时会停止未启用的服务。</p></div>
+      <button class="icon-close" type="button" title="关闭" aria-label="关闭" (click)="closeServerNodeDialog()">x</button>
+    </div>
+    <div class="form-grid server-node-form">
+      <div class="server-connection-fields full-row">
+        <div class="server-node-row server-node-primary-row">
+          <label><span>节点名称</span><input [(ngModel)]="serverNodeForm.name" maxlength="128"></label>
+          <label><span>公网 IPv4</span><input [(ngModel)]="serverNodeForm.host" placeholder="203.0.113.10"></label>
+          <label><span>SSH</span><input [(ngModel)]="serverNodeForm.sshPort" type="number" min="1" max="65535"></label>
+        </div>
+        <div class="server-node-row server-node-credential-row">
+          <label><span>SSH 用户</span><input [(ngModel)]="serverNodeForm.sshUsername" readonly></label>
+          <label><span>SSH 密码</span><input [(ngModel)]="serverNodeForm.sshPassword" type="password" autocomplete="new-password" [placeholder]="selectedServerNode?.sshPasswordConfigured ? '留空则保留现有密码' : '请输入 root SSH 密码'"></label>
+        </div>
       </div>
-      <button class="icon-close" type="button" (click)="closeRelayNodeDialog()">x</button>
-    </div>
-    <div class="form-grid two-col">
-      <label><span>节点名称</span><input [(ngModel)]="relayNodeForm.name"></label>
-      <label>
-        <span>协议</span>
-        <select [(ngModel)]="relayNodeForm.transport">
-          <option value="relay_udp">relay_udp</option>
-          <option value="derp_tcp_tls_443">derp_tcp_tls_443</option>
-        </select>
-      </label>
-      <label><span>公网 IP</span><input [(ngModel)]="relayNodeForm.publicIp" placeholder="47.245.40.231"></label>
-      <label><span>公网端口</span><input [(ngModel)]="relayNodeForm.publicPort" type="number"></label>
-      <label><span>最大带宽 Mbps</span><input [(ngModel)]="relayNodeForm.maxBandwidthMbps" type="number"></label>
-      <label><span>月流量 GB</span><input [(ngModel)]="relayNodeForm.monthlyTrafficGb" type="number"></label>
-      <label><span>最大会话</span><input [(ngModel)]="relayNodeForm.maxSessions" type="number"></label>
-      <label>
-        <span>状态</span>
-        <select [(ngModel)]="relayNodeForm.status">
-          <option value="active">active</option>
-          <option value="maintenance">maintenance</option>
-          <option value="disabled">disabled</option>
-        </select>
-      </label>
-    </div>
-    <div class="detail-grid" *ngIf="selectedRelayNode">
-      <div><span>健康</span><strong>{{ selectedRelayNode.health }}</strong></div>
-      <div><span>当前会话</span><strong>{{ selectedRelayNode.activeSessions }} / {{ selectedRelayNode.maxSessions }}</strong></div>
-      <div><span>已用流量</span><strong>{{ selectedRelayNode.usedTrafficGb }} / {{ selectedRelayNode.monthlyTrafficGb }}GB</strong></div>
-      <div><span>流量占比</span><strong>{{ relayNodePercent(selectedRelayNode) }}%</strong></div>
-    </div>
-    <p class="form-error" *ngIf="relayNodeMessage">{{ relayNodeMessage }}</p>
-    <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closeRelayNodeDialog()">取消</button>
-      <button class="primary" type="button" (click)="saveRelayNodeDialog()">保存</button>
-    </div>
-  </section>
-</div>
-
-<div class="modal-backdrop" *ngIf="showPunchNodeDialog">
-  <section class="modal">
-    <div class="modal-header">
-      <div>
-        <h2>{{ selectedPunchNode ? '修改打洞节点' : '新增打洞节点' }}</h2>
-        <p>P2P 打洞服务由 biz 直接按公网 UDP IP 和端口调度，HTTP 管理端口默认为 UDP 端口 + 1。</p>
+      <div class="server-capabilities full-row">
+        <fieldset class="capability-config" [class.capability-disabled]="!serverNodeForm.relayEnabled">
+          <legend class="capability-header">
+            <label class="capability-enabled-checkbox"><input [(ngModel)]="serverNodeForm.relayEnabled" type="checkbox"><span>中继</span></label>
+          </legend>
+          <div class="capability-fields">
+            <label><span>UDP 中继</span><input [(ngModel)]="serverNodeForm.relayUdpPort" type="number" [disabled]="!serverNodeForm.relayEnabled"></label>
+            <label><span>TCP 中继</span><input [(ngModel)]="serverNodeForm.relayTcpPort" type="number" [disabled]="!serverNodeForm.relayEnabled"></label>
+            <label><span>UDP 管理</span><input [(ngModel)]="serverNodeForm.relayAdminPort" type="number" [disabled]="!serverNodeForm.relayEnabled"></label>
+          </div>
+        </fieldset>
+        <fieldset class="capability-config" [class.capability-disabled]="!serverNodeForm.punchEnabled">
+          <legend class="capability-header">
+            <label class="capability-enabled-checkbox"><input [(ngModel)]="serverNodeForm.punchEnabled" type="checkbox"><span>打洞</span></label>
+          </legend>
+          <div class="capability-fields">
+            <label><span>UDP</span><input [(ngModel)]="serverNodeForm.punchUdpPort" type="number" [disabled]="!serverNodeForm.punchEnabled"></label>
+            <label><span>TCP 管理</span><input [(ngModel)]="serverNodeForm.punchHttpPort" type="number" [disabled]="!serverNodeForm.punchEnabled"></label>
+          </div>
+        </fieldset>
+        <fieldset class="capability-config" [class.capability-disabled]="!serverNodeForm.proxyEnabled">
+          <legend class="capability-header">
+            <label class="capability-enabled-checkbox"><input [(ngModel)]="serverNodeForm.proxyEnabled" type="checkbox"><span>代理</span></label>
+          </legend>
+          <div class="capability-fields">
+            <label><span>API</span><input [(ngModel)]="serverNodeForm.apiProxyPort" type="number" [disabled]="!serverNodeForm.proxyEnabled"></label>
+            <label><span>MQTT</span><input [(ngModel)]="serverNodeForm.mqttProxyPort" type="number" [disabled]="!serverNodeForm.proxyEnabled"></label>
+          </div>
+        </fieldset>
       </div>
-      <button class="icon-close" type="button" (click)="closePunchNodeDialog()">x</button>
     </div>
-    <div class="form-grid two-col">
-      <label><span>节点名称</span><input [(ngModel)]="punchNodeForm.name"></label>
-      <label><span>公网 UDP IP</span><input [(ngModel)]="punchNodeForm.publicUdpIp" placeholder="47.245.40.231"></label>
-      <label><span>公网 UDP 端口</span><input [(ngModel)]="punchNodeForm.publicUdpPort" type="number"></label>
-      <label><span>最大会话</span><input [(ngModel)]="punchNodeForm.maxSessions" type="number"></label>
-      <label><span>优先级</span><input [(ngModel)]="punchNodeForm.priority" type="number"></label>
-      <label>
-        <span>状态</span>
-        <select [(ngModel)]="punchNodeForm.status">
-          <option value="active">active</option>
-          <option value="maintenance">maintenance</option>
-          <option value="disabled">disabled</option>
-        </select>
-      </label>
-      <label>
-        <span>健康</span>
-        <select [(ngModel)]="punchNodeForm.health">
-          <option value="healthy">healthy</option>
-          <option value="warning">warning</option>
-          <option value="down">down</option>
-        </select>
-      </label>
-    </div>
-    <div class="detail-grid" *ngIf="selectedPunchNode">
-      <div><span>节点 ID</span><strong>{{ selectedPunchNode.nodeId }}</strong></div>
-      <div><span>HTTP 管理端口</span><strong>{{ selectedPunchNode.publicUdpPort + 1 }}</strong></div>
-      <div><span>当前会话</span><strong>{{ selectedPunchNode.activeSessions }} / {{ selectedPunchNode.maxSessions }}</strong></div>
-      <div><span>会话占比</span><strong>{{ punchNodePercent(selectedPunchNode) }}%</strong></div>
-    </div>
-    <p class="form-error" *ngIf="punchNodeMessage">{{ punchNodeMessage }}</p>
+    <p class="form-error" *ngIf="serverNodeMessage">{{ serverNodeMessage }}</p>
     <div class="modal-footer">
-      <button class="ghost" type="button" (click)="closePunchNodeDialog()">取消</button>
-      <button class="primary" type="button" (click)="savePunchNodeDialog()">保存</button>
+      <button class="ghost" type="button" (click)="closeServerNodeDialog()">取消</button>
+      <button class="primary" type="button" (click)="saveServerNode()">保存</button>
     </div>
   </section>
 </div>

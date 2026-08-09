@@ -2,7 +2,7 @@ package service
 
 import "strings"
 
-func normalizeUpsertNodeInput(input UpsertNodeInput) UpsertNodeInput {
+func normalizeUpsertRuntimeNodeInput(input UpsertRuntimeNodeInput) UpsertRuntimeNodeInput {
 	input.NodeID = strings.TrimSpace(input.NodeID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.DERPRegionID = strings.TrimSpace(input.DERPRegionID)

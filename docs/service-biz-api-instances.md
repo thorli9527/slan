@@ -63,7 +63,15 @@ Web route set 只暴露客户端下载列表和下载文件。不提供注册、
 | 网络 | `/api/ops/networks` | 创建、更新、删除网络并绑定设备或设备组 |
 | 设备组 | `/api/ops/device-groups` | 管理设备组和组成员 |
 | DNS/ACL | `/api/ops/networks/{networkId}/dns`, `/api/ops/security-*` | 管理网络 DNS 和安全策略 |
-| 节点 | `/api/ops/relay-nodes`, `/api/ops/punch-nodes` | 管理 Relay 和 Punch 节点 |
+| 服务器节点 | `/api/ops/server-nodes` | 统一部署和管理 Relay、Punch 与边缘代理服务 |
+
+服务器节点是运营侧唯一的节点配置入口。创建服务器节点后，由运营端选择要启用的 Relay、
+Punch 和边缘代理服务，再调用 `/api/ops/server-nodes/{nodeId}/deploy` 完成部署。
+
+Relay 与 Punch 节点记录属于运行时投影：节点进程通过 `/internal/wire/admin/*` 注册并持续
+心跳，业务服务只用这些记录进行路径调度。它们不提供独立的 Ops CRUD 接口，也不允许通过
+环境变量在业务服务启动时自动补写。删除服务器节点时，服务端同步清理该节点关联的运行时
+投影；独立部署的数据平面进程停止心跳后，则按运行时新鲜度规则退出调度。
 
 授权 key 完整值只在创建响应中返回一次。服务端保存 HMAC-SHA256 摘要；吊销 key 时同时
 撤销其关联的活动设备 session。

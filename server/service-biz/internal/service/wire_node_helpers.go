@@ -16,6 +16,16 @@ func wireNodeStatus(enabled, healthy *bool) string {
 	return "active"
 }
 
+func wirePunchNodeHealth(enabled, healthy *bool) string {
+	if enabled != nil && !*enabled {
+		return "down"
+	}
+	if healthy != nil && !*healthy {
+		return "down"
+	}
+	return "healthy"
+}
+
 func applyWireNodeHealth(item *model.RelayNode, enabled, healthy *bool) {
 	if item == nil {
 		return
@@ -32,6 +42,33 @@ func applyWireNodeHealth(item *model.RelayNode, enabled, healthy *bool) {
 			if item.Health == "" {
 				item.Health = "healthy"
 			}
+		} else {
+			item.Status = "disabled"
+			item.Health = "down"
+		}
+	}
+	if healthy != nil && item.Status != "disabled" {
+		if *healthy {
+			item.Health = "healthy"
+		} else {
+			item.Health = "down"
+		}
+	}
+}
+
+func applyWirePunchNodeHealth(item *model.PunchNode, enabled, healthy *bool) {
+	if item == nil {
+		return
+	}
+	if item.Status == "" {
+		item.Status = "active"
+	}
+	if item.Health == "" {
+		item.Health = "healthy"
+	}
+	if enabled != nil {
+		if *enabled {
+			item.Status = "active"
 		} else {
 			item.Status = "disabled"
 			item.Health = "down"

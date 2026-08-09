@@ -8,7 +8,7 @@ import (
 	"github.com/slan/service-biz/internal/model"
 )
 
-func opsNodeHealth(status string) string {
+func runtimeNodeHealth(status string) string {
 	if status == "active" {
 		return "healthy"
 	}
@@ -47,8 +47,8 @@ func opsPublicAddr(transport, endpoint string) string {
 	}
 }
 
-func opsRelayNodeViewFromModel(item model.RelayNode) OpsRelayNodeView {
-	return OpsRelayNodeView{
+func runtimeRelayNodeViewFromModel(item model.RelayNode) RuntimeRelayNodeView {
+	return RuntimeRelayNodeView{
 		NodeID:            item.NodeID,
 		Name:              item.Name,
 		Endpoint:          item.Endpoint,
@@ -62,15 +62,15 @@ func opsRelayNodeViewFromModel(item model.RelayNode) OpsRelayNodeView {
 		UsedTrafficGB:     item.UsedTrafficGB,
 		MaxSessions:       item.MaxSessions,
 		ActiveSessions:    item.ActiveSessions,
-		Health:            firstNonEmpty(item.Health, opsNodeHealth(item.Status)),
+		Health:            firstNonEmpty(item.Health, runtimeNodeHealth(item.Status)),
 		Priority:          item.Priority,
 		TicketKeyRotation: wireTicketKeyStatus(item),
 	}
 }
 
-func opsPunchNodeViewFromModel(item model.PunchNode) OpsPunchNodeView {
+func runtimePunchNodeViewFromModel(item model.PunchNode) RuntimePunchNodeView {
 	host, port := splitOpsEndpoint(item.Endpoint)
-	return OpsPunchNodeView{
+	return RuntimePunchNodeView{
 		NodeID:         item.NodeID,
 		Name:           item.Name,
 		Endpoint:       item.Endpoint,
@@ -81,7 +81,7 @@ func opsPunchNodeViewFromModel(item model.PunchNode) OpsPunchNodeView {
 		PublicUDPPort:  port,
 		MaxSessions:    item.MaxSessions,
 		ActiveSessions: item.ActiveSessions,
-		Health:         firstNonEmpty(item.Health, opsNodeHealth(item.Status)),
+		Health:         firstNonEmpty(item.Health, runtimeNodeHealth(item.Status)),
 		Priority:       item.Priority,
 	}
 }

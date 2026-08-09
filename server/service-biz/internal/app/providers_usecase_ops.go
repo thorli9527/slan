@@ -7,7 +7,7 @@ func newOpsUseCasesFromServices(services OpsServices) OpsUseCases {
 		OperatorSecurity:  services.OperatorSecurity,
 		DashboardOverview: services.DashboardOverview,
 		AuditOverview:     services.AuditOverview,
-		NodeRegistry:      services.NodeRegistry,
+		ServerNodes:       services.ServerNodes,
 		CustomerDirectory: services.CustomerDirectory,
 		DeviceDirectory:   services.DeviceDirectory,
 		DeviceCredentials: services.DeviceCredentials,

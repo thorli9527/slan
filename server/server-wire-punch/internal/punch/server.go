@@ -1,6 +1,7 @@
 package punch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/slan/server/server-wire-punch/internal/bizclient"
 	"github.com/slan/server/server-wire-punch/internal/config"
 )
 
@@ -71,6 +74,7 @@ func (s *Server) ensureService() {
 // Serve 启动 HTTP 协商入口，并在当前 goroutine 中处理 UDP 探测包。
 func (s *Server) Serve() error {
 	defer s.conn.Close()
+	go s.registerAndHeartbeat()
 	go func() {
 		httpServer := &http.Server{
 			Addr:    s.cfg.HTTPListenAddr,
@@ -94,6 +98,71 @@ func (s *Server) Serve() error {
 			})
 		}
 	}
+}
+
+func (s *Server) registerAndHeartbeat() {
+	client := bizclient.New(s.cfg.BizURL, s.cfg.InternalWireToken)
+	if !client.Enabled() {
+		log.Printf("wire punch biz registration disabled: missing SLAN_BIZ_URL or SLAN_INTERNAL_WIRE_TOKEN")
+		return
+	}
+	enabled, healthy := s.cfg.Enabled, true
+	node := bizclient.PunchNode{
+		NodeID: s.cfg.NodeID, Name: s.cfg.Name, Host: s.cfg.PublicHost,
+		UDPPort: s.cfg.PublicUDPPort, Priority: s.cfg.Priority,
+		Enabled: &enabled, Healthy: &healthy,
+	}
+	backoff := 2 * time.Second
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := client.UpsertPunchNode(ctx, node)
+		cancel()
+		if err == nil {
+			log.Printf("wire punch node registered node=%s host=%s udpPort=%d", s.cfg.NodeID, s.cfg.PublicHost, s.cfg.PublicUDPPort)
+			break
+		}
+		log.Printf("wire punch node registration failed node=%s err=%v retryIn=%s", s.cfg.NodeID, err, backoff)
+		time.Sleep(backoff)
+		backoff = nextRegistrationBackoff(backoff)
+	}
+	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
+	defer ticker.Stop()
+	wasFailing := false
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := client.HeartbeatPunchNode(ctx, s.cfg.NodeID, true)
+		cancel()
+		if err == nil {
+			if wasFailing {
+				log.Printf("wire punch node heartbeat recovered node=%s", s.cfg.NodeID)
+			}
+			wasFailing, backoff = false, 2*time.Second
+			continue
+		}
+		if !wasFailing {
+			log.Printf("wire punch node heartbeat failed node=%s err=%v", s.cfg.NodeID, err)
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		registerErr := client.UpsertPunchNode(ctx, node)
+		cancel()
+		if registerErr == nil {
+			log.Printf("wire punch node re-registered after heartbeat failure node=%s", s.cfg.NodeID)
+			wasFailing, backoff = false, 2*time.Second
+			continue
+		}
+		wasFailing = true
+		log.Printf("wire punch node re-registration failed node=%s err=%v", s.cfg.NodeID, registerErr)
+		time.Sleep(backoff)
+		backoff = nextRegistrationBackoff(backoff)
+	}
+}
+
+func nextRegistrationBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > time.Minute {
+		return time.Minute
+	}
+	return next
 }
 
 // Handler 返回 punch 服务 HTTP 路由，包含健康检查、端点和协商会话接口。

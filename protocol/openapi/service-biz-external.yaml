@@ -244,20 +244,16 @@ paths:
       requestBody: { $ref: '#/components/requestBodies/NewPassword' }
       responses: { '200': { $ref: '#/components/responses/JSON' } }
 
-  /api/ops/relay-nodes:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List relay nodes, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create relay node, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/relay-nodes/{nodeId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update relay node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/relay-nodes/{nodeId}/status:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update relay node status, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/punch-nodes:
-    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List punch nodes, responses: { '200': { $ref: '#/components/responses/Items' } } }
-    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create punch node, requestBody: { $ref: '#/components/requestBodies/PunchNode' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/punch-nodes/{nodeId}:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update punch node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/PunchNode' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
-  /api/ops/punch-nodes/{nodeId}/status:
-    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update punch node status, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/server-nodes:
+    get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List managed server nodes, responses: { '200': { $ref: '#/components/responses/Items' } } }
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create a managed server node, requestBody: { $ref: '#/components/requestBodies/ServerNode' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/server-nodes/{nodeId}:
+    patch: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Update a managed server node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/ServerNode' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+    delete: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Delete a managed server node and its runtime registrations, parameters: [ { $ref: '#/components/parameters/nodeId' } ], responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/server-nodes/{nodeId}/ssh-host-key:
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Inspect the SSH host key before first deployment, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
+  /api/ops/server-nodes/{nodeId}/deploy:
+    post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Deploy enabled runtime services to a managed server node, parameters: [ { $ref: '#/components/parameters/nodeId' } ], requestBody: { $ref: '#/components/requestBodies/ServerNodeDeploy' }, responses: { '200': { $ref: '#/components/responses/JSON' } } }
   /api/ops/customers:
     get: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: List customers, responses: { '200': { $ref: '#/components/responses/Items' } } }
     post: { tags: [Ops], security: [ { operatorBearer: [] } ], summary: Create customer, requestBody: { $ref: '#/components/requestBodies/FreeForm' }, responses: { '201': { $ref: '#/components/responses/JSON' } } }
@@ -385,6 +381,37 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/FreeFormObject' }
+    ServerNode:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name, host, sshUsername]
+            properties:
+              name: { type: string }
+              host: { type: string }
+              sshPort: { type: integer, minimum: 1, maximum: 65535, default: 22 }
+              sshUsername: { type: string }
+              sshPassword: { type: string, format: password, writeOnly: true }
+              relayUdpPort: { type: integer, minimum: 1, maximum: 65535 }
+              relayAdminPort: { type: integer, minimum: 1, maximum: 65535 }
+              relayTcpPort: { type: integer, minimum: 1, maximum: 65535 }
+              punchUdpPort: { type: integer, minimum: 1, maximum: 65535 }
+              punchHttpPort: { type: integer, minimum: 1, maximum: 65535 }
+              apiProxyPort: { type: integer, minimum: 1, maximum: 65535 }
+              mqttProxyPort: { type: integer, minimum: 1, maximum: 65535 }
+              relayEnabled: { type: boolean }
+              punchEnabled: { type: boolean }
+              proxyEnabled: { type: boolean }
+    ServerNodeDeploy:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              sshHostKeyFingerprint: { type: string, description: Required for the first deployment and must match the freshly inspected SSH host key. }
     Login:
       required: true
       content:
@@ -525,22 +552,6 @@ components:
               requesterNodeId: { type: string }
               peerNodeId: { type: string }
               ttlSeconds: { type: integer }
-    PunchNode:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [name, publicUdpIp, publicUdpPort]
-            properties:
-              name: { type: string }
-              region: { type: string }
-              publicUdpIp: { type: string }
-              publicUdpPort: { type: integer }
-              maxSessions: { type: integer }
-              status: { type: string }
-              health: { type: string }
-              priority: { type: integer }
   schemas:
     FreeFormObject:
       type: object

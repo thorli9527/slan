@@ -11,9 +11,15 @@ import (
 type Config struct {
 	ListenAddr        string
 	HTTPListenAddr    string
+	BizURL            string
 	PublicHost        string
 	PublicUDPPort     int
+	NodeID            string
+	Name              string
+	Priority          int
+	Enabled           bool
 	InternalWireToken string
+	HeartbeatInterval time.Duration
 	EndpointTTL       time.Duration
 	SessionTTL        time.Duration
 }
@@ -24,9 +30,15 @@ func Load() Config {
 	return Config{
 		ListenAddr:        udpAddr,
 		HTTPListenAddr:    httpAddr,
+		BizURL:            env("SLAN_BIZ_URL", ""),
 		PublicHost:        env("SLAN_WIRE_PUNCH_PUBLIC_HOST", listenHost(udpAddr)),
 		PublicUDPPort:     envInt("SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT", listenPort(udpAddr, 29130)),
+		NodeID:            env("SLAN_WIRE_PUNCH_NODE_ID", "punch-local"),
+		Name:              env("SLAN_WIRE_PUNCH_NAME", "Punch Node"),
+		Priority:          envInt("SLAN_WIRE_PUNCH_PRIORITY", 100),
+		Enabled:           envBool("SLAN_WIRE_PUNCH_ENABLED", true),
 		InternalWireToken: env("SLAN_INTERNAL_WIRE_TOKEN", ""),
+		HeartbeatInterval: time.Duration(envInt("SLAN_WIRE_PUNCH_HEARTBEAT_SECONDS", 30)) * time.Second,
 		EndpointTTL:       time.Duration(envInt("SLAN_WIRE_PUNCH_ENDPOINT_TTL_SECONDS", 120)) * time.Second,
 		SessionTTL:        time.Duration(envInt("SLAN_WIRE_PUNCH_SESSION_TTL_SECONDS", 60)) * time.Second,
 	}
@@ -47,6 +59,12 @@ func (c Config) Validate() error {
 		problems = append(problems, "session ttl must be positive")
 	}
 	if isProductionEnv() {
+		if strings.TrimSpace(c.BizURL) == "" {
+			problems = append(problems, "SLAN_BIZ_URL is required")
+		}
+		if strings.TrimSpace(c.NodeID) == "" {
+			problems = append(problems, "SLAN_WIRE_PUNCH_NODE_ID is required")
+		}
 		if strings.TrimSpace(c.PublicHost) == "" || isLoopbackHost(c.PublicHost) {
 			problems = append(problems, "SLAN_WIRE_PUNCH_PUBLIC_HOST must be non-loopback in production")
 		}
@@ -72,6 +90,14 @@ func envInt(key string, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	return strings.EqualFold(value, "true") || value == "1" || strings.EqualFold(value, "yes")
 }
 
 func listenHost(addr string) string {

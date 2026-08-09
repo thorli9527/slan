@@ -27,3 +27,4 @@ func (s *GormStore) NewSecurityGroupID() string { return s.nextID("security_grou
 func (s *GormStore) NewSecurityRuleID() string  { return s.nextID("security_rule", "sgr") }
 func (s *GormStore) NewRelayNodeID() string     { return s.nextID("relay_node", "relay") }
 func (s *GormStore) NewPunchNodeID() string     { return s.nextID("punch_node", "punch") }
+func (s *GormStore) NewServerNodeID() string    { return s.nextID("server_node", "server") }

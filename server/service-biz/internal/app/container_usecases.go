@@ -30,7 +30,7 @@ type OpsUseCases struct {
 	OperatorSecurity  servicepkg.OpsOperatorPasswordUseCase
 	DashboardOverview servicepkg.OpsDashboardUseCase
 	AuditOverview     servicepkg.OpsAuditUseCase
-	NodeRegistry      servicepkg.OpsNodeUseCase
+	ServerNodes       servicepkg.OpsServerNodeUseCase
 	CustomerDirectory servicepkg.OpsCustomerUseCase
 	DeviceDirectory   servicepkg.OpsManagedDeviceUseCase
 	DeviceCredentials servicepkg.DeviceCredentialUseCase

@@ -303,7 +303,7 @@ func (s *networkRuntimeTestOps) DeletePunchNode(context.Context, string) error  
 
 var _ repository.NetworkRepository = (*networkRuntimeTestNetworks)(nil)
 var _ repository.DeviceRepository = (*networkRuntimeTestDevices)(nil)
-var _ repository.OpsNodeRepository = (*networkRuntimeTestOps)(nil)
+var _ repository.RuntimeNodeRepository = (*networkRuntimeTestOps)(nil)
 
 func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
 	service := newNetworkRuntimeTestService([]model.SecurityRule{{
@@ -447,6 +447,38 @@ func TestCreatePunchConnectSessionRejectsMissingRequesterMembership(t *testing.T
 	}
 }
 
+func TestListPunchNodesDoesNotUseLegacyEnvironmentFallback(t *testing.T) {
+	t.Setenv("SLAN_WIRE_PUNCH_NODES", "legacy=203.0.113.10:29130")
+	service := NetworkRuntimeService{RuntimeNodes: &networkRuntimeTestOps{}}
+
+	items, err := service.ListPunchNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("legacy environment unexpectedly produced punch nodes: %#v", items)
+	}
+}
+
+func TestListPunchNodesExcludesStaleRuntimeRegistrations(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	service := NetworkRuntimeService{
+		RuntimeNodes: &networkRuntimeTestOps{punchNodes: []model.PunchNode{
+			{NodeID: "fresh", Endpoint: "203.0.113.10:29130", Status: "active", Health: "healthy", UpdatedAt: now.Unix()},
+			{NodeID: "stale", Endpoint: "203.0.113.11:29130", Status: "active", Health: "healthy", UpdatedAt: now.Add(-10 * time.Minute).Unix()},
+		}},
+		Now: func() time.Time { return now },
+	}
+
+	items, err := service.ListPunchNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].NodeID != "fresh" {
+		t.Fatalf("active punch nodes = %#v", items)
+	}
+}
+
 func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeService {
 	now := time.Unix(1700000000, 0)
 	return NetworkRuntimeService{
@@ -478,7 +510,7 @@ func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeServ
 				"sg-1": rules,
 			},
 		},
-		Ops: &networkRuntimeTestOps{
+		RuntimeNodes: &networkRuntimeTestOps{
 			relayNodes: []model.RelayNode{{
 				NodeID:    "relay-1",
 				Name:      "Relay",

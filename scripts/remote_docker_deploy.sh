@@ -11,10 +11,11 @@ ENV_SOURCE="${ENV_SOURCE:-$ROOT_DIR/$ENV_FILE}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
 REMOTE_USER="${REMOTE_USER:-root}"
 APP_SERVICES="${APP_SERVICES:-server-biz server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-punch-b server-wire-punch-c server-wire-derp server-wire-derp-b opt-ui caddy}"
+BUILD_SERVICES="${BUILD_SERVICES:-server-biz server-wire server-wire-relay server-wire-punch server-wire-derp opt-ui}"
 INFRA_SERVICES="${INFRA_SERVICES:-postgres redis}"
 BROKER_SERVICES="${BROKER_SERVICES:-bifromq}"
 POST_BROKER_STABILIZATION_SECONDS="${POST_BROKER_STABILIZATION_SECONDS:-15}"
-PRESERVE_ENV_KEYS="${PRESERVE_ENV_KEYS:-POSTGRES_PASSWORD SLAN_RELAY_TICKET_SECRET SLAN_INTERNAL_WIRE_TOKEN SLAN_WIRE_TICKET_SECRET SLAN_WIRE_TICKET_SECRETS SLAN_MQTT_PASSWORD_SECRET}"
+PRESERVE_ENV_KEYS="${PRESERVE_ENV_KEYS:-POSTGRES_PASSWORD SLAN_RELAY_TICKET_SECRET SLAN_INTERNAL_WIRE_TOKEN SLAN_WIRE_TICKET_SECRET SLAN_WIRE_TICKET_SECRETS SLAN_MQTT_PASSWORD_SECRET SLAN_NODE_SSH_CREDENTIAL_KEY}"
 RUN_REMOTE_SMOKE="${RUN_REMOTE_SMOKE:-1}"
 REMOTE_SMOKE_EXECUTION="${REMOTE_SMOKE_EXECUTION:-server}"
 REMOTE_SMOKE_SEED_WIRE_NODES="${REMOTE_SMOKE_SEED_WIRE_NODES:-0}"
@@ -23,6 +24,7 @@ RUN_REMOTE_UI_OPS_SMOKE="${RUN_REMOTE_UI_OPS_SMOKE:-0}"
 RUN_REMOTE_APP_DNS_ACL_SMOKE="${RUN_REMOTE_APP_DNS_ACL_SMOKE:-0}"
 RUN_POST_PUBLISH_CLIENT_VALIDATION="${RUN_POST_PUBLISH_CLIENT_VALIDATION:-0}"
 RUN_LOCAL_PRECHECKS="${RUN_LOCAL_PRECHECKS:-1}"
+SKIP_REMOTE_BUILD="${SKIP_REMOTE_BUILD:-0}"
 TOKEN_SCHEMA_MODE="${TOKEN_SCHEMA_MODE:-compatible}"
 TOKEN_SCHEMA_RESET="${TOKEN_SCHEMA_RESET:-0}"
 
@@ -43,6 +45,7 @@ Optional environment variables:
   ENV_SOURCE=/abs/path/to/.env.prod
   COMPOSE_FILE=docker-compose.local.yml
   APP_SERVICES="server-biz server-biz-ops ..."
+  BUILD_SERVICES="server-biz server-wire server-wire-relay server-wire-punch server-wire-derp opt-ui"
   INFRA_SERVICES="postgres redis"
   BROKER_SERVICES="bifromq"
   PRESERVE_ENV_KEYS="POSTGRES_PASSWORD ..."
@@ -55,6 +58,7 @@ Optional environment variables:
   POST_BROKER_STABILIZATION_SECONDS=15
   RUN_POST_PUBLISH_CLIENT_VALIDATION=0
   RUN_LOCAL_PRECHECKS=1
+  SKIP_REMOTE_BUILD=0|1
   TOKEN_SCHEMA_MODE=compatible|strict
   TOKEN_SCHEMA_RESET=0|1
   SLAN_RUN_POST_PUBLISH_ANDROID_DUAL_QUICK=0
@@ -296,6 +300,21 @@ normalize_mqtt_public_broker_url() {
   set_env_value "$file" "SLAN_MQTT_PUBLIC_BROKER_URL" "mqtt://${host}:1883"
 }
 
+ensure_node_deploy_config() {
+  local file="$1"
+  local host="$2"
+  local key
+
+  key="$(env_value_trimmed "$file" "SLAN_NODE_SSH_CREDENTIAL_KEY")"
+  if [ -z "$key" ]; then
+    key="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    set_env_value "$file" "SLAN_NODE_SSH_CREDENTIAL_KEY" "$key"
+  fi
+  set_env_value "$file" "SLAN_NODE_DEPLOY_BIZ_URL" "http://${host}:28080"
+  set_env_value "$file" "SLAN_NODE_DEPLOY_API_UPSTREAM_URL" "http://${host}:28080"
+  set_env_value "$file" "SLAN_NODE_DEPLOY_MQTT_UPSTREAM_ADDR" "${host}:1883"
+}
+
 env_value_trimmed() {
   local file="$1"
   local key="$2"
@@ -350,7 +369,6 @@ normalize_wire_public_endpoints() {
   set_env_value "$file" "SLAN_WIRE_DERP_PUBLIC_PORT" "$derp_port"
   set_env_value "$file" "SLAN_WIRE_DERP_B_PUBLIC_HOST" "$host"
   set_env_value "$file" "SLAN_WIRE_DERP_B_PUBLIC_PORT" "$derp_b_port"
-  set_env_value "$file" "SLAN_RELAY_ENDPOINTS" "${host}:${relay_port}"
 }
 
 mkdir -p "$(dirname "$target")"
@@ -389,6 +407,7 @@ fi
 normalize_ticket_secrets "$incoming"
 normalize_mqtt_public_broker_url "$incoming" "$remote_host"
 normalize_wire_public_endpoints "$incoming" "$remote_host"
+ensure_node_deploy_config "$incoming" "$remote_host"
 mv "$incoming" "$target"
 EOF
 
@@ -497,8 +516,12 @@ SQL"
 EOF
 fi
 
-echo "==> Building app services"
-remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' build $APP_SERVICES"
+if [ "$SKIP_REMOTE_BUILD" = "1" ]; then
+  echo "==> Using preloaded app images"
+else
+  echo "==> Building unique app images"
+  remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' build $BUILD_SERVICES"
+fi
 
 echo "==> Starting app services"
 remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' up -d --no-deps --remove-orphans $APP_SERVICES"

@@ -34,7 +34,7 @@ func TestObserveDeviceLocationPersistsResolvedLocation(t *testing.T) {
 
 func TestIssueRelayTicketUsesClientSelectedEndpoint(t *testing.T) {
 	service := newNetworkRuntimeTestService(nil)
-	service.Ops = &networkRuntimeTestOps{relayNodes: []model.RelayNode{
+	service.RuntimeNodes = &networkRuntimeTestOps{relayNodes: []model.RelayNode{
 		{NodeID: "relay-a", Region: "relay-a", Endpoint: "203.0.113.10:29110", Transport: "relay_udp", Priority: 1, Status: "active", Health: "healthy", UpdatedAt: 1_700_000_000},
 		{NodeID: "relay-b", Region: "relay-b", Endpoint: "203.0.113.11:29110", Transport: "relay_udp", Priority: 2, Status: "active", Health: "healthy", UpdatedAt: 1_700_000_000},
 	}}
@@ -55,7 +55,7 @@ func TestIssueRelayTicketUsesClientSelectedEndpoint(t *testing.T) {
 
 func TestCreatePunchConnectSessionUsesClientSelectedNode(t *testing.T) {
 	service := newNetworkRuntimeTestService(nil)
-	service.Ops = &networkRuntimeTestOps{punchNodes: []model.PunchNode{
+	service.RuntimeNodes = &networkRuntimeTestOps{punchNodes: []model.PunchNode{
 		{NodeID: "punch-a", Endpoint: "203.0.113.20:29130", Priority: 1, Status: "active", Health: "healthy"},
 		{NodeID: "punch-b", Endpoint: "203.0.113.21:29130", Priority: 2, Status: "active", Health: "healthy"},
 	}}

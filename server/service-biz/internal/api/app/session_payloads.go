@@ -26,12 +26,13 @@ func sessionActiveNetworkIDs(profile servicepkg.DeviceProfileView, activeNetwork
 	return uniqueStrings(values)
 }
 
-func boundDeviceSessionPayload(view servicepkg.DeviceSessionBoundView, punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any) map[string]any {
+func boundDeviceSessionPayload(view servicepkg.DeviceSessionBoundView, punchNodes []servicepkg.PunchNodeView, proxyNodes []servicepkg.OpsServerNodeView, networkConfigs []map[string]any) map[string]any {
 	return deviceSessionEnvelope(
 		view.Profile,
 		view.Session,
 		view.MQTT,
 		punchNodes,
+		proxyNodes,
 		networkConfigs,
 	)
 }
@@ -41,6 +42,7 @@ func deviceSessionEnvelope(
 	session servicepkg.DeviceSessionView,
 	mqtt servicepkg.DeviceMQTTProfileView,
 	punchNodes []servicepkg.PunchNodeView,
+	proxyNodes []servicepkg.OpsServerNodeView,
 	networkConfigs []map[string]any,
 ) map[string]any {
 	mqttPayload := appMQTTCredentialPayload(mqtt)
@@ -54,6 +56,7 @@ func deviceSessionEnvelope(
 		"runtimeEndpoints": runtimeEndpointsPayload(
 			mqtt,
 			punchNodes,
+			proxyNodes,
 			networkConfigs,
 			session.UpdatedAt,
 		),

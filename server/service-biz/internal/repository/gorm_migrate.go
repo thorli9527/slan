@@ -24,6 +24,7 @@ func (s *GormStore) migrate() error {
 		&gormAuditEventRecord{},
 		&gormRelayNodeRecord{},
 		&gormPunchNodeRecord{},
+		&gormServerNodeRecord{},
 	); err != nil {
 		return err
 	}
@@ -33,10 +34,25 @@ func (s *GormStore) migrate() error {
 	if err := s.dropLegacyNodeLocationColumns(); err != nil {
 		return err
 	}
+	if err := s.dropLegacyServerNodeGroupColumns(); err != nil {
+		return err
+	}
 	if err := s.revokeDuplicateActiveDeviceCredentials(); err != nil {
 		return err
 	}
 	return s.ensureIndexes()
+}
+
+func (s *GormStore) dropLegacyServerNodeGroupColumns() error {
+	migrator := s.db.Migrator()
+	for _, column := range []string{"relay_group", "punch_group", "proxy_group"} {
+		if migrator.HasColumn(&gormServerNodeRecord{}, column) {
+			if err := migrator.DropColumn(&gormServerNodeRecord{}, column); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *GormStore) dropLegacyNodeLocationColumns() error {

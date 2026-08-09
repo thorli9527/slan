@@ -83,5 +83,5 @@ Required environment:
 - `SLAN_INTERNAL_WIRE_TOKEN`
 
 The script builds `server-wire-punch`, replaces the old container, publishes
-UDP `29130` and HTTP `29131`, and prints the resulting `SLAN_WIRE_PUNCH_NODES`
+UDP `29130` and HTTP `29131`; the running service registers itself with `service-biz`.
 value for `service-biz`.

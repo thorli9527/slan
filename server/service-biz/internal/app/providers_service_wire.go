@@ -2,10 +2,10 @@ package app
 
 import servicepkg "github.com/slan/service-biz/internal/service"
 
-func newWireServices(deps UseCaseDependencies, ops servicepkg.OpsNodeService) WireServices {
+func newWireServices(deps UseCaseDependencies, registry servicepkg.RuntimeNodeRegistryService) WireServices {
 	repos := deps.wireRepositories()
 	base := servicepkg.WireServiceBase{
-		Ops:      ops,
+		Registry: registry,
 		Devices:  repos.Devices,
 		Networks: repos.Networks,
 		Nodes:    repos.Nodes,

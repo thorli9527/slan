@@ -14,6 +14,7 @@ type NetworkRuntimeHandler struct {
 	NetworkRuntime    servicepkg.NetworkRuntimeUseCase
 	DeviceSessions    servicepkg.DeviceSessionUseCase
 	NetworkConfigView servicepkg.NetworkCoreUseCase
+	ServerNodes       servicepkg.OpsServerNodeUseCase
 }
 
 type deviceLocationObserver interface {
@@ -53,10 +54,17 @@ func (h NetworkRuntimeHandler) RuntimeEndpoints(w http.ResponseWriter, r *http.R
 		serviceapi.WriteError(w, err)
 		return
 	}
+	proxyNodes, err := h.ServerNodes.ListServerNodes(r.Context())
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
 	networkConfigs := buildDeviceNetworkConfigPayloads(r.Context(), h.NetworkConfigView, deviceID)
 	payload := map[string]any{
-		"nodeConfigs": runtimeNodeConfigs(items, networkConfigs),
-		"refreshedAt": time.Now().UTC().Unix(),
+		"nodeConfigs":   runtimeNodeConfigs(items, networkConfigs),
+		"apiProxyUrls":  activeAPIProxyURLs(proxyNodes),
+		"mqttProxyUrls": activeMQTTProxyURLs(proxyNodes),
+		"refreshedAt":   time.Now().UTC().Unix(),
 	}
 	if provider, ok := h.NetworkRuntime.(deviceLocationProvider); ok {
 		if location, found, locationErr := provider.CurrentDeviceLocation(r.Context(), deviceID); locationErr == nil && found {

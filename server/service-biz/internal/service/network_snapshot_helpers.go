@@ -13,7 +13,7 @@ func buildNetworkSnapshotPayload(
 	ctx context.Context,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsNodeRepository,
+	runtimeNodes repository.RuntimeNodeRepository,
 	nowFn func() time.Time,
 	networkID string,
 ) (map[string]any, error) {
@@ -47,10 +47,10 @@ func buildNetworkSnapshotPayload(
 		}, nil
 	}
 	core := NetworkCoreService{
-		Devices:  devices,
-		Networks: networks,
-		Ops:      ops,
-		Now:      nowFn,
+		Devices:      devices,
+		Networks:     networks,
+		RuntimeNodes: runtimeNodes,
+		Now:          nowFn,
 	}
 	resolved, err := core.ResolvedNetworkConfig(ctx, networkID, primaryDeviceID)
 	if err != nil {
@@ -90,7 +90,7 @@ func publishNetworkSnapshot(
 	ctx context.Context,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
-	ops repository.OpsNodeRepository,
+	runtimeNodes repository.RuntimeNodeRepository,
 	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,
@@ -100,7 +100,7 @@ func publishNetworkSnapshot(
 	if eventPublisher == nil {
 		return nil
 	}
-	snapshot, err := buildNetworkSnapshotPayload(ctx, devices, networks, ops, nowFn, networkID)
+	snapshot, err := buildNetworkSnapshotPayload(ctx, devices, networks, runtimeNodes, nowFn, networkID)
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func publishNetworkSnapshot(
 		ctx,
 		devices,
 		networks,
-		ops,
+		runtimeNodes,
 		nowFn,
 		networkID,
 	)

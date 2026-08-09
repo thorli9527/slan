@@ -14,6 +14,7 @@ func appRouteDependencies(useCases RouteUseCases) appapi.RouteDependencies {
 		ClientMessages:   useCases.App.ClientMessages,
 		NetworkCore:      useCases.App.NetworkCore,
 		NetworkRuntime:   useCases.App.NetworkRuntime,
+		ServerNodes:      useCases.App.ServerNodes,
 	}
 }
 
@@ -24,7 +25,7 @@ func opsRouteDependencies(useCases RouteUseCases) opsapi.RouteDependencies {
 		OperatorPasswords: useCases.Ops.OperatorSecurity,
 		OverviewDashboard: useCases.Ops.DashboardOverview,
 		OverviewAudit:     useCases.Ops.AuditOverview,
-		Node:              useCases.Ops.NodeRegistry,
+		ServerNode:        useCases.Ops.ServerNodes,
 		Customer:          useCases.Ops.CustomerDirectory,
 		ManagedDevice:     useCases.Ops.DeviceDirectory,
 		DeviceCredential:  useCases.Ops.DeviceCredentials,

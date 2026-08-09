@@ -18,9 +18,10 @@ type NetworkIDGenerators struct {
 }
 
 type OpsIDGenerators struct {
-	NewSessionID  func(string) string
-	NewOperatorID func() string
-	NewCustomerID func() string
+	NewSessionID    func(string) string
+	NewOperatorID   func() string
+	NewCustomerID   func() string
+	NewServerNodeID func() string
 }
 
 type WireIDGenerators struct {

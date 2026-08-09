@@ -14,7 +14,7 @@ import (
 
 const relayTicketTTL = time.Hour
 
-func relayCandidates(ctx context.Context, networks repository.NetworkRepository, ops repository.OpsNodeRepository, nowFn func() time.Time, networkID string) ([]RelayCandidateView, error) {
+func relayCandidates(ctx context.Context, networks repository.NetworkRepository, ops repository.RuntimeNodeRepository, nowFn func() time.Time, networkID string) ([]RelayCandidateView, error) {
 	items, err := listRelayNodeEntities(ctx, networks, ops, nowFn, networkID)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func (s NetworkRuntimeService) RelayCandidates(ctx context.Context, input RelayC
 	if input.NetworkID == "" || input.DeviceID == "" {
 		return []RelayCandidateView{}, ErrInvalidArgument
 	}
-	items, err := relayCandidates(ctx, s.Networks, s.Ops, s.Now, input.NetworkID)
+	items, err := relayCandidates(ctx, s.Networks, s.RuntimeNodes, s.Now, input.NetworkID)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +35,7 @@ func (s NetworkRuntimeService) RelayCandidates(ctx context.Context, input RelayC
 }
 
 func (s NetworkRuntimeService) ListPunchNodes(ctx context.Context) ([]PunchNodeView, error) {
-	items, err := listPunchNodeEntities(ctx, s.Ops, s.Now)
+	items, err := listPunchNodeEntities(ctx, s.RuntimeNodes, s.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s NetworkRuntimeService) CreatePunchConnectSession(ctx context.Context, in
 	} else if !ok {
 		return PunchConnectSessionView{}, ErrNotFound
 	}
-	punchNodes, err := listPunchNodeEntities(ctx, s.Ops, s.Now)
+	punchNodes, err := listPunchNodeEntities(ctx, s.RuntimeNodes, s.Now)
 	if err != nil {
 		return PunchConnectSessionView{}, err
 	}
@@ -85,7 +85,7 @@ func (s NetworkRuntimeService) IssueRelayTicket(ctx context.Context, input Issue
 	if err := ensureRelayTicketAllowed(ctx, s.Devices, s.Networks, network, input.SrcNodeID, input.DstNodeID); err != nil {
 		return RelayTicketView{}, err
 	}
-	relayNodes, err := listRelayNodeEntities(ctx, s.Networks, s.Ops, s.Now, input.NetworkID)
+	relayNodes, err := listRelayNodeEntities(ctx, s.Networks, s.RuntimeNodes, s.Now, input.NetworkID)
 	if err != nil {
 		return RelayTicketView{}, err
 	}

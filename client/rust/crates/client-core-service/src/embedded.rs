@@ -1263,17 +1263,31 @@ fn connect_embedded_control_mqtt_with_retry(
     downstream_topic: &str,
 ) -> std::result::Result<ThinControlMqttClient, String> {
     let mut errors = Vec::new();
-    for attempt in 1..=3 {
-        let suffix = format!("v2-embedded-{}-{attempt}", current_timestamp_ms());
-        match ThinControlMqttClient::connect_with_subscription_suffix(
-            credential,
-            downstream_topic,
-            &suffix,
-        ) {
-            Ok(client) => return Ok(client),
-            Err(error) => {
-                errors.push(format!("attempt {attempt}: {error}"));
-                thread::sleep(Duration::from_millis(250 * attempt as u64));
+    let mut broker_urls = vec![credential.broker_url.clone()];
+    for proxy in crate::control_plane::mqtt_proxy_urls() {
+        if !broker_urls.contains(&proxy) {
+            broker_urls.push(proxy);
+        }
+    }
+    for broker_url in broker_urls {
+        let candidate = ThinMqttCredential {
+            broker_url: broker_url.clone(),
+            client_id: credential.client_id.clone(),
+            username: credential.username.clone(),
+            password: credential.password.clone(),
+        };
+        for attempt in 1..=3 {
+            let suffix = format!("v2-embedded-{}-{attempt}", current_timestamp_ms());
+            match ThinControlMqttClient::connect_with_subscription_suffix(
+                &candidate,
+                downstream_topic,
+                &suffix,
+            ) {
+                Ok(client) => return Ok(client),
+                Err(error) => {
+                    errors.push(format!("broker {broker_url} attempt {attempt}: {error}"));
+                    thread::sleep(Duration::from_millis(250 * attempt as u64));
+                }
             }
         }
     }

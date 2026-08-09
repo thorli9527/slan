@@ -42,8 +42,8 @@ type OpsAuditService struct {
 	Audit repository.AuditRepository
 }
 
-type OpsNodeService struct {
-	Nodes repository.OpsNodeRepository
+type RuntimeNodeRegistryService struct {
+	Nodes repository.RuntimeNodeRepository
 	Now   func() time.Time
 }
 

@@ -12,5 +12,6 @@ type OpsRepositories struct {
 	Operators        repository.OperatorRepository
 	OperatorSessions repository.OperatorSessionRepository
 	Audit            repository.AuditRepository
-	Nodes            repository.OpsNodeRepository
+	Nodes            repository.RuntimeNodeRepository
+	ServerNodes      repository.ServerNodeRepository
 }

@@ -13,14 +13,14 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 	now := time.Unix(1710000000, 0)
 	tests := []struct {
 		name    string
-		repo    *opsNodeTestRepo
-		input   UpsertNodeInput
+		repo    *runtimeNodeTestRepo
+		input   UpsertRuntimeNodeInput
 		wantErr error
 	}{
 		{
 			name: "rejects non ipv4 relay address",
-			repo: &opsNodeTestRepo{},
-			input: UpsertNodeInput{
+			repo: &runtimeNodeTestRepo{},
+			input: UpsertRuntimeNodeInput{
 				Name:      "relay-a",
 				Endpoint:  "relay.example.com:29110",
 				Transport: relayTransportUDP,
@@ -31,7 +31,7 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 		},
 		{
 			name: "rejects duplicate relay endpoint",
-			repo: &opsNodeTestRepo{
+			repo: &runtimeNodeTestRepo{
 				relayNodes: []model.RelayNode{{
 					NodeID:    "relay000000000000000000000000000001",
 					Name:      "relay-existing",
@@ -41,7 +41,7 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 					Health:    nodeHealthHealthy,
 				}},
 			},
-			input: UpsertNodeInput{
+			input: UpsertRuntimeNodeInput{
 				Name:      "relay-b",
 				Endpoint:  "udp://47.245.40.231:29110",
 				Transport: relayTransportUDP,
@@ -52,8 +52,8 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 		},
 		{
 			name: "accepts valid derp relay",
-			repo: &opsNodeTestRepo{},
-			input: UpsertNodeInput{
+			repo: &runtimeNodeTestRepo{},
+			input: UpsertRuntimeNodeInput{
 				Name:      "derp-a",
 				Endpoint:  "47.245.40.231:29120",
 				Transport: relayTransportDerpTLS,
@@ -65,7 +65,7 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := OpsNodeService{
+			svc := RuntimeNodeRegistryService{
 				Nodes: tt.repo,
 				Now:   func() time.Time { return now },
 			}
@@ -87,14 +87,14 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 	now := time.Unix(1710000000, 0)
 	tests := []struct {
 		name    string
-		repo    *opsNodeTestRepo
-		input   UpsertNodeInput
+		repo    *runtimeNodeTestRepo
+		input   UpsertRuntimeNodeInput
 		wantErr error
 	}{
 		{
 			name: "rejects invalid udp port",
-			repo: &opsNodeTestRepo{},
-			input: UpsertNodeInput{
+			repo: &runtimeNodeTestRepo{},
+			input: UpsertRuntimeNodeInput{
 				Name:     "punch-a",
 				Endpoint: "47.245.40.231:65535",
 				Status:   nodeStatusActive,
@@ -104,7 +104,7 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 		},
 		{
 			name: "rejects duplicate punch endpoint",
-			repo: &opsNodeTestRepo{
+			repo: &runtimeNodeTestRepo{
 				punchNodes: []model.PunchNode{{
 					NodeID:   "punch000000000000000000000000000001",
 					Name:     "punch-existing",
@@ -113,7 +113,7 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 					Health:   nodeHealthHealthy,
 				}},
 			},
-			input: UpsertNodeInput{
+			input: UpsertRuntimeNodeInput{
 				Name:     "punch-b",
 				Endpoint: "47.245.40.231:29130",
 				Status:   nodeStatusActive,
@@ -123,8 +123,8 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 		},
 		{
 			name: "accepts valid punch endpoint",
-			repo: &opsNodeTestRepo{},
-			input: UpsertNodeInput{
+			repo: &runtimeNodeTestRepo{},
+			input: UpsertRuntimeNodeInput{
 				Name:     "punch-c",
 				Endpoint: "47.245.40.231:29130",
 				Status:   nodeStatusActive,
@@ -136,7 +136,7 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := OpsNodeService{
+			svc := RuntimeNodeRegistryService{
 				Nodes: tt.repo,
 				Now:   func() time.Time { return now },
 			}
@@ -151,20 +151,20 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 	}
 }
 
-type opsNodeTestRepo struct {
+type runtimeNodeTestRepo struct {
 	relayNodes      []model.RelayNode
 	punchNodes      []model.PunchNode
 	savedRelayNodes []model.RelayNode
 	savedPunchNodes []model.PunchNode
 }
 
-func (r *opsNodeTestRepo) ListRelayNodes(context.Context) ([]model.RelayNode, error) {
+func (r *runtimeNodeTestRepo) ListRelayNodes(context.Context) ([]model.RelayNode, error) {
 	items := make([]model.RelayNode, len(r.relayNodes))
 	copy(items, r.relayNodes)
 	return items, nil
 }
 
-func (r *opsNodeTestRepo) GetRelayNode(_ context.Context, nodeID string) (model.RelayNode, bool, error) {
+func (r *runtimeNodeTestRepo) GetRelayNode(_ context.Context, nodeID string) (model.RelayNode, bool, error) {
 	for _, item := range r.relayNodes {
 		if item.NodeID == nodeID {
 			return item, true, nil
@@ -173,20 +173,20 @@ func (r *opsNodeTestRepo) GetRelayNode(_ context.Context, nodeID string) (model.
 	return model.RelayNode{}, false, nil
 }
 
-func (r *opsNodeTestRepo) SaveRelayNode(_ context.Context, item model.RelayNode) error {
+func (r *runtimeNodeTestRepo) SaveRelayNode(_ context.Context, item model.RelayNode) error {
 	r.savedRelayNodes = append(r.savedRelayNodes, item)
 	return nil
 }
 
-func (r *opsNodeTestRepo) DeleteRelayNode(context.Context, string) error { return nil }
+func (r *runtimeNodeTestRepo) DeleteRelayNode(context.Context, string) error { return nil }
 
-func (r *opsNodeTestRepo) ListPunchNodes(context.Context) ([]model.PunchNode, error) {
+func (r *runtimeNodeTestRepo) ListPunchNodes(context.Context) ([]model.PunchNode, error) {
 	items := make([]model.PunchNode, len(r.punchNodes))
 	copy(items, r.punchNodes)
 	return items, nil
 }
 
-func (r *opsNodeTestRepo) GetPunchNode(_ context.Context, nodeID string) (model.PunchNode, bool, error) {
+func (r *runtimeNodeTestRepo) GetPunchNode(_ context.Context, nodeID string) (model.PunchNode, bool, error) {
 	for _, item := range r.punchNodes {
 		if item.NodeID == nodeID {
 			return item, true, nil
@@ -195,12 +195,12 @@ func (r *opsNodeTestRepo) GetPunchNode(_ context.Context, nodeID string) (model.
 	return model.PunchNode{}, false, nil
 }
 
-func (r *opsNodeTestRepo) SavePunchNode(_ context.Context, item model.PunchNode) error {
+func (r *runtimeNodeTestRepo) SavePunchNode(_ context.Context, item model.PunchNode) error {
 	r.savedPunchNodes = append(r.savedPunchNodes, item)
 	return nil
 }
 
-func (r *opsNodeTestRepo) DeletePunchNode(context.Context, string) error { return nil }
+func (r *runtimeNodeTestRepo) DeletePunchNode(context.Context, string) error { return nil }
 
-func (r *opsNodeTestRepo) NewRelayNodeID() string { return "relay000000000000000000000000000999" }
-func (r *opsNodeTestRepo) NewPunchNodeID() string { return "punch000000000000000000000000000999" }
+func (r *runtimeNodeTestRepo) NewRelayNodeID() string { return "relay000000000000000000000000000999" }
+func (r *runtimeNodeTestRepo) NewPunchNodeID() string { return "punch000000000000000000000000000999" }

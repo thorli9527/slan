@@ -142,13 +142,35 @@ func networkDNSPayload(view servicepkg.NetworkConfigView) map[string]any {
 	}
 }
 
-func runtimeEndpointsPayload(view servicepkg.DeviceMQTTProfileView, punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any, refreshedAt int64) map[string]any {
+func runtimeEndpointsPayload(view servicepkg.DeviceMQTTProfileView, punchNodes []servicepkg.PunchNodeView, proxyNodes []servicepkg.OpsServerNodeView, networkConfigs []map[string]any, refreshedAt int64) map[string]any {
 	nodeConfigs := runtimeNodeConfigs(punchNodes, networkConfigs)
 	return map[string]any{
-		"mqtt":        appMQTTCredentialPayload(view),
-		"nodeConfigs": nodeConfigs,
-		"refreshedAt": refreshedAt,
+		"mqtt":          appMQTTCredentialPayload(view),
+		"nodeConfigs":   nodeConfigs,
+		"apiProxyUrls":  activeAPIProxyURLs(proxyNodes),
+		"mqttProxyUrls": activeMQTTProxyURLs(proxyNodes),
+		"refreshedAt":   refreshedAt,
 	}
+}
+
+func activeAPIProxyURLs(nodes []servicepkg.OpsServerNodeView) []string {
+	values := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.DeployStatus == "succeeded" && node.ProxyEnabled && strings.TrimSpace(node.APIProxyURL) != "" {
+			values = append(values, node.APIProxyURL)
+		}
+	}
+	return uniqueStrings(values)
+}
+
+func activeMQTTProxyURLs(nodes []servicepkg.OpsServerNodeView) []string {
+	values := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.DeployStatus == "succeeded" && node.ProxyEnabled && strings.TrimSpace(node.MQTTProxyURL) != "" {
+			values = append(values, node.MQTTProxyURL)
+		}
+	}
+	return uniqueStrings(values)
 }
 
 func runtimeNodeConfigs(punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any) []map[string]any {

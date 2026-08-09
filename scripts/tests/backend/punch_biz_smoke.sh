@@ -25,8 +25,6 @@ NETWORK_ID=""
 MEMBER_GROUP_ID=""
 CREDENTIAL_ID_A=""
 CREDENTIAL_ID_B=""
-PUNCH_NODE_ID=""
-PUNCH_NODE_CREATED=0
 
 best_effort_curl() {
   command curl --silent --show-error --connect-timeout 5 --max-time 20 "$@" >/dev/null 2>&1 || true
@@ -38,7 +36,6 @@ cleanup() {
     [[ -n "$MEMBER_GROUP_ID" ]] && best_effort_curl -X DELETE "$OPS_BASE_URL/api/ops/device-groups/$MEMBER_GROUP_ID" -H "Authorization: Bearer $OPS_TOKEN"
     slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$CREDENTIAL_ID_A" 2>/dev/null || true
     slan_ops_revoke_device_credential "$OPS_BASE_URL" "$OPS_TOKEN" "$CREDENTIAL_ID_B" 2>/dev/null || true
-    [[ "$PUNCH_NODE_CREATED" == "1" && -n "$PUNCH_NODE_ID" ]] && best_effort_curl -X DELETE "$OPS_BASE_URL/api/ops/punch-nodes/$PUNCH_NODE_ID" -H "Authorization: Bearer $OPS_TOKEN"
     [[ -n "$DEVICE_A" ]] && best_effort_curl -X DELETE "$OPS_BASE_URL/api/ops/devices/$DEVICE_A" -H "Authorization: Bearer $OPS_TOKEN"
     [[ -n "$DEVICE_B" ]] && best_effort_curl -X DELETE "$OPS_BASE_URL/api/ops/devices/$DEVICE_B" -H "Authorization: Bearer $OPS_TOKEN"
   fi
@@ -72,18 +69,6 @@ md5_hex() {
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 OPS_TOKEN="$(slan_ops_login "$OPS_BASE_URL")"
-PUNCH_NODES="$(curl_json "$OPS_BASE_URL/api/ops/punch-nodes" \
-  -H "Authorization: Bearer $OPS_TOKEN")"
-PUNCH_NODE_ID="$(printf '%s' "$PUNCH_NODES" | jq -r '.items[]? | select(.status == "active" and .health == "healthy") | .nodeId' | head -n1)"
-if [[ -z "$PUNCH_NODE_ID" ]]; then
-  PUNCH_NODE="$(curl_json -X POST "$OPS_BASE_URL/api/ops/punch-nodes" \
-    -H "Authorization: Bearer $OPS_TOKEN" \
-    -H 'Content-Type: application/json' \
-    -d "{\"name\":\"Punch Smoke Node $RUN_ID\",\"region\":\"smoke\",\"endpoint\":\"127.0.0.1:29130\",\"status\":\"active\",\"health\":\"healthy\",\"priority\":1}")"
-  PUNCH_NODE_ID="$(printf '%s' "$PUNCH_NODE" | jq -er '.nodeId')"
-  PUNCH_NODE_CREATED=1
-fi
-
 SOURCE_DEVICE_A="$(curl_json -X POST "$OPS_BASE_URL/api/ops/devices" \
   -H "Authorization: Bearer $OPS_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -109,6 +94,8 @@ MQTT_USERNAME_A="$(printf '%s' "$SESSION_A" | jq -er '.mqtt.username')"
 MQTT_PASSWORD_A="$(printf '%s' "$SESSION_A" | jq -er '.mqtt.password')"
 RUNTIME_ENDPOINTS="$(curl_json "$BASE_URL/api/app/runtime/endpoints" \
   -H "Authorization: Bearer $DEVICE_TOKEN_A")"
+PUNCH_NODE_ID="$(printf '%s' "$RUNTIME_ENDPOINTS" | jq -r '.nodeConfigs[]? | select(.pathKind == "direct_udp") | .nodeId' | head -n1)"
+[[ -n "$PUNCH_NODE_ID" ]] || { echo "no direct_udp node was provisioned by a server node" >&2; exit 1; }
 SELECTED_PUNCH_NODE_ID="$(printf '%s' "$RUNTIME_ENDPOINTS" | jq -er --arg nodeId "$PUNCH_NODE_ID" '.nodeConfigs[] | select(.pathKind == "direct_udp" and .nodeId == $nodeId) | .nodeId')"
 curl_json -X POST "$BASE_URL/api/device-auth/token" \
   -H 'Content-Type: application/json' \

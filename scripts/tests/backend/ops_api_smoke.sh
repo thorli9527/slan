@@ -108,16 +108,13 @@ auth_curl -X POST "${OPS_BASE_URL}/api/ops/operators/${OPERATOR_ID}/password" \
   -H 'Content-Type: application/json' \
   -d '{"password":"smoke-password-123"}' >/dev/null || fail "operator password update failed"
 
-RELAY_NODE="$(auth_curl -X POST "${OPS_BASE_URL}/api/ops/relay-nodes" \
-  -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Smoke Relay\",\"region\":\"smoke-${RUN_ID}\",\"transport\":\"relay_udp\",\"publicAddr\":\"udp://127.0.0.1:39210\",\"maxBandwidthMbps\":1000,\"monthlyTrafficGb\":1024,\"maxSessions\":100,\"status\":\"active\"}")" || fail "relay node create failed"
-RELAY_NODE_ID="$(printf '%s' "${RELAY_NODE}" | json_value nodeId)"
-[[ -n "${RELAY_NODE_ID}" ]] || fail "missing relay node id"
-auth_curl -X PATCH "${OPS_BASE_URL}/api/ops/relay-nodes/${RELAY_NODE_ID}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Smoke Relay Updated\",\"region\":\"smoke-${RUN_ID}\",\"transport\":\"relay_udp\",\"publicAddr\":\"udp://127.0.0.1:39210\",\"maxBandwidthMbps\":900,\"monthlyTrafficGb\":2048,\"maxSessions\":120,\"status\":\"disabled\"}" >/dev/null || fail "relay node update failed"
-auth_curl "${OPS_BASE_URL}/api/ops/relay-nodes" >/dev/null || fail "relay nodes list failed"
-auth_curl -X DELETE "${OPS_BASE_URL}/api/ops/relay-nodes/${RELAY_NODE_ID}" >/dev/null || fail "relay node delete failed"
+auth_curl "${OPS_BASE_URL}/api/ops/server-nodes" >/dev/null || fail "server nodes list failed"
+for legacy_endpoint in relay-nodes punch-nodes; do
+  legacy_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
+    "${OPS_BASE_URL}/api/ops/${legacy_endpoint}")"
+  [[ "${legacy_status}" == "404" ]] || fail "legacy ${legacy_endpoint} endpoint still available: HTTP ${legacy_status}"
+done
 
 auth_curl "${OPS_BASE_URL}/api/ops/customers" >/dev/null || fail "customers list failed"
 

@@ -6,7 +6,7 @@ import (
 	"github.com/slan/service-biz/internal/model"
 )
 
-type OpsNodeRepository interface {
+type RuntimeNodeRepository interface {
 	ListRelayNodes(ctx context.Context) ([]model.RelayNode, error)
 	GetRelayNode(ctx context.Context, nodeID string) (model.RelayNode, bool, error)
 	SaveRelayNode(ctx context.Context, item model.RelayNode) error
@@ -15,4 +15,11 @@ type OpsNodeRepository interface {
 	GetPunchNode(ctx context.Context, nodeID string) (model.PunchNode, bool, error)
 	SavePunchNode(ctx context.Context, item model.PunchNode) error
 	DeletePunchNode(ctx context.Context, nodeID string) error
+}
+
+type ServerNodeRepository interface {
+	ListServerNodes(ctx context.Context) ([]model.ServerNode, error)
+	GetServerNode(ctx context.Context, nodeID string) (model.ServerNode, bool, error)
+	SaveServerNode(ctx context.Context, item model.ServerNode) error
+	DeleteServerNode(ctx context.Context, nodeID string) error
 }

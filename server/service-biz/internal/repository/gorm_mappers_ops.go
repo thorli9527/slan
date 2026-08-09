@@ -115,3 +115,33 @@ func (r gormPunchNodeRecord) model() model.PunchNode {
 		UpdatedAt:      r.UpdatedAt,
 	}
 }
+
+func serverNodeRecordFromModel(item model.ServerNode) gormServerNodeRecord {
+	return gormServerNodeRecord{
+		NodeID: item.NodeID, Name: item.Name, Host: item.Host, SSHPort: item.SSHPort,
+		SSHUsername: item.SSHUsername, SSHPasswordCiphertext: item.SSHPasswordCiphertext,
+		SSHHostKeyFingerprint: item.SSHHostKeyFingerprint, RelayUDPPort: item.RelayUDPPort,
+		RelayAdminPort: item.RelayAdminPort, RelayTCPPort: item.RelayTCPPort, PunchUDPPort: item.PunchUDPPort,
+		PunchHTTPPort: item.PunchHTTPPort, RelayNodeID: item.RelayNodeID, PunchNodeID: item.PunchNodeID,
+		APIProxyPort: item.APIProxyPort, MQTTProxyPort: item.MQTTProxyPort,
+		RelayEnabled: item.RelayEnabled, PunchEnabled: item.PunchEnabled, ProxyEnabled: item.ProxyEnabled,
+		RelayTCPNodeID: item.RelayTCPNodeID,
+		DeployStatus:   item.DeployStatus, LastDeployError: item.LastDeployError,
+		LastDeployedAt: item.LastDeployedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+	}
+}
+
+func (r gormServerNodeRecord) model() model.ServerNode {
+	return model.ServerNode{
+		NodeID: r.NodeID, Name: r.Name, Host: r.Host, SSHPort: r.SSHPort,
+		SSHUsername: r.SSHUsername, SSHPasswordCiphertext: r.SSHPasswordCiphertext,
+		SSHHostKeyFingerprint: r.SSHHostKeyFingerprint, RelayUDPPort: r.RelayUDPPort,
+		RelayAdminPort: r.RelayAdminPort, RelayTCPPort: r.RelayTCPPort, PunchUDPPort: r.PunchUDPPort,
+		PunchHTTPPort: r.PunchHTTPPort, RelayNodeID: r.RelayNodeID, PunchNodeID: r.PunchNodeID,
+		APIProxyPort: r.APIProxyPort, MQTTProxyPort: r.MQTTProxyPort,
+		RelayEnabled: r.RelayEnabled, PunchEnabled: r.PunchEnabled, ProxyEnabled: r.ProxyEnabled,
+		RelayTCPNodeID: r.RelayTCPNodeID,
+		DeployStatus:   r.DeployStatus, LastDeployError: r.LastDeployError,
+		LastDeployedAt: r.LastDeployedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
+}

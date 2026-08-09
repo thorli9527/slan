@@ -11,7 +11,7 @@ import (
 type NetworkCoreService struct {
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
-	Ops                repository.OpsNodeRepository
+	RuntimeNodes       repository.RuntimeNodeRepository
 	EventPublisher     NetworkEventPublisher
 	VersionPushTracker *NetworkVersionPushTracker
 	NewNetworkID       func() string
@@ -21,7 +21,7 @@ type NetworkCoreService struct {
 type NetworkDNSService struct {
 	Devices        repository.DeviceRepository
 	Networks       repository.NetworkRepository
-	Ops            repository.OpsNodeRepository
+	RuntimeNodes   repository.RuntimeNodeRepository
 	EventPublisher NetworkEventPublisher
 	NewDNSZoneID   func() string
 	NewDNSRecordID func() string
@@ -31,7 +31,7 @@ type NetworkDNSService struct {
 type NetworkAccessService struct {
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
-	Ops                repository.OpsNodeRepository
+	RuntimeNodes       repository.RuntimeNodeRepository
 	EventPublisher     NetworkEventPublisher
 	NewSecurityGroupID func() string
 	NewSecurityRuleID  func() string
@@ -39,12 +39,12 @@ type NetworkAccessService struct {
 }
 
 type NetworkRuntimeService struct {
-	Devices   repository.DeviceRepository
-	Networks  repository.NetworkRepository
-	Ops       repository.OpsNodeRepository
-	LocateIP  func(string) (DeviceLocation, bool)
-	NewSessID func(string) string
-	Now       func() time.Time
+	Devices      repository.DeviceRepository
+	Networks     repository.NetworkRepository
+	RuntimeNodes repository.RuntimeNodeRepository
+	LocateIP     func(string) (DeviceLocation, bool)
+	NewSessID    func(string) string
+	Now          func() time.Time
 }
 
 func networkNow(now func() time.Time) time.Time {

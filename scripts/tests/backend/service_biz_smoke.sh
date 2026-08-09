@@ -404,8 +404,13 @@ fi
 log "running ops-plane checks"
 http_call "" "${OPS_BASE_URL}/api/ops/operators" \
   -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null || fail "ops operators list failed"
-http_call "" "${OPS_BASE_URL}/api/ops/relay-nodes" \
-  -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null || fail "ops relay nodes list failed"
+http_call "" "${OPS_BASE_URL}/api/ops/server-nodes" \
+  -H "Authorization: Bearer ${OPS_TOKEN}" >/dev/null || fail "ops server nodes list failed"
+for legacy_endpoint in relay-nodes punch-nodes; do
+  LEGACY_NODE_STATUS="$(http_status "${OPS_BASE_URL}/api/ops/${legacy_endpoint}" \
+    -H "Authorization: Bearer ${OPS_TOKEN}")"
+  [[ "${LEGACY_NODE_STATUS}" == "404" ]] || fail "legacy ${legacy_endpoint} endpoint still available: HTTP ${LEGACY_NODE_STATUS}"
+done
 FINAL_DERP_MAP_STATUS="$(http_status "${APP_BASE_URL}/internal/wire/derp-map" \
   -H "X-Slan-Internal-Token: ${WIRE_TOKEN}")"
 if [[ "${FINAL_DERP_MAP_STATUS}" == "200" ]]; then

@@ -65,7 +65,7 @@ func bindNetworkRepositories(store *repository.GormStore) NetworkRepositories {
 	return NetworkRepositories{
 		Devices:         store,
 		Networks:        store,
-		Ops:             store,
+		RuntimeNodes:    store,
 		EventDeliveries: store,
 	}
 }
@@ -82,6 +82,7 @@ func bindOpsRepositories(store *repository.GormStore) OpsRepositories {
 		OperatorSessions: store,
 		Audit:            store,
 		Nodes:            store,
+		ServerNodes:      store,
 	}
 }
 
@@ -118,9 +119,10 @@ func bindNetworkIDGenerators(store *repository.GormStore) NetworkIDGenerators {
 
 func bindOpsIDGenerators(store *repository.GormStore) OpsIDGenerators {
 	return OpsIDGenerators{
-		NewSessionID:  store.NewSessionID,
-		NewOperatorID: store.NewOperatorID,
-		NewCustomerID: store.NewCustomerID,
+		NewSessionID:    store.NewSessionID,
+		NewOperatorID:   store.NewOperatorID,
+		NewCustomerID:   store.NewCustomerID,
+		NewServerNodeID: store.NewServerNodeID,
 	}
 }
 

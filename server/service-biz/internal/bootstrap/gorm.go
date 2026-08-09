@@ -64,9 +64,6 @@ func seedReferenceDefaults(ctx context.Context, store *repository.GormStore, now
 	if err := store.SaveOperator(ctx, admin); err != nil {
 		return err
 	}
-	if err := seedOpsNodes(ctx, store, now); err != nil {
-		return err
-	}
 	if err := store.SaveAuditEvent(ctx, model.AuditEvent{
 		EventID:      "audit-000001",
 		ActorType:    "operator",
@@ -81,22 +78,6 @@ func seedReferenceDefaults(ctx context.Context, store *repository.GormStore, now
 	}
 	for _, counter := range defaultSeedCounters() {
 		if err := store.SaveCounter(counter.Name, counter.Value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func seedOpsNodes(ctx context.Context, store *repository.GormStore, now int64) error {
-	if err := store.SaveRelayNode(ctx, defaultRelayNode(now)); err != nil {
-		return err
-	}
-	if punchNode, ok := defaultPunchNode(now); ok {
-		if err := store.SavePunchNode(ctx, punchNode); err != nil {
-			return err
-		}
-	} else {
-		if err := store.DeletePunchNode(ctx, "punch000000000000000000000000000001"); err != nil {
 			return err
 		}
 	}

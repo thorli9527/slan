@@ -1,6 +1,10 @@
 package app
 
-import servicepkg "github.com/slan/service-biz/internal/service"
+import (
+	"os"
+
+	servicepkg "github.com/slan/service-biz/internal/service"
+)
 
 func newOpsServices(deps UseCaseDependencies) OpsServices {
 	repos := deps.opsRepositories()
@@ -31,8 +35,20 @@ func newOpsServices(deps UseCaseDependencies) OpsServices {
 		AuditOverview: servicepkg.OpsAuditService{
 			Audit: repos.Audit,
 		},
-		NodeRegistry: servicepkg.OpsNodeService{
-			Nodes: repos.Nodes,
+		ServerNodes: servicepkg.OpsServerNodeService{
+			ServerNodes: repos.ServerNodes,
+			Nodes:       repos.Nodes,
+			Audit:       repos.Audit,
+			Cipher:      servicepkg.NewAESGCMSecretCipher(os.Getenv("SLAN_NODE_SSH_CREDENTIAL_KEY")),
+			Deployer: servicepkg.SSHServerNodeDeployer{
+				AssetsDir:         os.Getenv("SLAN_NODE_DEPLOY_ASSETS_DIR"),
+				BizURL:            os.Getenv("SLAN_NODE_DEPLOY_BIZ_URL"),
+				APIUpstreamURL:    os.Getenv("SLAN_NODE_DEPLOY_API_UPSTREAM_URL"),
+				MQTTUpstreamAddr:  os.Getenv("SLAN_NODE_DEPLOY_MQTT_UPSTREAM_ADDR"),
+				InternalWireToken: os.Getenv("SLAN_INTERNAL_WIRE_TOKEN"),
+				TicketSecret:      os.Getenv("SLAN_WIRE_TICKET_SECRET"),
+			},
+			NewNodeID: ids.NewServerNodeID,
 		},
 		CustomerDirectory: servicepkg.OpsCustomerService{
 			Customers:     repos.Customers,
@@ -54,7 +70,7 @@ func newOpsServices(deps UseCaseDependencies) OpsServices {
 		},
 		Resources: servicepkg.OpsResourceService{
 			Devices: repos.Devices, Networks: repos.Networks, NetworkGroups: repos.NetworkGroups,
-			Ops: repos.Nodes, EventPublisher: eventPublisher,
+			RuntimeNodes: repos.Nodes, EventPublisher: eventPublisher,
 			NewNetworkID: networkIDs.NewNetworkID,
 			GroupRuntime: servicepkg.DeviceGroupService{
 				Devices: repos.Devices, Networks: repos.Networks, NetworkGroups: repos.NetworkGroups,
