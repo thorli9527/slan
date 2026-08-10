@@ -1,10 +1,15 @@
 param(
   [string]$ReleaseDir = "$PSScriptRoot\..\client\app_flutter\build\windows\x64\runner\Release",
   [string]$OutputDir = "$PSScriptRoot\..\client\.tmp\installer\slan-client-v2-windows",
-  [switch]$Build
+  [switch]$Build,
+  [switch]$DebugBuild
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($DebugBuild -and -not $MyInvocation.BoundParameters.ContainsKey('ReleaseDir')) {
+  $ReleaseDir = "$PSScriptRoot\..\client\app_flutter\build\windows\x64\runner\Debug"
+}
 
 $RootDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $PackageScript = Join-Path $RootDir 'client\install\windows\package-installer.ps1'
@@ -51,10 +56,16 @@ if (-not (Test-Path -LiteralPath $PackageScript -PathType Leaf)) {
 }
 
 if ($Build) {
-  Invoke-LoggedCommand -FilePath 'cargo' -Arguments @('build', '-p', 'client-core-service', '--release') -WorkingDirectory (Join-Path $RootDir 'client\rust')
-  Invoke-LoggedCommand -FilePath 'flutter' -Arguments @('build', 'windows') -WorkingDirectory (Join-Path $RootDir 'client\app_flutter')
+  if ($DebugBuild) {
+    Invoke-LoggedCommand -FilePath 'cargo' -Arguments @('build', '-p', 'client-core-service') -WorkingDirectory (Join-Path $RootDir 'client\rust')
+    Invoke-LoggedCommand -FilePath 'flutter' -Arguments @('build', 'windows', '--debug') -WorkingDirectory (Join-Path $RootDir 'client\app_flutter')
+    $serviceSource = Join-Path $RootDir 'client\rust\target\debug\client-core-service.exe'
+  } else {
+    Invoke-LoggedCommand -FilePath 'cargo' -Arguments @('build', '-p', 'client-core-service', '--release') -WorkingDirectory (Join-Path $RootDir 'client\rust')
+    Invoke-LoggedCommand -FilePath 'flutter' -Arguments @('build', 'windows') -WorkingDirectory (Join-Path $RootDir 'client\app_flutter')
+    $serviceSource = Join-Path $RootDir 'client\rust\target\release\client-core-service.exe'
+  }
 
-  $serviceSource = Join-Path $RootDir 'client\rust\target\release\client-core-service.exe'
   $serviceDestination = Join-Path $ReleasePath 'client-core-service.exe'
   if (-not (Test-Path -LiteralPath $serviceSource -PathType Leaf)) {
     throw "Missing built Windows service binary: $serviceSource"

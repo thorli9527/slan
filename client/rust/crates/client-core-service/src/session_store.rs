@@ -150,11 +150,102 @@ pub(crate) fn session_device_api_token(session: &PersistedSession) -> &str {
 
 fn normalize_mqtt_credential(mut mqtt: MqttCredential) -> MqttCredential {
     normalize_mqtt_topic_prefix(&mut mqtt);
+    rewrite_loopback_broker_host(&mut mqtt);
     mqtt
 }
 
 fn normalize_mqtt_topic_prefix(mqtt: &mut MqttCredential) {
     mqtt.topic_prefix = mqtt.topic_prefix.trim().trim_matches('/').to_string();
+}
+
+/// 服务端未配置公网 broker 地址时会回退下发内部 loopback 地址（如 mqtt://127.0.0.1:1883），
+/// 设备永远无法连接。此处把 loopback host 改写为设备实际访问控制面 API 的 host，
+/// 端口与路径保持不变；控制面 host 本身为 loopback 时不做改写。
+fn rewrite_loopback_broker_host(mqtt: &mut MqttCredential) {
+    let base_url = crate::control_plane::effective_control_base_url();
+    rewrite_loopback_broker_host_with_base_url(mqtt, &base_url);
+}
+
+fn rewrite_loopback_broker_host_with_base_url(mqtt: &mut MqttCredential, base_url: &str) {
+    let Some(host) = broker_rewrite_url_host(base_url) else {
+        return;
+    };
+    if broker_rewrite_is_loopback_host(&host) {
+        return;
+    }
+    let rewritten = rewrite_local_mqtt_broker_host(&mqtt.broker_url, &host);
+    if rewritten != mqtt.broker_url {
+        crate::log_service_error(format!(
+            "client-core-service rewrote loopback mqtt broker host: from={} to={}",
+            mqtt.broker_url, rewritten
+        ));
+        mqtt.broker_url = rewritten;
+    }
+}
+
+/// 把 mqtt:// URL 中的 loopback host 改写为指定 host，端口与路径保持不变。
+fn rewrite_local_mqtt_broker_host(broker_url: &str, override_host: &str) -> String {
+    let Some(rest) = broker_url.strip_prefix("mqtt://") else {
+        return broker_url.to_string();
+    };
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, value)| value)
+        .unwrap_or(authority);
+    let (host_part, port_part) = broker_rewrite_split_host_port(host);
+    if !broker_rewrite_is_loopback_host(host_part) {
+        return broker_url.to_string();
+    }
+    let path = if path.is_empty() {
+        String::new()
+    } else {
+        format!("/{path}")
+    };
+    format!("mqtt://{override_host}{port_part}{path}")
+}
+
+fn broker_rewrite_url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map(|(_, value)| value).unwrap_or(url);
+    let authority = rest
+        .split('/')
+        .next()?
+        .split('?')
+        .next()?
+        .split('#')
+        .next()?;
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, value)| value)
+        .unwrap_or(authority);
+    Some(
+        broker_rewrite_split_host_port(host)
+            .0
+            .trim_matches(['[', ']'])
+            .to_string(),
+    )
+    .filter(|value| !value.is_empty())
+}
+
+fn broker_rewrite_split_host_port(authority: &str) -> (&str, &str) {
+    if authority.starts_with('[') {
+        if let Some(end) = authority.find(']') {
+            let host = &authority[..=end];
+            let port = &authority[end + 1..];
+            return (host, port);
+        }
+    }
+    authority
+        .rsplit_once(':')
+        .map(|(host, port)| (host, &authority[host.len()..host.len() + port.len() + 1]))
+        .unwrap_or((authority, ""))
+}
+
+fn broker_rewrite_is_loopback_host(host: &str) -> bool {
+    matches!(
+        host.trim_matches(['[', ']']).to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "0.0.0.0"
+    )
 }
 
 fn normalize_session_mqtt_topic_prefix(session: &mut PersistedSession) {
@@ -1256,6 +1347,28 @@ mod tests {
             topic_prefix: "slan/devices/device-1".to_string(),
             expires_at,
         }
+    }
+
+    #[test]
+    fn loopback_broker_host_is_rewritten_to_control_plane_host() {
+        let mut mqtt = test_mqtt(None);
+        rewrite_loopback_broker_host_with_base_url(&mut mqtt, "http://192.168.5.128:28080");
+        assert_eq!(mqtt.broker_url, "mqtt://192.168.5.128:1883");
+    }
+
+    #[test]
+    fn non_loopback_broker_host_is_kept() {
+        let mut mqtt = test_mqtt(None);
+        mqtt.broker_url = "mqtt://broker.example.com:1883".to_string();
+        rewrite_loopback_broker_host_with_base_url(&mut mqtt, "http://192.168.5.128:28080");
+        assert_eq!(mqtt.broker_url, "mqtt://broker.example.com:1883");
+    }
+
+    #[test]
+    fn loopback_control_plane_host_keeps_broker_url() {
+        let mut mqtt = test_mqtt(None);
+        rewrite_loopback_broker_host_with_base_url(&mut mqtt, "http://127.0.0.1:46392");
+        assert_eq!(mqtt.broker_url, "mqtt://127.0.0.1:1883");
     }
 
     #[test]

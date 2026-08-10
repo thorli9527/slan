@@ -1700,6 +1700,10 @@ fn handle_network_deactivate(
     let expected_revision = runtime.snapshot().revision;
     let snapshots = runtime.snapshots();
     let command_kind = command_kind.into();
+    log_service_error(format!(
+        "client-core-service network deactivate start: command={command_kind} correlationId={}",
+        correlation_id.as_deref().unwrap_or_default()
+    ));
     let prepared = platform_transition::run_serialized_correlated(
         command_kind.clone(),
         correlation_id.clone(),
@@ -1711,12 +1715,20 @@ fn handle_network_deactivate(
         },
     );
     if runtime.snapshot().revision != expected_revision {
+        log_service_error(format!(
+            "client-core-service network deactivate skipped stale revision: command={command_kind} correlationId={}",
+            correlation_id.as_deref().unwrap_or_default()
+        ));
         return Ok(runtime.snapshot().state);
     }
-    let state = runtime.call_named(command_kind, correlation_id, move |runtime| {
+    let state = runtime.call_named(command_kind.clone(), correlation_id.clone(), move |runtime| {
         Ok(commit_network_deactivation(runtime, prepared))
     })?;
     if state.error.is_none() {
+        log_service_error(format!(
+            "client-core-service network deactivate ok: command={command_kind} correlationId={}",
+            correlation_id.as_deref().unwrap_or_default()
+        ));
         report_runtime_state(&state);
     }
     Ok(state)
