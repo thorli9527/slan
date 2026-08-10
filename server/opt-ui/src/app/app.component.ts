@@ -14,7 +14,6 @@ import { OPS_API } from './api-paths';
 // 运营后台左侧导航的页面标识，必须和模板中的条件渲染保持一致。
 type NavId = 'overview' | 'operators' | 'auditEvents' | 'serverNodes' | 'networks' | 'devices' | 'deviceGroups';
 type NavItem = { id: NavId; label: string; desc: string };
-type NavMenu = { id: string; label: string; defaultId: NavId; items: NavItem[] };
 type QuickRenameKind = 'device' | 'network' | 'deviceGroup' | 'securityGroup';
 type ConfirmationDialog = { title: string; message: string; confirmLabel: string };
 
@@ -146,7 +145,7 @@ type NetworkPolicyDetail = {
 export class AppComponent implements OnInit, OnDestroy {
   constructor(private readonly changeDetector: ChangeDetectorRef) {}
 
-  // 一级页面、一级资源菜单与分组菜单分开定义。
+  // 一级页面与资源菜单分开定义。
   readonly navItems: NavItem[] = [
     { id: 'overview', label: '运营概览', desc: '平台指标与待处理事项' },
     { id: 'auditEvents', label: '安全审计', desc: '登录、凭据与异常来源' },
@@ -156,16 +155,7 @@ export class AppComponent implements OnInit, OnDestroy {
     { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
     { id: 'deviceGroups', label: '设备组管理', desc: '全局设备分组与成员' },
     { id: 'networks', label: '网络管理', desc: '网络、成员与策略' },
-  ];
-  readonly navMenus: NavMenu[] = [
-    {
-      id: 'nodes',
-      label: '节点管理',
-      defaultId: 'serverNodes',
-      items: [
-        { id: 'serverNodes', label: '服务器节点', desc: 'SSH 自动部署网络与边缘代理服务' },
-      ],
-    },
+    { id: 'serverNodes', label: '服务节点', desc: 'SSH 自动部署网络与边缘代理服务' },
   ];
 
   active: NavId = 'overview';
@@ -501,21 +491,11 @@ export class AppComponent implements OnInit, OnDestroy {
 	  const standalone = this.operatorRole === 'admin'
       ? this.navItems
       : this.navItems.filter((item) => item.id !== 'operators');
-	const nodeItems = this.navMenus.flatMap((menu) => menu.items).filter((item) => this.operatorRole === 'admin' || item.id !== 'serverNodes');
-    return [...standalone, ...this.resourceNavItems, ...nodeItems];
+	const resources = this.operatorRole === 'admin'
+      ? this.resourceNavItems
+      : this.resourceNavItems.filter((item) => item.id !== 'serverNodes');
+    return [...standalone, ...resources];
 	}
-
-  get activeNavMenu(): NavMenu | undefined {
-    return this.navMenus.find((menu) => menu.items.some((item) => item.id === this.active));
-  }
-
-  isNavMenuActive(menu: NavMenu): boolean {
-    return menu.items.some((item) => item.id === this.active);
-  }
-
-  selectNavMenu(menu: NavMenu): void {
-    this.setActive(menu.defaultId);
-  }
 
   get filteredDevices(): OpsDevice[] {
     const keyword = this.deviceKeyword.trim().toLowerCase();

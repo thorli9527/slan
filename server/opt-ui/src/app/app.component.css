@@ -13,20 +13,10 @@
 nav { display: grid; gap: 3px; }
 nav button { width: 100%; border: 0; border-radius: 4px; padding: 10px 12px; background: transparent; color: #b9c2d0; text-align: left; cursor: pointer; }
 nav button:hover { background: rgba(255, 255, 255, .06); color: #fff; }
-.nav-item.active,
-.nav-menu-trigger.active { background: #26344c; color: #fff; }
-.nav-menu { display: grid; gap: 2px; }
-.nav-menu-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #f1f5f9; }
-.nav-menu-trigger span { flex: 0 0 auto; margin: 0; font-size: 15px; }
-.nav-submenu { display: grid; gap: 2px; margin-left: 12px; padding-left: 8px; border-left: 1px solid rgba(255, 255, 255, .12); }
-.nav-sub-item { padding: 8px 10px; }
-.nav-sub-item.active { background: #1677ff; color: #fff; }
+.nav-item.active { background: #26344c; color: #fff; }
 nav strong, nav span { display: block; }
-.nav-item strong,
-.nav-menu-trigger strong { font-size: 14px; line-height: 1.45; }
-.nav-sub-item strong { font-size: 13px; line-height: 1.4; }
-.nav-item span,
-.nav-sub-item span { margin-top: 1px; color: currentColor; opacity: .7; font-size: 11px; line-height: 1.4; }
+.nav-item strong { font-size: 14px; line-height: 1.45; }
+.nav-item span { margin-top: 1px; color: currentColor; opacity: .7; font-size: 11px; line-height: 1.4; }
 main { flex: 1; min-width: 0; padding: 20px 24px 40px; box-sizing: border-box; }
 .topbar { min-height: 68px; display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
 .crumb { color: #6b7280; font-size: 12px; font-weight: 700; }

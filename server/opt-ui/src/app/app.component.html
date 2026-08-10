@@ -68,21 +68,10 @@
         <strong>运营概览</strong>
         <span>平台指标与待处理事项</span>
       </button>
-      <button class="nav-item" type="button" *ngFor="let item of resourceNavItems" [class.active]="active === item.id" [attr.aria-current]="active === item.id ? 'page' : null" (click)="setActive(item.id)">
+      <button class="nav-item" type="button" *ngFor="let item of resourceNavItems" [class.active]="active === item.id" [attr.aria-current]="active === item.id ? 'page' : null" [hidden]="item.id === 'serverNodes' && operatorRole !== 'admin'" (click)="setActive(item.id)">
         <strong>{{ item.label }}</strong>
         <span>{{ item.desc }}</span>
       </button>
-      <section class="nav-menu" *ngFor="let menu of navMenus" [hidden]="menu.id === 'nodes' && operatorRole !== 'admin'">
-        <button class="nav-menu-trigger" type="button" [class.active]="isNavMenuActive(menu)" aria-expanded="true" (click)="selectNavMenu(menu)">
-          <strong>{{ menu.label }}</strong>
-        </button>
-        <div class="nav-submenu">
-          <button class="nav-sub-item" type="button" *ngFor="let item of menu.items" [class.active]="active === item.id" [attr.aria-current]="active === item.id ? 'page' : null" [hidden]="item.id === 'serverNodes' && operatorRole !== 'admin'" (click)="setActive(item.id)">
-            <strong>{{ item.label }}</strong>
-            <span>{{ item.desc }}</span>
-          </button>
-        </div>
-      </section>
       <button class="nav-item" type="button" [class.active]="active === 'auditEvents'" [attr.aria-current]="active === 'auditEvents' ? 'page' : null" (click)="setActive('auditEvents')">
         <strong>安全审计</strong>
         <span>登录、凭据与异常来源</span>
@@ -97,7 +86,7 @@
   <main>
     <header class="topbar">
       <div>
-        <span class="crumb">运营管理控制台 / <ng-container *ngIf="activeNavMenu">{{ activeNavMenu.label }} / </ng-container>{{ activeNav.label }}<ng-container *ngIf="networkDetailNetwork as network"> / {{ network.name }}</ng-container></span>
+        <span class="crumb">运营管理控制台 / {{ activeNav.label }}<ng-container *ngIf="networkDetailNetwork as network"> / {{ network.name }}</ng-container></span>
         <h1>{{ networkDetailNetwork?.name || activeNav.label }}</h1>
       </div>
       <div class="operator">
