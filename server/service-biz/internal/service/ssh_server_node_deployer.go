@@ -42,6 +42,13 @@ func (d SSHServerNodeDeployer) Deploy(ctx context.Context, node model.ServerNode
 		(node.ProxyEnabled && (strings.TrimSpace(d.APIUpstreamURL) == "" || strings.TrimSpace(d.MQTTUpstreamAddr) == "")) {
 		return ServerNodeDeployResult{}, errors.New("node deployment server environment is incomplete")
 	}
+	// 节点服务以生产模式运行，启动时会拒绝弱密钥；提前校验避免部署出无法启动的节点。
+	if (node.RelayEnabled || node.PunchEnabled) && isWeakDeploySecret(d.InternalWireToken) {
+		return ServerNodeDeployResult{}, errors.New("SLAN_INTERNAL_WIRE_TOKEN is a weak secret: set a production-grade value (it must not be empty or contain 'change-me') before deploying nodes")
+	}
+	if node.RelayEnabled && isWeakDeploySecret(d.TicketSecret) {
+		return ServerNodeDeployResult{}, errors.New("SLAN_WIRE_TICKET_SECRET is a weak secret: set a production-grade value (it must not be empty or contain 'change-me') before deploying nodes")
+	}
 	if node.ProxyEnabled {
 		if err := d.validateProxyUpstreams(node); err != nil {
 			return ServerNodeDeployResult{}, err
@@ -370,9 +377,21 @@ func serviceActivationScript(service string, enabled bool) string {
 	if !enabled {
 		return "systemctl disable --now " + service + " >/dev/null 2>&1 || true"
 	}
+	// 启动失败时输出最近日志，便于在部署错误中定位具体原因（如生产密钥校验失败）。
 	return "systemctl enable --now " + service + "\n" +
 		"systemctl restart " + service + "\n" +
-		"systemctl is-active --quiet " + service
+		"sleep 1\n" +
+		"if ! systemctl is-active --quiet " + service + "; then\n" +
+		"  echo \"service " + service + " failed to start\"\n" +
+		"  journalctl -u " + service + " -n 15 --no-pager 2>/dev/null || true\n" +
+		"  exit 1\n" +
+		"fi"
+}
+
+// isWeakDeploySecret 与节点服务生产模式的 weakSecret 校验保持一致。
+func isWeakDeploySecret(value string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	return trimmed == "" || strings.Contains(trimmed, "change-me") || strings.Contains(trimmed, "dev-wire-ticket-secret")
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }

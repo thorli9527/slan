@@ -682,8 +682,8 @@ export class AppComponent implements OnInit, OnDestroy {
   async saveServerNode(): Promise<void> {
     this.serverNodeMessage = '';
     const form = this.serverNodeForm;
-    if (!form.name?.trim() || !form.host?.trim() || form.sshUsername?.trim() !== 'root') {
-      this.serverNodeMessage = '请输入名称、公网 IP，并使用 root SSH 用户';
+    if (!form.name?.trim() || !form.host?.trim() || !form.sshUsername?.trim()) {
+      this.serverNodeMessage = '请输入名称、公网 IP 和 SSH 用户';
       return;
     }
     if (!this.isIPv4Address(form.host.trim())) {
@@ -700,7 +700,7 @@ export class AppComponent implements OnInit, OnDestroy {
       const node = await this.request<ServerNode>(isEdit ? 'PATCH' : 'POST', path, {
         nodeId: this.selectedServerNode?.nodeId,
         name: form.name.trim(), host: form.host.trim(), sshPort: Number(form.sshPort),
-        sshUsername: 'root', sshPassword: form.sshPassword || '',
+        sshUsername: form.sshUsername!.trim(), sshPassword: form.sshPassword || '',
         relayUdpPort: Number(form.relayUdpPort), relayAdminPort: Number(form.relayAdminPort), relayTcpPort: Number(form.relayTcpPort),
         punchUdpPort: Number(form.punchUdpPort), punchHttpPort: Number(form.punchHttpPort),
         apiProxyPort: Number(form.apiProxyPort), mqttProxyPort: Number(form.mqttProxyPort),

@@ -310,8 +310,8 @@
           <label><span>SSH</span><input [(ngModel)]="serverNodeForm.sshPort" type="number" min="1" max="65535"></label>
         </div>
         <div class="server-node-row server-node-credential-row">
-          <label><span>SSH 用户</span><input [(ngModel)]="serverNodeForm.sshUsername" readonly></label>
-          <label><span>SSH 密码</span><input [(ngModel)]="serverNodeForm.sshPassword" type="password" autocomplete="new-password" [placeholder]="selectedServerNode?.sshPasswordConfigured ? '留空则保留现有密码' : '请输入 root SSH 密码'"></label>
+          <label><span>SSH 用户</span><input [(ngModel)]="serverNodeForm.sshUsername" placeholder="root" autocomplete="off"></label>
+          <label><span>SSH 密码</span><input [(ngModel)]="serverNodeForm.sshPassword" type="password" autocomplete="new-password" [placeholder]="selectedServerNode?.sshPasswordConfigured ? '留空则保留现有密码' : '请输入 SSH 密码'"></label>
         </div>
       </div>
       <div class="server-capabilities full-row">

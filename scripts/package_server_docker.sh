@@ -9,13 +9,14 @@ ARCHIVE="${1:-$OUTPUT_DIR/SLAN-server-docker-${VERSION}-linux-amd64.tar.gz}"
 MANIFEST="${ARCHIVE%.tar.gz}.manifest.txt"
 CHECKSUM="${ARCHIVE}.sha256"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
-BUILD_SERVICES=(server-biz server-wire server-wire-relay server-wire-punch server-wire-derp opt-ui)
+BUILD_SERVICES=(server-biz server-wire server-wire-relay server-wire-punch server-wire-derp server-edge-proxy opt-ui)
 APP_IMAGES=(
   slan-service-biz:latest
   slan-server-wire:latest
   slan-server-wire-relay:latest
   slan-server-wire-punch:latest
   slan-server-wire-derp:latest
+  slan-server-edge-proxy:latest
   slan-opt-ui:latest
 )
 INFRA_IMAGES=(

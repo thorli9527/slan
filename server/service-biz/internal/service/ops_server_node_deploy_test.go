@@ -28,6 +28,27 @@ func (d *serverNodeDeployTestDeployer) Deploy(_ context.Context, node model.Serv
 	return ServerNodeDeployResult{HostKeyFingerprint: node.SSHHostKeyFingerprint}, nil
 }
 
+func TestSSHDeployerRejectsWeakSecretsBeforeConnecting(t *testing.T) {
+	deployer := SSHServerNodeDeployer{
+		BizURL:            "http://service-biz:8080",
+		APIUpstreamURL:    "http://service-biz:8080",
+		MQTTUpstreamAddr:  "mqtt:1883",
+		InternalWireToken: "change-me-wire-internal-token",
+		TicketSecret:      "production-ticket-secret",
+	}
+	node := model.ServerNode{Host: "192.0.2.10", SSHPort: 22, RelayEnabled: true, PunchEnabled: true, ProxyEnabled: true}
+	_, err := deployer.Deploy(context.Background(), node, "password")
+	if err == nil || !strings.Contains(err.Error(), "SLAN_INTERNAL_WIRE_TOKEN") {
+		t.Fatalf("expected weak internal wire token rejection, got %v", err)
+	}
+	deployer.InternalWireToken = "production-wire-token"
+	deployer.TicketSecret = "change-me-wire-ticket-secret"
+	_, err = deployer.Deploy(context.Background(), node, "password")
+	if err == nil || !strings.Contains(err.Error(), "SLAN_WIRE_TICKET_SECRET") {
+		t.Fatalf("expected weak ticket secret rejection, got %v", err)
+	}
+}
+
 func TestListServerNodesRecoversStaleDeployment(t *testing.T) {
 	now := time.Unix(1_700_001_000, 0)
 	repo := &deleteServerNodeRepo{item: model.ServerNode{

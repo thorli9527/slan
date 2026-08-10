@@ -44,8 +44,8 @@ func (s OpsServerNodeService) ListServerNodes(ctx context.Context) ([]OpsServerN
 
 func (s OpsServerNodeService) UpsertServerNode(ctx context.Context, input UpsertServerNodeInput) (OpsServerNodeView, error) {
 	input.Name, input.Host, input.SSHUsername = strings.TrimSpace(input.Name), strings.TrimSpace(input.Host), strings.TrimSpace(input.SSHUsername)
-	if input.Name == "" || net.ParseIP(input.Host) == nil || input.SSHUsername == "" || input.SSHUsername != "root" {
-		return OpsServerNodeView{}, fmt.Errorf("%w: name, IPv4/IPv6 host and root SSH user are required", ErrInvalidArgument)
+	if input.Name == "" || net.ParseIP(input.Host) == nil || input.SSHUsername == "" {
+		return OpsServerNodeView{}, fmt.Errorf("%w: name, IPv4/IPv6 host and SSH user are required", ErrInvalidArgument)
 	}
 	if !validServerNodePorts(input) {
 		return OpsServerNodeView{}, fmt.Errorf("%w: invalid or duplicate service port", ErrInvalidArgument)

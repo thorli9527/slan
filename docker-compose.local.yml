@@ -71,7 +71,7 @@ services:
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
-      SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-}"
+      SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
       SLAN_NODE_DEPLOY_ASSETS_DIR: "/opt/slan/node-assets"
       SLAN_NODE_DEPLOY_BIZ_URL: "${SLAN_NODE_DEPLOY_BIZ_URL:-http://47.245.40.231:28080}"
       SLAN_NODE_DEPLOY_API_UPSTREAM_URL: "${SLAN_NODE_DEPLOY_API_UPSTREAM_URL:-http://47.245.40.231:28080}"
@@ -123,7 +123,7 @@ services:
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
-      SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-}"
+      SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
       SLAN_NODE_DEPLOY_ASSETS_DIR: "/opt/slan/node-assets"
       SLAN_NODE_DEPLOY_BIZ_URL: "${SLAN_NODE_DEPLOY_BIZ_URL:-http://47.245.40.231:28080}"
       SLAN_NODE_DEPLOY_API_UPSTREAM_URL: "${SLAN_NODE_DEPLOY_API_UPSTREAM_URL:-http://47.245.40.231:28080}"
@@ -361,6 +361,25 @@ services:
     depends_on:
       server-biz-ops:
         condition: service_started
+
+  server-edge-proxy:
+    image: slan-server-edge-proxy:latest
+    build:
+      context: ./server/server-edge-proxy
+      dockerfile: Dockerfile
+    environment:
+      SLAN_EDGE_PROXY_API_LISTEN_ADDR: ":28080"
+      SLAN_EDGE_PROXY_MQTT_LISTEN_ADDR: ":1883"
+      SLAN_EDGE_PROXY_API_UPSTREAM: "${SLAN_EDGE_PROXY_API_UPSTREAM:-http://server-biz:8080}"
+      SLAN_EDGE_PROXY_MQTT_UPSTREAM: "${SLAN_EDGE_PROXY_MQTT_UPSTREAM:-bifromq:1883}"
+    ports:
+      - "${SLAN_EDGE_PROXY_API_PORT:-28090}:28080"
+      - "${SLAN_EDGE_PROXY_MQTT_PORT:-1884}:1883"
+    depends_on:
+      server-biz:
+        condition: service_started
+      bifromq:
+        condition: service_healthy
 
   caddy:
     image: caddy:2-alpine
