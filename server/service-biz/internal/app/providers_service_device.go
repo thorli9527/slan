@@ -24,5 +24,11 @@ func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 			Networks: repos.Networks,
 			MQTT:     deps.mqttConfig(),
 		},
+		DeviceOffline: servicepkg.DeviceOfflineService{
+			Devices:     repos.Devices,
+			Credentials: repos.Credentials,
+			Audit:       repos.Audit,
+			Publisher:   servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
+		},
 	}
 }

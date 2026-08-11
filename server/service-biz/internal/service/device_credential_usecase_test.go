@@ -132,6 +132,49 @@ func (s *deviceCredentialTestStore) RevokeDeviceCredential(_ context.Context, cr
 	return true, nil
 }
 
+func (s *deviceCredentialTestStore) MarkDeviceCredentialsDisablePending(_ context.Context, deviceID string, now int64) (int64, error) {
+	var marked int64
+	for credentialID, item := range s.items {
+		if item.DeviceID != deviceID || item.Status != model.DeviceCredentialStatusActive {
+			continue
+		}
+		item.DisableNotifiedAt, item.DisableNotifyCount, item.OfflineAckAt, item.UpdatedAt = now, 0, 0, now
+		s.items[credentialID] = item
+		marked++
+	}
+	return marked, nil
+}
+
+func (s *deviceCredentialTestStore) AckDeviceOffline(_ context.Context, credentialID string, now int64) (bool, error) {
+	item, ok := s.items[credentialID]
+	if !ok || item.OfflineAckAt != 0 {
+		return false, nil
+	}
+	item.OfflineAckAt, item.UpdatedAt = now, now
+	s.items[credentialID] = item
+	return true, nil
+}
+
+func (s *deviceCredentialTestStore) RecordDisableNotify(_ context.Context, credentialID string, now int64) (bool, error) {
+	item, ok := s.items[credentialID]
+	if !ok {
+		return false, nil
+	}
+	item.DisableNotifiedAt, item.DisableNotifyCount, item.UpdatedAt = now, item.DisableNotifyCount+1, now
+	s.items[credentialID] = item
+	return true, nil
+}
+
+func (s *deviceCredentialTestStore) ListPendingOfflineAckCredentials(_ context.Context) ([]model.DeviceCredential, error) {
+	items := make([]model.DeviceCredential, 0, len(s.items))
+	for _, item := range s.items {
+		if item.DeviceID != "" && item.Status == model.DeviceCredentialStatusActive && item.OfflineAckAt == 0 && item.DisableNotifiedAt > 0 {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
 func (s *deviceCredentialTestStore) DeleteInvalidDeviceCredentialsBefore(_ context.Context, cutoff int64) (int64, error) {
 	s.cleanupCutoff = cutoff
 	var deleted int64

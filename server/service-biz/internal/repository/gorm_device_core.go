@@ -13,7 +13,7 @@ import (
 )
 
 func (s *GormStore) ListAllDevices(_ context.Context) ([]model.Device, error) {
-	return listModels(s.db.Order("device_id asc"), func(row gormDeviceRecord) model.Device { return row.model() })
+	return listModels(s.db.Order("created_at desc, device_id asc"), func(row gormDeviceRecord) model.Device { return row.model() })
 }
 
 func (s *GormStore) GetDevice(_ context.Context, deviceID string) (model.Device, bool, error) {

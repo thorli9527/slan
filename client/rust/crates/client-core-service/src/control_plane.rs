@@ -18,6 +18,7 @@ use crate::{network_event::NetworkSnapshotResponse, relay_store::relay_only_path
 const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
 const API_DEVICE_SESSION_RENEW: &str = "/api/app/device/session/renew";
 const API_DEVICE_AUTH_TOKEN: &str = "/api/device-auth/token";
+const API_DEVICE_OFFLINE_REPORT: &str = "/api/app/device/offline-report";
 const API_CLIENT_MESSAGES: &str = "/api/app/client/messages";
 const API_RUNTIME_ENDPOINTS: &str = "/api/app/runtime/endpoints";
 const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
@@ -617,6 +618,17 @@ impl ControlPlaneClient {
         }
         normalize_control_device(&mut payload.device);
         Ok(payload)
+    }
+
+    /// 上报设备下线确认，触发服务端吊销授权 key。
+    pub fn report_device_offline(&self, device_token: &str) -> Result<()> {
+        self.request_json(
+            "POST",
+            API_DEVICE_OFFLINE_REPORT,
+            device_token,
+            Some(serde_json::json!({})),
+        )?;
+        Ok(())
     }
 
     pub fn active_network_id(&self, access_token: &str) -> Result<Option<String>> {

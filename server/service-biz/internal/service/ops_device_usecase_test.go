@@ -48,18 +48,21 @@ func (s *opsDeviceIPStore) UpdateDeviceVirtualIP(_ context.Context, deviceID, vi
 	return nil
 }
 
-func TestDisablingManagedDeviceDeletesSessionsAndWritesAudit(t *testing.T) {
+func TestDisablingManagedDeviceMarksCredentialsPendingOfflineAck(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	devices := &deviceSessionTestDevices{
 		networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
 			"device-1": {DeviceID: "device-1", Name: "gateway", Status: "active"},
 		}},
-		savedSessions: []model.DeviceSession{{SessionID: "session-1", DeviceID: "device-1", AccessToken: "access-1"}},
+		savedSessions: []model.DeviceSession{{SessionID: "session-1", DeviceID: "device-1", AccessToken: "access-1", CredentialID: "dcred-1"}},
 	}
+	credentials := &deviceCredentialTestStore{items: map[string]model.DeviceCredential{
+		"dcred-1": {CredentialID: "dcred-1", DeviceID: "device-1", Status: model.DeviceCredentialStatusActive},
+	}}
 	audit := &deviceCredentialTestAudit{}
 	devicePublisher := &networkAccessTestDevicePublisher{}
 	service := OpsManagedDeviceService{
-		Devices: devices, Audit: audit, DevicePublisher: devicePublisher,
+		Devices: devices, Audit: audit, Credentials: credentials, DevicePublisher: devicePublisher,
 		Networks: &deviceSessionTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
 			networks: map[string]model.Network{}, networkDevices: map[string][]model.NetworkDevice{},
 		}},
@@ -71,8 +74,16 @@ func TestDisablingManagedDeviceDeletesSessionsAndWritesAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Device.Status != "disabled" || len(devices.savedSessions) != 0 {
-		t.Fatalf("disabled device retained session: view=%+v sessions=%+v", view, devices.savedSessions)
+	if view.Device.Status != "disabled" {
+		t.Fatalf("device status = %q, want disabled", view.Device.Status)
+	}
+	// 停用后不再立即删除会话，等待客户端下线确认
+	if len(devices.savedSessions) != 1 {
+		t.Fatalf("device session deleted before offline ack: sessions=%+v", devices.savedSessions)
+	}
+	credential := credentials.items["dcred-1"]
+	if credential.Status != model.DeviceCredentialStatusActive || credential.DisableNotifiedAt != now.Unix() || credential.OfflineAckAt != 0 {
+		t.Fatalf("credential not marked pending offline ack: %+v", credential)
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "disable" || audit.events[0].ActorID != "operator-1" || audit.events[0].ResourceID != "device-1" {
 		t.Fatalf("unexpected device disable audit: %#v", audit.events)
@@ -84,8 +95,8 @@ func TestDisablingManagedDeviceDeletesSessionsAndWritesAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reenabled.Device.Status != "active" || len(devices.savedSessions) != 0 {
-		t.Fatalf("reenabled device restored old session: view=%+v sessions=%+v", reenabled, devices.savedSessions)
+	if reenabled.Device.Status != "active" {
+		t.Fatalf("reenabled device status = %q", reenabled.Device.Status)
 	}
 	if len(audit.events) != 2 || audit.events[1].Action != "enable" {
 		t.Fatalf("unexpected device enable audit: %#v", audit.events)

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -93,25 +93,16 @@ func (s OpsManagedDeviceService) UpdateDevice(ctx context.Context, input UpdateD
 		s.recordManagedDeviceAudit(ctx, "update_ip", item.DeviceID, now)
 	}
 	if previousStatus == "active" && item.Status == "disabled" {
-		if s.DevicePublisher != nil {
-			if err := s.DevicePublisher.PublishDeviceControl(ctx, item.DeviceID, DeviceControlEnvelope{
-				Type:      "device_disabled",
-				MessageID: fmt.Sprintf("devicedisabled%d%s", now, item.DeviceID),
-				Payload: map[string]any{
-					"deviceId": item.DeviceID,
-					"reason":   "operator_disabled",
-				},
-			}); err != nil {
+		if s.Credentials != nil {
+			if _, err := s.Credentials.MarkDeviceCredentialsDisablePending(ctx, item.DeviceID, now); err != nil {
 				return OpsManagedDeviceView{}, err
 			}
 		}
-		sessions, err := s.Devices.ListDeviceSessionsByDeviceID(ctx, item.DeviceID)
-		if err != nil {
-			return OpsManagedDeviceView{}, err
-		}
-		for _, session := range sessions {
-			if err := s.Devices.DeleteDeviceSessionByAccessToken(ctx, session.AccessToken); err != nil {
-				return OpsManagedDeviceView{}, err
+		// 下线闭环：先发 MQTT 通知，客户端确认后经 offline-report API 吊销授权 key；
+		// 发布失败不阻断，由重推 worker 周期性补发。此处不再立即删除会话。
+		if s.DevicePublisher != nil {
+			if err := s.DevicePublisher.PublishDeviceControl(ctx, item.DeviceID, deviceDisabledEnvelope(item.DeviceID, now)); err != nil {
+				log.Printf("publish device disabled notification failed deviceId=%s: %v", item.DeviceID, err)
 			}
 		}
 	}

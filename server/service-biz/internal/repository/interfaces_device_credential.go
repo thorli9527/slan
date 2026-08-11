@@ -13,6 +13,10 @@ type DeviceCredentialRepository interface {
 	BindDeviceCredential(ctx context.Context, credentialID, deviceID string, createdAfter, now int64) (bool, error)
 	MarkDeviceCredentialUsed(ctx context.Context, credentialID, deviceID string, now int64, remoteIP string) (bool, error)
 	RevokeDeviceCredential(ctx context.Context, credentialID string, now int64) (bool, error)
+	MarkDeviceCredentialsDisablePending(ctx context.Context, deviceID string, now int64) (int64, error)
+	AckDeviceOffline(ctx context.Context, credentialID string, now int64) (bool, error)
+	RecordDisableNotify(ctx context.Context, credentialID string, now int64) (bool, error)
+	ListPendingOfflineAckCredentials(ctx context.Context) ([]model.DeviceCredential, error)
 	DeleteInvalidDeviceCredentialsBefore(ctx context.Context, cutoff int64) (int64, error)
 	DeleteExpiredUnboundDeviceCredentialsBefore(ctx context.Context, cutoff int64) (int64, error)
 	SaveDeviceCredential(ctx context.Context, item model.DeviceCredential) error

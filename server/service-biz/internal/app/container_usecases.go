@@ -15,6 +15,7 @@ type DeviceUseCases struct {
 	Credentials      servicepkg.DeviceCredentialUseCase
 	SessionRuntime   servicepkg.DeviceSessionUseCase
 	ClientMessages   servicepkg.ClientMessageUseCase
+	DeviceOffline    servicepkg.DeviceOfflineUseCase
 }
 
 type NetworkUseCases struct {

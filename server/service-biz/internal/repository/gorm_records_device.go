@@ -40,18 +40,21 @@ type gormDeviceSessionRecord struct {
 }
 
 type gormDeviceCredentialRecord struct {
-	CredentialID string `gorm:"primaryKey;size:64"`
-	KeyID        string `gorm:"size:64;uniqueIndex"`
-	DeviceID     string `gorm:"size:64;index"`
-	Name         string `gorm:"size:255"`
-	SecretHash   string `gorm:"size:64"`
-	Status       string `gorm:"size:32;index"`
-	Scopes       string `gorm:"size:512"`
-	LastUsedAt   int64  `gorm:"not null"`
-	LastUsedIP   string `gorm:"size:128"`
-	CreatedAt    int64  `gorm:"not null"`
-	UpdatedAt    int64  `gorm:"not null"`
-	RevokedAt    int64  `gorm:"not null"`
+	CredentialID       string `gorm:"primaryKey;size:64"`
+	KeyID              string `gorm:"size:64;uniqueIndex"`
+	DeviceID           string `gorm:"size:64;index"`
+	Name               string `gorm:"size:255"`
+	SecretHash         string `gorm:"size:64"`
+	Status             string `gorm:"size:32;index"`
+	Scopes             string `gorm:"size:512"`
+	LastUsedAt         int64  `gorm:"not null"`
+	LastUsedIP         string `gorm:"size:128"`
+	OfflineAckAt       int64  `gorm:"not null;default:0;index"`
+	DisableNotifiedAt  int64  `gorm:"not null;default:0"`
+	DisableNotifyCount int64  `gorm:"not null;default:0"`
+	CreatedAt          int64  `gorm:"not null"`
+	UpdatedAt          int64  `gorm:"not null"`
+	RevokedAt          int64  `gorm:"not null"`
 }
 
 type gormDeviceGroupRecord struct {

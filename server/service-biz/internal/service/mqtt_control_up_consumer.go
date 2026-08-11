@@ -36,6 +36,20 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 		fmt.Sprintf("%s/devices/+/heartbeat", topicRoot):     0,
 		fmt.Sprintf("%s/devices/+/runtime-state", topicRoot): 0,
 	}
+	handler := func(_ mqtt.Client, message mqtt.Message) {
+		msgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.HandleUpstreamMessage(msgCtx, message.Topic(), message.Payload()); err != nil {
+			log.Printf("mqtt upstream consume failed topic=%s err=%v payloadBytes=%d", message.Topic(), err, len(message.Payload()))
+		}
+	}
+	subscribeAll := func(client mqtt.Client) error {
+		token := client.SubscribeMultiple(topics, handler)
+		if ok := token.WaitTimeout(5 * time.Second); !ok {
+			return fmt.Errorf("subscribe timeout")
+		}
+		return token.Error()
+	}
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
 		SetClientID(credential.ClientID + "-control-up").
@@ -56,18 +70,7 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 		log.Printf("mqtt control/up consumer connection lost: %v", err)
 	})
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
-		token := client.SubscribeMultiple(topics, func(_ mqtt.Client, message mqtt.Message) {
-			msgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := s.HandleUpstreamMessage(msgCtx, message.Topic(), message.Payload()); err != nil {
-				log.Printf("mqtt upstream consume failed topic=%s err=%v payloadBytes=%d", message.Topic(), err, len(message.Payload()))
-			}
-		})
-		if ok := token.WaitTimeout(5 * time.Second); !ok {
-			log.Printf("mqtt upstream consumer subscribe timeout topics=%v", topics)
-			return
-		}
-		if err := token.Error(); err != nil {
+		if err := subscribeAll(client); err != nil {
 			log.Printf("mqtt upstream consumer subscribe failed topics=%v err=%v", topics, err)
 			return
 		}
@@ -89,8 +92,32 @@ func (s MQTTWebhookService) StartControlUpConsumer(ctx context.Context) error {
 		<-ctx.Done()
 		client.Disconnect(250)
 	}()
+	// Broker 偶发丢失订阅但 TCP 连接保持存活（无 connection lost 回调），
+	// 导致心跳消息静默停写 Redis。周期性重发订阅以保持投递。
+	go func() {
+		ticker := time.NewTicker(mqttConsumerResubscribeInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !client.IsConnected() {
+					log.Printf("mqtt control/up consumer not connected; waiting for auto reconnect")
+					continue
+				}
+				if err := subscribeAll(client); err != nil {
+					log.Printf("mqtt control/up consumer periodic resubscribe failed: %v", err)
+					continue
+				}
+				log.Printf("mqtt control/up consumer resubscribed topics=%v", topics)
+			}
+		}
+	}()
 	return nil
 }
+
+const mqttConsumerResubscribeInterval = 2 * time.Minute
 
 func (s MQTTWebhookService) HandleUpstreamMessage(ctx context.Context, topic string, payload []byte) error {
 	if len(payload) > maxMQTTUpstreamPayloadBytes {

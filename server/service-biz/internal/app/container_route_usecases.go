@@ -13,6 +13,7 @@ type AppRouteUseCases struct {
 	Devices           servicepkg.DeviceCoreUseCase
 	DeviceCredentials servicepkg.DeviceCredentialUseCase
 	DeviceSessions    servicepkg.DeviceSessionUseCase
+	DeviceOffline     servicepkg.DeviceOfflineUseCase
 	ClientMessages    servicepkg.ClientMessageUseCase
 	NetworkCore       servicepkg.NetworkCoreUseCase
 	NetworkRuntime    servicepkg.NetworkRuntimeUseCase
@@ -40,6 +41,7 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			Devices:           useCases.Devices.DeviceManagement,
 			DeviceCredentials: useCases.Devices.Credentials,
 			DeviceSessions:    useCases.Devices.SessionRuntime,
+			DeviceOffline:     useCases.Devices.DeviceOffline,
 			ClientMessages:    useCases.Devices.ClientMessages,
 			NetworkCore:       useCases.Network.CoreAccess,
 			NetworkRuntime:    useCases.Network.RuntimeControl,

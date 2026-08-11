@@ -15,6 +15,7 @@ type DeviceServices struct {
 	Credentials      servicepkg.DeviceCredentialService
 	SessionRuntime   servicepkg.DeviceSessionService
 	ClientMessages   servicepkg.ClientMessageService
+	DeviceOffline    servicepkg.DeviceOfflineService
 }
 
 type NetworkServices struct {

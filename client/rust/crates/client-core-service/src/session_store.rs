@@ -1320,6 +1320,29 @@ pub(crate) fn remove_device_authorization() -> Result<()> {
     Ok(())
 }
 
+/// 在删除本地会话/授权凭据前，尽力向服务端上报下线确认（best-effort，失败不阻断去激活）。
+pub(crate) fn report_device_offline_best_effort() {
+    let session = match load_session() {
+        Ok(session) => session,
+        Err(_) => return,
+    };
+    let Some(device_token) = session
+        .device_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let client = ControlPlaneClient::from_env();
+    if let Err(error) = client.report_device_offline(&device_token) {
+        crate::log_service_error(format!(
+            "client-core-service report device offline failed: {error:#}"
+        ));
+    }
+}
+
 pub(crate) fn session_not_found_error(error: &anyhow::Error) -> bool {
     error
         .root_cause()

@@ -58,6 +58,7 @@ type OpsManagedDeviceService struct {
 	Inventory       repository.DeviceInventoryRepository
 	Networks        repository.NetworkRepository
 	Audit           repository.AuditRepository
+	Credentials     repository.DeviceCredentialRepository
 	EventPublisher  NetworkEventPublisher
 	DevicePublisher DeviceControlPublisher
 	DeviceRuntime   repository.DeviceRuntimeRepository

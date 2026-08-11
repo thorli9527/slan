@@ -142,8 +142,9 @@ use crate::session_store::{
     load_pending_device_activation, load_session, load_valid_registered_session,
     lock_session_runtime_epoch, persist_session, prepare_session_device_registered,
     recover_session_with_stored_authorization_key, remove_device_authorization, remove_session,
-    report_runtime_state, session_auth_invalid_error, session_device_api_token, session_is_expired,
-    session_not_found_error, PersistedSession, PreparedSession,
+    report_device_offline_best_effort, report_runtime_state, session_auth_invalid_error,
+    session_device_api_token, session_is_expired, session_not_found_error, PersistedSession,
+    PreparedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
@@ -1721,9 +1722,11 @@ fn handle_network_deactivate(
         ));
         return Ok(runtime.snapshot().state);
     }
-    let state = runtime.call_named(command_kind.clone(), correlation_id.clone(), move |runtime| {
-        Ok(commit_network_deactivation(runtime, prepared))
-    })?;
+    let state = runtime.call_named(
+        command_kind.clone(),
+        correlation_id.clone(),
+        move |runtime| Ok(commit_network_deactivation(runtime, prepared)),
+    )?;
     if state.error.is_none() {
         log_service_error(format!(
             "client-core-service network deactivate ok: command={command_kind} correlationId={}",
@@ -1756,6 +1759,8 @@ where
         return runtime.state().clone();
     }
     let clear_result = if clear_authorization {
+        // 停用闭环：先上报下线确认，再清理本地授权
+        report_device_offline_best_effort();
         remove_device_authorization()
     } else {
         remove_session()

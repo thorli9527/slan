@@ -24,6 +24,7 @@ func main() {
 		go startNetworkVersionPublisher(server)
 		go startNetworkEventDeliveryRetry(server)
 		go startDeviceCredentialCleanup(server)
+		go startDeviceOfflineRetry(server)
 	}
 	log.Printf("service-biz listening on %s routeSet=%s", addr, routeSet)
 	if err := http.ListenAndServe(addr, server.RoutesFor(routeSet)); err != nil {
@@ -49,6 +50,23 @@ func startDeviceCredentialCleanup(server *serviceapp.Server) {
 	defer ticker.Stop()
 	for range ticker.C {
 		run()
+	}
+}
+
+func startDeviceOfflineRetry(server *serviceapp.Server) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		result, err := server.Container().Services.Devices.DeviceOffline.RetryPendingDeviceOffline(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("device offline retry failed: %v", err)
+			continue
+		}
+		if result.Scanned > 0 {
+			log.Printf("device offline retry scanned=%d republished=%d revoked=%d", result.Scanned, result.Republished, result.Revoked)
+		}
 	}
 }
 

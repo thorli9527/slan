@@ -65,8 +65,8 @@ use crate::{
         current_timestamp_ms, ensure_session_node_binding, load_session,
         load_valid_registered_session, local_device_is_first_use, lock_session_runtime_epoch,
         persist_session, prepare_session_device_registered, refresh_session_runtime_endpoints,
-        remove_device_authorization, report_runtime_state, session_device_api_token,
-        set_app_data_dir_override, PersistedSession, PreparedSession,
+        remove_device_authorization, report_device_offline_best_effort, report_runtime_state,
+        session_device_api_token, set_app_data_dir_override, PersistedSession, PreparedSession,
     },
 };
 
@@ -2869,10 +2869,13 @@ fn dispatch_embedded(
                     correlation_id,
                     expected_revision,
                     |runtime| {
-                        remove_device_authorization()?;
-                        runtime
+                        let state = runtime
                             .dispatch(ClientCommand::DeactivateDevice)
-                            .context("deactivate device")
+                            .context("deactivate device")?;
+                        // 停用闭环：网络已停用，先上报下线确认，再清理本地授权
+                        report_device_offline_best_effort();
+                        remove_device_authorization()?;
+                        Ok(state)
                     },
                 )?
                 .ok_or_else(|| anyhow::anyhow!("stale embedded device deactivation"))?;

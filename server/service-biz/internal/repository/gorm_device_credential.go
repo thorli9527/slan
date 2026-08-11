@@ -44,6 +44,31 @@ func (s *GormStore) RevokeDeviceCredential(_ context.Context, credentialID strin
 	return result.RowsAffected == 1, result.Error
 }
 
+func (s *GormStore) MarkDeviceCredentialsDisablePending(_ context.Context, deviceID string, now int64) (int64, error) {
+	result := s.db.Model(&gormDeviceCredentialRecord{}).
+		Where("device_id = ? AND status = ?", deviceID, model.DeviceCredentialStatusActive).
+		Updates(map[string]any{"disable_notified_at": now, "disable_notify_count": 0, "offline_ack_at": 0, "updated_at": now})
+	return result.RowsAffected, result.Error
+}
+
+func (s *GormStore) AckDeviceOffline(_ context.Context, credentialID string, now int64) (bool, error) {
+	result := s.db.Model(&gormDeviceCredentialRecord{}).
+		Where("credential_id = ? AND offline_ack_at = 0", credentialID).
+		Updates(map[string]any{"offline_ack_at": now, "updated_at": now})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (s *GormStore) RecordDisableNotify(_ context.Context, credentialID string, now int64) (bool, error) {
+	result := s.db.Model(&gormDeviceCredentialRecord{}).
+		Where("credential_id = ?", credentialID).
+		Updates(map[string]any{"disable_notified_at": now, "disable_notify_count": gorm.Expr("disable_notify_count + 1"), "updated_at": now})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (s *GormStore) ListPendingOfflineAckCredentials(_ context.Context) ([]model.DeviceCredential, error) {
+	return listModels(s.db.Where("device_id <> ? AND status = ? AND offline_ack_at = 0 AND disable_notified_at > 0", "", model.DeviceCredentialStatusActive), func(row gormDeviceCredentialRecord) model.DeviceCredential { return row.model() })
+}
+
 func (s *GormStore) DeleteInvalidDeviceCredentialsBefore(_ context.Context, cutoff int64) (int64, error) {
 	var deleted int64
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -81,6 +106,7 @@ func deviceCredentialRecordFromModel(item model.DeviceCredential) gormDeviceCred
 		CredentialID: item.CredentialID, KeyID: item.KeyID, DeviceID: item.DeviceID,
 		Name: item.Name, SecretHash: item.SecretHash, Status: item.Status, Scopes: item.Scopes,
 		LastUsedAt: item.LastUsedAt, LastUsedIP: item.LastUsedIP,
+		OfflineAckAt: item.OfflineAckAt, DisableNotifiedAt: item.DisableNotifiedAt, DisableNotifyCount: item.DisableNotifyCount,
 		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, RevokedAt: item.RevokedAt,
 	}
 }
@@ -90,6 +116,7 @@ func (r gormDeviceCredentialRecord) model() model.DeviceCredential {
 		CredentialID: r.CredentialID, KeyID: r.KeyID, DeviceID: r.DeviceID,
 		Name: r.Name, SecretHash: r.SecretHash, Status: r.Status, Scopes: r.Scopes,
 		LastUsedAt: r.LastUsedAt, LastUsedIP: r.LastUsedIP,
+		OfflineAckAt: r.OfflineAckAt, DisableNotifiedAt: r.DisableNotifiedAt, DisableNotifyCount: r.DisableNotifyCount,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, RevokedAt: r.RevokedAt,
 	}
 }

@@ -6,5 +6,6 @@ func newDeviceUseCasesFromServices(deviceServices DeviceServices) DeviceUseCases
 		Credentials:      deviceServices.Credentials,
 		SessionRuntime:   deviceServices.SessionRuntime,
 		ClientMessages:   deviceServices.ClientMessages,
+		DeviceOffline:    deviceServices.DeviceOffline,
 	}
 }

@@ -59,6 +59,7 @@ func newOpsServices(deps UseCaseDependencies) OpsServices {
 			Inventory:       repos.DeviceInventory,
 			Networks:        repos.Networks,
 			Audit:           repos.Audit,
+			Credentials:     repos.Credentials,
 			EventPublisher:  eventPublisher,
 			DevicePublisher: servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
 			DeviceRuntime:   deps.Runtime.DeviceRuntime,

@@ -11,6 +11,7 @@ func appRouteDependencies(useCases RouteUseCases) appapi.RouteDependencies {
 		DeviceCore:       useCases.App.Devices,
 		DeviceCredential: useCases.App.DeviceCredentials,
 		DeviceSession:    useCases.App.DeviceSessions,
+		DeviceOffline:    useCases.App.DeviceOffline,
 		ClientMessages:   useCases.App.ClientMessages,
 		NetworkCore:      useCases.App.NetworkCore,
 		NetworkRuntime:   useCases.App.NetworkRuntime,
