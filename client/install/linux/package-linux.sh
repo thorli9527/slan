@@ -128,6 +128,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-$SLAN_LINUX_CONFIG_DIR/$SLAN_LINUX_RUNTIME_ENV_NAME
 EnvironmentFile=-$SLAN_LINUX_CONFIG_DIR/$SLAN_LINUX_CONSOLE_ENV_NAME
+EnvironmentFile=-$SLAN_LINUX_STATE_DIR/$SLAN_LINUX_CONSOLE_ENV_NAME
 ExecStart=$SLAN_LINUX_SERVICE_BIN
 Restart=on-failure
 RestartSec=3

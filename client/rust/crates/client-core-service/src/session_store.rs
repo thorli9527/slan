@@ -1054,6 +1054,9 @@ pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device:
 fn console_env_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if cfg!(any(target_os = "macos", target_os = "linux")) {
+        // State dir copy first: it is writable by the systemd-managed service
+        // under SELinux, while files under /etc may be delete-protected.
+        paths.push(PathBuf::from("/var/lib/slan/client-v2-console.env"));
         paths.push(PathBuf::from("/etc/slan/client-v2-console.env"));
     }
     paths.push(app_data_dir().join("SLAN").join("client-v2-console.env"));
@@ -1105,12 +1108,20 @@ pub(crate) fn load_pending_device_activation() -> Option<PendingDeviceActivation
 }
 
 pub(crate) fn clear_pending_device_activation() -> Result<()> {
+    let mut first_error: Option<anyhow::Error> = None;
     for path in console_env_paths() {
         if path.exists() {
-            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+            if let Err(error) =
+                fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))
+            {
+                first_error.get_or_insert(error);
+            }
         }
     }
-    Ok(())
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn app_data_dir() -> PathBuf {

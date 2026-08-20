@@ -12,7 +12,8 @@ fi
 
 service_bin="${SLAN_CLIENT_CORE_SERVICE_BIN:-$SLAN_LINUX_SERVICE_BIN}"
 config_dir="$SLAN_LINUX_CONFIG_DIR"
-env_file="$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
+state_dir="$SLAN_LINUX_STATE_DIR"
+env_file="$state_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
 server_url="${SLAN_CONTROL_BASE_URL:-}"
 authorization_key=""
 enable_network="false"
@@ -125,7 +126,8 @@ case "$authorization_key" in
 esac
 
 umask 077
-mkdir -p "$config_dir"
+mkdir -p "$state_dir"
+rm -f "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
 tmp_file="$env_file.tmp"
 {
   printf 'SLAN_CONTROL_BASE_URL=%s\n' "$server_url"

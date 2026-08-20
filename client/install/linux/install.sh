@@ -11,6 +11,7 @@ fi
 tray_mode="disabled"
 install_root="$SLAN_LINUX_INSTALL_ROOT"
 config_dir="$SLAN_LINUX_CONFIG_DIR"
+state_dir="$SLAN_LINUX_STATE_DIR"
 server="${SLAN_CONTROL_BASE_URL:-}"
 authorization_key="${SLAN_DEVICE_AUTHORIZATION_KEY:-}"
 package_url="${SLAN_CLIENT_PACKAGE_URL:-}"
@@ -203,6 +204,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 mkdir -p "$config_dir"
+mkdir -p "$state_dir"
 
 if [ -n "$package_path" ]; then
   if [ ! -f "$package_path" ]; then
@@ -237,12 +239,15 @@ SLAN_CLIENT_V2_INSTALL_ROOT=$install_root
 SLAN_LINUX_TRAY_MODE=$tray_mode
 EOF
 
-cat > "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME" <<EOF
+# Console activation env lives in the service state dir (writable under SELinux);
+# the service deletes it after activation. Remove legacy /etc copies if present.
+cat > "$state_dir/$SLAN_LINUX_CONSOLE_ENV_NAME" <<EOF
 SLAN_CONTROL_BASE_URL=$server
 SLAN_DEVICE_AUTHORIZATION_KEY=$authorization_key
 SLAN_PENDING_ENABLE_NETWORK=$enable_network
 EOF
-chmod 600 "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
+chmod 600 "$state_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
+rm -f "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
 
 if [ "$tray_mode" = "enabled" ]; then
   cat > "$config_dir/$SLAN_LINUX_DESKTOP_POLICY_NAME" <<EOF
