@@ -46,12 +46,15 @@ require_value() {
 
 usage() {
   cat <<'EOF'
-Usage: install.sh --server-url URL --authorization-key KEY [options]
+Usage: install.sh [--server-url URL] [--authorization-key KEY] [options]
+
+Missing --server-url / --authorization-key values are prompted interactively
+during installation when a terminal is attached.
 
 Options:
-  --server-url URL  Control-plane base URL. Required.
+  --server-url URL  Control-plane base URL.
   --server URL      Alias for --server-url.
-  --authorization-key KEY Device authorization key managed by Opt. Required.
+  --authorization-key KEY Device authorization key managed by Opt.
   --package PATH    Install a local Linux client tarball.
   --package-url URL Download URL for the Linux client tarball.
   --enable-network  Enable the network after successful activation.
@@ -132,6 +135,20 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -z "$server" ] && [ -t 0 ]; then
+  printf 'Server API URL (e.g. http://192.168.5.102:28080): '
+  IFS= read -r server || server=""
+  server="$(printf '%s' "$server" | tr -d '\r')"
+fi
+if [ -z "$authorization_key" ] && [ -t 0 ]; then
+  printf 'Device authorization key (input hidden): '
+  stty -echo 2>/dev/null || true
+  IFS= read -r authorization_key || authorization_key=""
+  stty echo 2>/dev/null || true
+  printf '\n'
+  authorization_key="$(printf '%s' "$authorization_key" | tr -d '\r')"
+fi
 
 case "$tray_mode" in
   enabled|disabled)

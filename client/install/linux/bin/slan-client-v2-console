@@ -20,10 +20,13 @@ foreground="false"
 
 usage() {
   cat <<'EOF'
-Usage: slan-client-v2-console --server-url URL --authorization-key KEY [options]
+Usage: slan-client-v2-console [--server-url URL] [--authorization-key KEY] [options]
+
+Missing --server-url / --authorization-key values are prompted interactively
+when a terminal is attached.
 
 Options:
-  --server-url URL         Server control base URL. Required.
+  --server-url URL         Server control base URL.
   --server URL             Alias for --server-url.
   --authorization-key KEY  Opt-issued device authorization Key.
   --enable-network       Enable network after bootstrap is consumed by core-service.
@@ -79,6 +82,20 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -z "$server_url" ] && [ -t 0 ]; then
+  printf 'Server API URL (e.g. http://192.168.5.102:28080): '
+  IFS= read -r server_url || server_url=""
+  server_url="$(printf '%s' "$server_url" | tr -d '\r')"
+fi
+if [ -z "$authorization_key" ] && [ -t 0 ]; then
+  printf 'Device authorization key (input hidden): '
+  stty -echo 2>/dev/null || true
+  IFS= read -r authorization_key || authorization_key=""
+  stty echo 2>/dev/null || true
+  printf '\n'
+  authorization_key="$(printf '%s' "$authorization_key" | tr -d '\r')"
+fi
 
 case "$server_url" in
   http://*|https://*)
