@@ -17,6 +17,7 @@ authorization_key="${SLAN_DEVICE_AUTHORIZATION_KEY:-}"
 package_url="${SLAN_CLIENT_PACKAGE_URL:-}"
 package_path="${SLAN_CLIENT_PACKAGE_PATH:-}"
 enable_network="false"
+enable_network_on_start="false"
 
 assert_safe_install_root() {
   if ! slan_linux_safe_install_root "$install_root"; then
@@ -59,6 +60,8 @@ Options:
   --package PATH    Install a local Linux client tarball.
   --package-url URL Download URL for the Linux client tarball.
   --enable-network  Enable the network after successful activation.
+  --enable-network-on-start Enable the network whenever the service starts
+                    (alternative to --enable-network, persists across restarts).
   --tray=enabled    Install the desktop shell with tray integration.
   --tray=disabled   Install service/helper only. This is the default.
   --root=PATH       Target application root.
@@ -123,6 +126,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --enable-network)
       enable_network="true"
+      shift
+      ;;
+    --enable-network-on-start)
+      enable_network_on_start="true"
       shift
       ;;
     --help|-h)
@@ -248,6 +255,19 @@ SLAN_PENDING_ENABLE_NETWORK=$enable_network
 EOF
 chmod 600 "$state_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
 rm -f "$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
+
+# Startup-time network auto-enable: persists in the runtime env consumed by
+# systemd, so every service start re-enables the virtual network.
+if [ "$enable_network_on_start" = "true" ]; then
+  runtime_env="$config_dir/$SLAN_LINUX_RUNTIME_ENV_NAME"
+  touch "$runtime_env"
+  if grep -q "^SLAN_ENABLE_NETWORK_ON_START=" "$runtime_env" 2>/dev/null; then
+    sed -i "s|^SLAN_ENABLE_NETWORK_ON_START=.*|SLAN_ENABLE_NETWORK_ON_START=true|" "$runtime_env"
+  else
+    printf 'SLAN_ENABLE_NETWORK_ON_START=true\n' >> "$runtime_env"
+  fi
+  chmod 600 "$runtime_env"
+fi
 
 if [ "$tray_mode" = "enabled" ]; then
   cat > "$config_dir/$SLAN_LINUX_DESKTOP_POLICY_NAME" <<EOF

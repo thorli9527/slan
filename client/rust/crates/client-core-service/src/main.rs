@@ -143,8 +143,8 @@ use crate::session_store::{
     lock_session_runtime_epoch, persist_session, prepare_session_device_registered,
     recover_session_with_stored_authorization_key, remove_device_authorization, remove_session,
     report_device_offline_best_effort, report_runtime_state, session_auth_invalid_error,
-    session_device_api_token, session_is_expired, session_not_found_error, PersistedSession,
-    PreparedSession,
+    session_device_api_token, session_is_expired, session_not_found_error,
+    startup_network_auto_enable, PersistedSession, PreparedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
@@ -389,6 +389,19 @@ fn run_service_server() -> Result<()> {
         .is_some_and(installed_device_session_ready);
     if let Some(session) = startup_session.filter(runtime_session_ready) {
         let _ = initial_runtime.dispatch(ClientCommand::ApplyDeviceSession(session.into()));
+        if startup_network_auto_enable() {
+            log_service_error("client-core-service startup network auto-enable requested");
+            let state = enable_network_on_startup(&mut initial_runtime);
+            if let Some(error) = state
+                .error
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                log_service_error(format!(
+                    "client-core-service startup network activation failed: {error}"
+                ));
+            }
+        }
     } else if let Some(state) = apply_pending_device_activation(&mut initial_runtime) {
         if let Some(error) = state
             .error
@@ -510,26 +523,8 @@ where
     if activation_state.error.is_some() {
         return Some(activation_state);
     }
-    let final_state = if pending.enable_network {
-        let prepared = prepare_latest_control_network_activation();
-        platform_transition::run_inline_serialized("startup.activation.enable", |platform| {
-            let executed = match prepared {
-                Ok(plan) => execute_platform_network_activation_safely(platform, &plan)
-                    .map(|platform_was_enabled| (plan, platform_was_enabled)),
-                Err(error) => Err(error),
-            };
-            let platform_was_enabled = executed
-                .as_ref()
-                .ok()
-                .is_some_and(|(_, was_enabled)| *was_enabled);
-            let committed =
-                commit_control_network_activation_result(runtime, executed.map(|(plan, _)| plan));
-            if committed.rollback_platform && !platform_was_enabled {
-                let _ = platform_transition::disable_network(platform);
-            }
-            Ok(committed.state)
-        })
-        .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()))
+    let final_state = if pending.enable_network || startup_network_auto_enable() {
+        enable_network_on_startup(runtime)
     } else {
         activation_state
     };
@@ -541,6 +536,34 @@ where
         }
     }
     Some(final_state)
+}
+
+/// Enable the virtual network right after a session is applied at startup.
+/// Serves as the alternative to the installer `--enable-network` flag for
+/// console installs that set SLAN_ENABLE_NETWORK_ON_START.
+fn enable_network_on_startup<P>(runtime: &mut ClientRuntime<P>) -> ClientViewState
+where
+    P: client_core::PlatformNetwork,
+{
+    let prepared = prepare_latest_control_network_activation();
+    platform_transition::run_inline_serialized("startup.activation.enable", |platform| {
+        let executed = match prepared {
+            Ok(plan) => execute_platform_network_activation_safely(platform, &plan)
+                .map(|platform_was_enabled| (plan, platform_was_enabled)),
+            Err(error) => Err(error),
+        };
+        let platform_was_enabled = executed
+            .as_ref()
+            .ok()
+            .is_some_and(|(_, was_enabled)| *was_enabled);
+        let committed =
+            commit_control_network_activation_result(runtime, executed.map(|(plan, _)| plan));
+        if committed.rollback_platform && !platform_was_enabled {
+            let _ = platform_transition::disable_network(platform);
+        }
+        Ok(committed.state)
+    })
+    .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()))
 }
 
 #[cfg(target_os = "windows")]

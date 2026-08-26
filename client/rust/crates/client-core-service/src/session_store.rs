@@ -1089,17 +1089,26 @@ fn read_console_env_value(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn console_env_flag_truthy(key: &str) -> bool {
+    read_console_env_value(key).is_some_and(|value| {
+        matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+/// Whether the service should enable the virtual network at startup, used as
+/// the alternative to the installer `--enable-network` flag (console installs).
+pub(crate) fn startup_network_auto_enable() -> bool {
+    console_env_flag_truthy("SLAN_ENABLE_NETWORK_ON_START")
+}
+
 pub(crate) fn load_pending_device_activation() -> Option<PendingDeviceActivation> {
     let authorization_key = read_console_env_value("SLAN_DEVICE_AUTHORIZATION_KEY")?;
     let base_url = read_console_env_value("SLAN_CONTROL_BASE_URL")
         .map(|value| value.trim_end_matches('/').to_string());
-    let enable_network =
-        read_console_env_value("SLAN_PENDING_ENABLE_NETWORK").is_some_and(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        });
+    let enable_network = console_env_flag_truthy("SLAN_PENDING_ENABLE_NETWORK");
     Some(PendingDeviceActivation {
         base_url,
         authorization_key,

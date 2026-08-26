@@ -17,6 +17,7 @@ env_file="$state_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
 server_url="${SLAN_CONTROL_BASE_URL:-}"
 authorization_key=""
 enable_network="false"
+enable_network_on_start="false"
 foreground="false"
 
 usage() {
@@ -31,6 +32,9 @@ Options:
   --server URL             Alias for --server-url.
   --authorization-key KEY  Opt-issued device authorization Key.
   --enable-network       Enable network after bootstrap is consumed by core-service.
+  --enable-network-on-start Enable network whenever the service starts;
+                         does not require --server-url / --authorization-key
+                         when the device is already activated.
   --foreground           Run client-core-service in this console.
   -h, --help             Show this help.
 EOF
@@ -68,6 +72,10 @@ while [ "$#" -gt 0 ]; do
       enable_network="true"
       shift
       ;;
+    --enable-network-on-start)
+      enable_network_on_start="true"
+      shift
+      ;;
     --foreground)
       foreground="true"
       shift
@@ -83,6 +91,39 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+write_runtime_network_on_start() {
+  umask 077
+  mkdir -p "$config_dir"
+  runtime_env="$config_dir/$SLAN_LINUX_RUNTIME_ENV_NAME"
+  touch "$runtime_env"
+  if grep -q "^SLAN_ENABLE_NETWORK_ON_START=" "$runtime_env" 2>/dev/null; then
+    sed -i "s|^SLAN_ENABLE_NETWORK_ON_START=.*|SLAN_ENABLE_NETWORK_ON_START=true|" "$runtime_env"
+  else
+    printf 'SLAN_ENABLE_NETWORK_ON_START=true\n' >> "$runtime_env"
+  fi
+  chmod 600 "$runtime_env"
+  echo "SLAN_ENABLE_NETWORK_ON_START=true written to $runtime_env"
+}
+
+restart_service_or_hint() {
+  if [ "$foreground" = "true" ]; then
+    exec "$service_bin"
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart "$SLAN_LINUX_SERVICE_NAME"
+    systemctl status --no-pager "$SLAN_LINUX_SERVICE_NAME" || true
+  else
+    echo "Start $service_bin manually or run with --foreground."
+  fi
+}
+
+# Standalone mode: already-activated device only needs startup auto-enable.
+if [ "$enable_network_on_start" = "true" ] && [ -z "$authorization_key" ] && [ -z "$server_url" ]; then
+  write_runtime_network_on_start
+  restart_service_or_hint
+  exit 0
+fi
 
 if [ -z "$server_url" ] && [ -t 0 ]; then
   printf 'Server API URL (e.g. http://192.168.5.102:28080): '
@@ -136,13 +177,8 @@ tmp_file="$env_file.tmp"
 } > "$tmp_file"
 mv "$tmp_file" "$env_file"
 
-if [ "$foreground" = "true" ]; then
-  exec "$service_bin"
+if [ "$enable_network_on_start" = "true" ]; then
+  write_runtime_network_on_start
 fi
 
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl restart "$SLAN_LINUX_SERVICE_NAME"
-  systemctl status --no-pager "$SLAN_LINUX_SERVICE_NAME" || true
-else
-  echo "Wrote $env_file. Start $service_bin manually or run with --foreground."
-fi
+restart_service_or_hint
