@@ -60,7 +60,16 @@ if [ -z "$service_arch" ] || [ "$host_arch" != "$service_arch" ]; then
   exit 1
 fi
 
-sh "$installer" "$@" --package="$payload" --tray=disabled
+# 控制台安装程序默认启用"服务启动即启用网络"；缺失的
+# --server-url/--authorization-key 由 install.sh 交互提示输入。
+extra_flags="--enable-network-on-start"
+for arg in "$@"; do
+  if [ "$arg" = "--enable-network-on-start" ]; then
+    extra_flags=""
+  fi
+done
+
+sh "$installer" "$@" $extra_flags --package="$payload" --tray=disabled
 
 echo "SLAN Client V2 console installation completed"
 echo "service=slan-client-v2.service"
