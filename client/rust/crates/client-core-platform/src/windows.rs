@@ -51,6 +51,7 @@ const RELAY_DATA_PLANE_FAILURE_THRESHOLD: u32 = 20;
 const PATH_SEND_FAILURES_BEFORE_DOWNGRADE: u32 = 3;
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
+const POWERSHELL_COMMAND_TIMEOUT: Duration = Duration::from_secs(25);
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 fn windows_verbose_trace_enabled() -> bool {
@@ -4594,28 +4595,68 @@ fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) 
     // Windows 10 can keep DHCP/APIPA active for several seconds after a Wintun
     // adapter is enabled. Disable DHCP explicitly and verify the exact address
     // in the same PowerShell operation before continuing with routes and DNS.
+    // IPv4 DAD (ARP probing) on an isolated Wintun overlay adapter has no
+    // purpose and can leave the address stuck in the Tentative state. Two-phase
+    // strategy with wall-clock (Stopwatch) budgets: phase A adds the address and
+    // waits briefly for Preferred; if the address does not become Preferred,
+    // phase B writes DadTransmits=0 for the interface, restarts the adapter so
+    // TCP/IP reloads the per-interface setting (the registry value alone has no
+    // effect until the interface rebinds), re-adds the address and waits again.
+    // The registry value alone is not proof that DAD is disabled on the live
+    // interface, so phase B is driven by the observed address state instead.
     let script = format!(
         "$ErrorActionPreference = 'Stop'; \
-         $expected = '{}'; \
-         $idx = (Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue).ifIndex; \
-         if (-not $idx) {{ throw 'SLAN adapter not found' }}; \
+         $expected = '{0}'; \
+         $name = '{1}'; \
+         $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
+         if (-not $adapter) {{ throw 'SLAN adapter not found' }}; \
+         $idx = $adapter.ifIndex; \
          Set-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -Dhcp Disabled -ErrorAction Stop | Out-Null; \
          Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue; \
-         New-NetIPAddress -InterfaceIndex $idx -IPAddress $expected -PrefixLength {} -AddressFamily IPv4 -ErrorAction Stop | Out-Null; \
+         New-NetIPAddress -InterfaceIndex $idx -IPAddress $expected -PrefixLength {2} -AddressFamily IPv4 -ErrorAction Stop | Out-Null; \
          $applied = $false; \
-         for ($attempt = 0; $attempt -lt 40; $attempt++) {{ \
+         $sw = [Diagnostics.Stopwatch]::StartNew(); \
+         while ($sw.Elapsed.TotalSeconds -lt 4) {{ \
            $applied = $null -ne (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected -and $_.AddressState -eq 'Preferred' }} | Select-Object -First 1); \
            if ($applied) {{ break }}; \
            Start-Sleep -Milliseconds 250; \
          }}; \
          if (-not $applied) {{ \
-           $state = (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected }} | Select-Object -First 1).AddressState; \
-           throw \"SLAN adapter IP '$expected' did not become usable (state=$state)\" \
+           Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue; \
+           $guid = (Get-CimInstance -ClassName Win32_NetworkAdapter -Filter ('InterfaceIndex = ' + $idx)).GUID; \
+           if ($guid) {{ \
+             $regPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\' + $guid; \
+             Set-ItemProperty -Path $regPath -Name DadTransmits -Value 0 -Type DWord; \
+           }}; \
+           Disable-NetAdapter -Name $name -IncludeHidden -Confirm:$false -ErrorAction SilentlyContinue; \
+           Start-Sleep -Milliseconds 800; \
+           Enable-NetAdapter -Name $name -IncludeHidden -Confirm:$false -ErrorAction Stop; \
+           while ($sw.Elapsed.TotalSeconds -lt 13) {{ \
+             if ((Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue).Status -eq 'Up') {{ break }}; \
+             Start-Sleep -Milliseconds 250; \
+           }}; \
+           $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
+           if (-not $adapter) {{ throw 'SLAN adapter not found after restart' }}; \
+           $idx = $adapter.ifIndex; \
+           Set-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null; \
+           New-NetIPAddress -InterfaceIndex $idx -IPAddress $expected -PrefixLength {3} -AddressFamily IPv4 -ErrorAction Stop | Out-Null; \
+           $sw2 = [Diagnostics.Stopwatch]::StartNew(); \
+           while ($sw2.Elapsed.TotalSeconds -lt 8) {{ \
+             $applied = $null -ne (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected -and $_.AddressState -eq 'Preferred' }} | Select-Object -First 1); \
+             if ($applied) {{ break }}; \
+             Start-Sleep -Milliseconds 250; \
+           }} \
+         }}; \
+         if (-not $applied) {{ \
+           $address = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $expected }} | Select-Object -First 1; \
+           $adapterNow = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
+           throw \"SLAN adapter IP '$expected' did not become usable (state=$($address.AddressState) media=$($adapterNow.MediaConnectionState) status=$($adapterNow.Status))\" \
          }}; \
          Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -like '169.254.*' }} | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; \
          Write-Output $expected",
         virtual_ip,
         escape_powershell_single_quoted(interface_name),
+        prefix_len,
         prefix_len,
     );
     debug_log(&format!(
@@ -4907,7 +4948,11 @@ fn debug_log(message: &str) {
 }
 
 fn run_powershell(script: &str) -> Result<String> {
-    let output = Command::new("powershell.exe")
+    // Network cmdlets can hang indefinitely on an unstable virtual adapter
+    // (e.g. waiting for DAD to finish). Never block the platform worker thread
+    // forever: run the process with a hard timeout and kill it when exceeded,
+    // otherwise every later platform operation queues up and times out too.
+    let mut child = Command::new("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -4917,21 +4962,48 @@ fn run_powershell(script: &str) -> Result<String> {
             script,
         ])
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .context("run powershell network command")?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    let started = Instant::now();
+    loop {
+        match child
+            .try_wait()
+            .context("run powershell network command")?
+        {
+            Some(status) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(stream) = child.stdout.as_mut() {
+                    let _ = stream.read_to_string(&mut stdout);
+                }
+                if let Some(stream) = child.stderr.as_mut() {
+                    let _ = stream.read_to_string(&mut stderr);
+                }
+                if status.success() {
+                    return Ok(stdout.trim().to_string());
+                }
+                let detail = if !stderr.trim().is_empty() {
+                    stderr.trim().to_string()
+                } else if !stdout.trim().is_empty() {
+                    stdout.trim().to_string()
+                } else {
+                    format!("exit status {status}")
+                };
+                bail!("windows network command failed: {detail}");
+            }
+            None if started.elapsed() >= POWERSHELL_COMMAND_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!(
+                    "windows network command timed out after {}s",
+                    POWERSHELL_COMMAND_TIMEOUT.as_secs()
+                );
+            }
+            None => thread::sleep(Duration::from_millis(100)),
+        }
     }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let detail = if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        format!("exit status {}", output.status)
-    };
-    bail!("windows network command failed: {detail}");
 }
 
 fn escape_powershell_single_quoted(value: &str) -> String {
