@@ -101,49 +101,64 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: ValueListenableBuilder<ClientViewState>(
           valueListenable: widget.bridge.state,
           builder: (context, state, _) {
-            return Align(
-              alignment: Alignment.topCenter,
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  _isDesktopLike ? 18 : 20,
-                  _isDesktopLike ? 10 : 12,
-                  _isDesktopLike ? 18 : 20,
-                  _isDesktopLike ? 10 : 24,
-                ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: _isDesktopLike ? 520 : 560,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (state.activated) ...[
-                        _buildActivatedHeader(state: state),
-                        _buildAndroidAuthorizationPanel(),
-                      ] else ...[
-                        if (!_isDesktopLike) ...[
-                          const InactiveStatus(),
-                          const SizedBox(height: 14),
-                          ServerSettingsSummary(
-                            serverBaseUrl: _serverBaseUrl,
-                            syncing: state.syncing,
-                            onSettings: _showServerSettings,
-                          ),
-                          const SizedBox(height: 10),
+            return LayoutBuilder(
+              builder: (context, viewport) {
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      _isDesktopLike ? 18 : 20,
+                      _isDesktopLike ? 10 : 12,
+                      _isDesktopLike ? 18 : 20,
+                      _isDesktopLike ? 10 : 24,
+                    ),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: _isDesktopLike ? 520 : 560,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (state.activated) ...[
+                            _buildActivatedHeader(
+                              state: state,
+                              viewportHeight: _isDesktopLike
+                                  ? viewport.maxHeight
+                                  : null,
+                            ),
+                            _buildAndroidAuthorizationPanel(),
+                          ] else ...[
+                            if (!_isDesktopLike) ...[
+                              const InactiveStatus(),
+                              const SizedBox(height: 14),
+                              ServerSettingsSummary(
+                                serverBaseUrl: _serverBaseUrl,
+                                syncing: state.syncing,
+                                onSettings: _showServerSettings,
+                              ),
+                              const SizedBox(height: 10),
+                            ] else
+                              // 桌面端登录卡片垂直居中，填满窗口避免顶部钉住留下大片空白。
+                              SizedBox(
+                                height: _inactiveVerticalFiller(
+                                  viewport.maxHeight,
+                                ),
+                              ),
+                            DeviceActivationForm(
+                              keyController: _authorizationKeyController,
+                              syncing: state.syncing,
+                              onSettings:
+                                  _isDesktopLike ? _showServerSettings : null,
+                              onSubmit: _activateDevice,
+                            ),
+                          ],
                         ],
-                        DeviceActivationForm(
-                          keyController: _authorizationKeyController,
-                          syncing: state.syncing,
-                          onSettings:
-                              _isDesktopLike ? _showServerSettings : null,
-                          onSubmit: _activateDevice,
-                        ),
-                      ],
-                    ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             );
           },
         ),
@@ -156,6 +171,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       Theme.of(context).platform == TargetPlatform.android;
 
   bool get _isDesktopLike => !_isMobile;
+
+  /// 估算登录卡片高度，计算桌面端垂直居中所需的顶部填充。
+  double _inactiveVerticalFiller(double viewportHeight) {
+    const cardHeight =
+        18 * 2 + // 卡片上下 padding + 边框
+        52 + // 输入框（含标签与尾部按钮）
+        6 +
+        16 + // 提示文案行（含间距）
+        12 +
+        42; // 激活按钮（含间距）
+    final contentHeight = 20 + cardHeight; // 含页面上下 padding
+    final remainder = viewportHeight - contentHeight;
+    return remainder > 0 ? remainder / 2 : 0;
+  }
 
   /// 读取当前服务端地址并同步到设置输入框。
   Future<void> _loadServerBaseUrl() async {
@@ -382,7 +411,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   /// 构建已登录状态卡片。
-  Widget _buildActivatedHeader({required ClientViewState state}) {
+  Widget _buildActivatedHeader({
+    required ClientViewState state,
+    double? viewportHeight,
+  }) {
     final displayedState = _pendingNetworkTarget != null
         ? state.copyWith(
             syncing: true,
@@ -394,6 +426,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       currentIp: _ipText(displayedState),
       state: displayedState,
       onToggle: _toggleNetwork,
+      viewportHeight: viewportHeight,
     );
   }
 

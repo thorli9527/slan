@@ -9,7 +9,7 @@
 - [`docker-compose.local.yml`](../../docker-compose.local.yml) 仅作为远程开发 compose 文件使用
 - [`server/service-biz/configs/config.docker.yaml`](../../server/service-biz/configs/config.docker.yaml)
 - [`deploy/local/Caddyfile`](../../deploy/local/Caddyfile)
-- [`deploy/local/bifromq/standalone.yml`](../../deploy/local/bifromq/standalone.yml)
+- [`deploy/local/emqx/emqx.conf`](../../deploy/local/emqx/emqx.conf)
 
 `server-wire`、`server-wire-relay`、`server-wire-derp` 已接入远程开发 compose。
 本机 Docker Compose 栈不再作为默认开发入口。生产化 k8s / 多节点模板仍需单独补齐。
@@ -44,7 +44,7 @@
 - `SLAN_DEVICE_CREDENTIAL_PEPPER`：用于授权 Key 摘要，必须使用独立高强度随机值。
 - `SLAN_DEVICE_CREDENTIAL_PREVIOUS_PEPPERS`：逗号分隔的历史 pepper，最多 3 个，每个不少于 32 字符，仅在授权 Key 轮换窗口内保留。
 - `SLAN_MQTT_PASSWORD_SECRET`：用于签发和校验 MQTT 凭据，必须使用独立高强度随机值。
-- `SLAN_MQTT_WEBHOOK_TOKEN`：用于 BifroMQ Auth Provider 调用 `service-biz /mqtt/*` 的服务间鉴权，不得与 MQTT 凭据签名密钥复用。
+- `SLAN_MQTT_WEBHOOK_TOKEN`：用于 EMQX 调用 `service-biz /mqtt/*` 的服务间鉴权，不得与 MQTT 凭据签名密钥复用。
 - `SLAN_MQTT_PUBLIC_BROKER_URL`：生产客户端入口，必须是非 loopback 的 TLS URL。
 - `SLAN_INTERNAL_WIRE_TOKEN`：`server-wire` 调用 `service-biz /internal/wire/*` 的共享内部令牌，生产必须使用独立高强度随机值。
 - `SLAN_HTTP_PUBLIC_HOST`：本地是 `slan.localhost:18443`，生产必须改成真实域名。

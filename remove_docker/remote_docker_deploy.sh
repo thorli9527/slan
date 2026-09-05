@@ -10,7 +10,7 @@ ENV_SOURCE="${ENV_SOURCE:-$ROOT_DIR/$ENV_FILE}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
 REMOTE_USER="${REMOTE_USER:-root}"
 APP_SERVICES="${APP_SERVICES:-server-biz server-biz-web-console server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b server-ui-web opt-ui caddy}"
-INFRA_SERVICES="${INFRA_SERVICES:-postgres redis bifromq}"
+INFRA_SERVICES="${INFRA_SERVICES:-postgres redis emqx}"
 PRESERVE_ENV_KEYS="${PRESERVE_ENV_KEYS:-POSTGRES_PASSWORD SLAN_RELAY_TICKET_SECRET SLAN_INTERNAL_WIRE_TOKEN SLAN_WIRE_TICKET_SECRET SLAN_WIRE_TICKET_SECRETS SLAN_MQTT_PASSWORD_SECRET}"
 RUN_REMOTE_SMOKE="${RUN_REMOTE_SMOKE:-1}"
 REMOTE_SMOKE_SEED_WIRE_NODES="${REMOTE_SMOKE_SEED_WIRE_NODES:-0}"
@@ -39,7 +39,7 @@ Optional environment variables:
   ENV_SOURCE=/abs/path/to/.env.prod
   COMPOSE_FILE=docker-compose.local.yml
   APP_SERVICES="server-biz server-biz-web-console ..."
-  INFRA_SERVICES="postgres redis bifromq"
+  INFRA_SERVICES="postgres redis emqx"
   PRESERVE_ENV_KEYS="POSTGRES_PASSWORD ..."
   RUN_REMOTE_SMOKE=1
   REMOTE_SMOKE_SEED_WIRE_NODES=0

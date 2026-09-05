@@ -27,23 +27,29 @@ services:
       timeout: 5s
       retries: 10
 
-  bifromq:
-    image: apache/bifromq:${BIFROMQ_VERSION:-4.0.0-incubating}
+  emqx:
+    image: emqx/emqx:${EMQX_VERSION:-5.8.9}
     platform: linux/amd64
-    hostname: bifromq
-    mem_limit: "${BIFROMQ_MEM_LIMIT:-1g}"
+    hostname: emqx
+    mem_limit: "${EMQX_MEM_LIMIT:-512m}"
     environment:
-      MEM_LIMIT: "${BIFROMQ_MEM_LIMIT_BYTES:-1073741824}"
-      EXTRA_JVM_OPTS: "-XX:MaxRAMPercentage=${BIFROMQ_MAX_RAM_PERCENTAGE:-45} -XX:InitialRAMPercentage=${BIFROMQ_INITIAL_RAM_PERCENTAGE:-20} -Dplugin.authprovider.url=${BIFROMQ_AUTH_PROVIDER_URL:-http://server-biz:8080/mqtt/bifromq}"
+      SLAN_MQTT_WEBHOOK_TOKEN: "${SLAN_MQTT_WEBHOOK_TOKEN:-}"
+      # EMQX-native config overrides (emqx.conf does not expand ${VAR}).
+      EMQX_NODE__COOKIE: "${EMQX_NODE_COOKIE:-slan-emqx-erlang-cookie}"
+      EMQX_AUTHENTICATION__1__URL: "${SLAN_MQTT_AUTH_URL:-http://server-biz:8080/mqtt/emqx/auth}"
+      EMQX_AUTHORIZATION__SOURCES__1__URL: "${SLAN_MQTT_ACL_URL:-http://server-biz:8080/mqtt/emqx/check}"
     ports:
-      - "${BIFROMQ_MQTT_PORT:-1883}:1883"
+      - "${EMQX_MQTT_PORT:-1883}:1883"
+      - "${EMQX_MQTTS_PORT:-8883}:8883"
+      - "${EMQX_WS_PORT:-8083}:8083"
+      - "${EMQX_DASHBOARD_BIND_HOST:-127.0.0.1}:${EMQX_DASHBOARD_PORT:-18083}:18083"
     volumes:
-      - ./deploy/local/bifromq/standalone.yml:/home/bifromq/conf/standalone.yml:ro
+      - ./deploy/local/emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      test: ["CMD-SHELL", "emqx ping"]
       interval: 5s
-      timeout: 3s
-      retries: 20
+      timeout: 5s
+      retries: 30
 
   server-biz:
     image: slan-service-biz:latest
@@ -68,9 +74,10 @@ services:
       SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
       SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
       SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
-      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
+      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://emqx:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
+      SLAN_MQTT_WEBHOOK_TOKEN: "${SLAN_MQTT_WEBHOOK_TOKEN:-}"
       SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
       SLAN_NODE_DEPLOY_ASSETS_DIR: "/opt/slan/node-assets"
       SLAN_NODE_DEPLOY_BIZ_URL: "${SLAN_NODE_DEPLOY_BIZ_URL:-http://47.245.40.231:28080}"
@@ -120,9 +127,10 @@ services:
       SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
       SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
       SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
-      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
+      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://emqx:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
+      SLAN_MQTT_WEBHOOK_TOKEN: "${SLAN_MQTT_WEBHOOK_TOKEN:-}"
       SLAN_NODE_SSH_CREDENTIAL_KEY: "${SLAN_NODE_SSH_CREDENTIAL_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
       SLAN_NODE_DEPLOY_ASSETS_DIR: "/opt/slan/node-assets"
       SLAN_NODE_DEPLOY_BIZ_URL: "${SLAN_NODE_DEPLOY_BIZ_URL:-http://47.245.40.231:28080}"
@@ -371,14 +379,14 @@ services:
       SLAN_EDGE_PROXY_API_LISTEN_ADDR: ":28080"
       SLAN_EDGE_PROXY_MQTT_LISTEN_ADDR: ":1883"
       SLAN_EDGE_PROXY_API_UPSTREAM: "${SLAN_EDGE_PROXY_API_UPSTREAM:-http://server-biz:8080}"
-      SLAN_EDGE_PROXY_MQTT_UPSTREAM: "${SLAN_EDGE_PROXY_MQTT_UPSTREAM:-bifromq:1883}"
+      SLAN_EDGE_PROXY_MQTT_UPSTREAM: "${SLAN_EDGE_PROXY_MQTT_UPSTREAM:-emqx:1883}"
     ports:
       - "${SLAN_EDGE_PROXY_API_PORT:-28090}:28080"
       - "${SLAN_EDGE_PROXY_MQTT_PORT:-1884}:1883"
     depends_on:
       server-biz:
         condition: service_started
-      bifromq:
+      emqx:
         condition: service_healthy
 
   caddy:

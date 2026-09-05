@@ -5,7 +5,7 @@
 
 | 实例 | Route set | 默认端口 | 调用方 | 职责 |
 | --- | --- | --- | --- | --- |
-| App API | `app` | `28080` | 客户端、wire、BifroMQ | 设备授权、设备运行控制、MQTT 和内部 wire |
+| App API | `app` | `28080` | 客户端、wire、EMQX | 设备授权、设备运行控制、MQTT 和内部 wire |
 | Web API | `web` | `28081` | 客户端下载页 | 只提供公开客户端下载信息 |
 | Ops API | `ops` | `28082` | `opt-ui` | 平台资源、客户、授权 key 和运营管理 |
 
@@ -42,7 +42,7 @@
 | `POST` | `/api/app/relay/tickets` | Device Bearer | 获取 relay ticket |
 | `POST` | `/api/app/networks/{networkId}/punch/connect-sessions` | 设备 MQTT 签名 | 创建 P2P 打洞会话 |
 
-App route set 同时承载 `/mqtt/*` BifroMQ webhook 和 `/internal/wire/*` 内部接口。MQTT webhook
+App route set 同时承载 `/mqtt/*` EMQX webhook 和 `/internal/wire/*` 内部接口。MQTT webhook
 使用 `X-Slan-MQTT-Webhook-Token`，内部 wire 接口使用 `X-Slan-Internal-Token`；两者都是服务间接口，不能作为客户端业务 API 使用。
 
 ## Web API

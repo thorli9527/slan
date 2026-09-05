@@ -32,7 +32,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans \
-  postgres redis bifromq \
+  postgres redis emqx \
   server-biz server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b \
   opt-ui caddy
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T caddy caddy reload --config /etc/caddy/Caddyfile

@@ -628,12 +628,6 @@ fn is_heartbeat_payload(payload: &[u8]) -> bool {
 }
 
 fn mqtt_downstream_inbox_path() -> PathBuf {
-    if let Ok(configured) = std::env::var("SLAN_MQTT_DOWNSTREAM_INBOX_FILE") {
-        let trimmed = configured.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
     #[cfg(target_os = "windows")]
     if let Ok(program_data) = std::env::var("ProgramData") {
         let trimmed = program_data.trim();

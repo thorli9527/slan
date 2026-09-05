@@ -58,13 +58,7 @@ const UTUN_REOPEN_ATTEMPTS: usize = 6;
 const UTUN_REOPEN_BACKOFF: Duration = Duration::from_millis(50);
 
 fn macos_verbose_trace_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        matches!(
-            env::var("SLAN_MACOS_VERBOSE_TRACE").ok().as_deref(),
-            Some("1" | "true" | "TRUE" | "yes" | "YES")
-        )
-    })
+    false
 }
 
 macro_rules! macos_trace {

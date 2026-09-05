@@ -27,6 +27,8 @@ func (h WebhookHandler) Routes() []serviceapi.Route {
 		serviceapi.NewRoute(http.MethodPost, "/mqtt/bifromq/path-health-report", h.PathHealthReport),
 		serviceapi.NewRoute(http.MethodPost, "/mqtt/device/endpoint-report", h.EndpointReport),
 		serviceapi.NewRoute(http.MethodPost, "/mqtt/device/path-health-report", h.PathHealthReport),
+		serviceapi.NewRoute(http.MethodPost, "/mqtt/emqx/auth", h.EmqxAuth),
+		serviceapi.NewRoute(http.MethodPost, "/mqtt/emqx/check", h.EmqxCheck),
 	}
 }
 

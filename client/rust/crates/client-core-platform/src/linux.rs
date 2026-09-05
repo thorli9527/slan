@@ -54,13 +54,7 @@ const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 
 fn linux_verbose_trace_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        matches!(
-            env::var("SLAN_LINUX_VERBOSE_TRACE").ok().as_deref(),
-            Some("1" | "true" | "TRUE" | "yes" | "YES")
-        )
-    })
+    false
 }
 
 macro_rules! linux_trace {
@@ -2482,11 +2476,7 @@ fn interface_index(interface_name: &str) -> Option<u32> {
 }
 
 fn interface_name() -> String {
-    std::env::var("SLAN_LINUX_TUN_NAME")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_INTERFACE_NAME.to_string())
+    DEFAULT_INTERFACE_NAME.to_string()
 }
 
 fn mock_enabled() -> bool {

@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, fs,
+    fs,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     sync::{Mutex, OnceLock},
@@ -22,16 +22,9 @@ use crate::log_platform_error;
 
 /// SLAN 默认直连 UDP 端口，刻意避开 Tailscale 默认使用的 41641。
 pub const DEFAULT_DIRECT_UDP_PORT: u16 = 41642;
-const TAILSCALE_DEFAULT_UDP_PORT: u16 = 41641;
 
 fn direct_udp_verbose_trace_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        matches!(
-            env::var("SLAN_DIRECT_UDP_VERBOSE_TRACE").ok().as_deref(),
-            Some("1" | "true" | "TRUE" | "yes" | "YES")
-        )
-    })
+    false
 }
 
 macro_rules! direct_udp_trace {
@@ -712,28 +705,9 @@ fn attach_direct_udp_socket() -> std::io::Result<UdpSocket> {
     UdpSocket::bind("0.0.0.0:0")
 }
 
-/// 返回直连 UDP 监听端口；0 表示由操作系统随机分配。
+/// 返回直连 UDP 监听端口；固定为 DEFAULT_DIRECT_UDP_PORT。
 pub fn configured_direct_udp_port() -> u16 {
-    configured_direct_udp_port_from(
-        std::env::var("SLAN_DIRECT_UDP_RANDOMIZE").ok().as_deref(),
-        std::env::var("SLAN_DIRECT_UDP_PORT").ok().as_deref(),
-    )
-}
-
-fn configured_direct_udp_port_from(randomize: Option<&str>, port: Option<&str>) -> u16 {
-    if randomize.is_some_and(env_flag_enabled) {
-        return 0;
-    }
-    port.and_then(|value| value.trim().parse::<u16>().ok())
-        .filter(|port| *port > 0 && *port != TAILSCALE_DEFAULT_UDP_PORT)
-        .unwrap_or(DEFAULT_DIRECT_UDP_PORT)
-}
-
-fn env_flag_enabled(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
+    DEFAULT_DIRECT_UDP_PORT
 }
 
 pub fn direct_udp_control_payload(
@@ -1056,23 +1030,7 @@ mod tests {
 
     #[test]
     fn direct_udp_port_defaults_to_slan_fixed_port() {
-        assert_eq!(configured_direct_udp_port_from(None, None), 41642);
-        assert_eq!(
-            configured_direct_udp_port_from(Some("false"), Some("42000")),
-            42000
-        );
-    }
-
-    #[test]
-    fn direct_udp_port_supports_random_mode_and_rejects_tailscale_port() {
-        assert_eq!(
-            configured_direct_udp_port_from(Some("true"), Some("42000")),
-            0
-        );
-        assert_eq!(
-            configured_direct_udp_port_from(Some("false"), Some("41641")),
-            41642
-        );
+        assert_eq!(configured_direct_udp_port(), DEFAULT_DIRECT_UDP_PORT);
     }
 
     #[test]

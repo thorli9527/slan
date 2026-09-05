@@ -55,13 +55,7 @@ const POWERSHELL_COMMAND_TIMEOUT: Duration = Duration::from_secs(25);
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 fn windows_verbose_trace_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        matches!(
-            std::env::var("SLAN_WINDOWS_VERBOSE_TRACE").ok().as_deref(),
-            Some("1" | "true" | "TRUE" | "yes" | "YES")
-        )
-    })
+    false
 }
 
 macro_rules! windows_trace {

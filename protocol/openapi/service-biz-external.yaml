@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: >
     Current external business HTTP surface implemented by server/service-biz.
-    Internal wire callbacks and BifroMQ callbacks are intentionally excluded.
+    Internal wire callbacks and EMQX (MQTT broker) callbacks are intentionally excluded.
 servers:
   - url: http://47.245.40.231:28080
     description: Remote Docker service-biz

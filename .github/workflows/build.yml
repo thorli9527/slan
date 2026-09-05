@@ -36,7 +36,7 @@ jobs:
           npm run build
 
       - name: Start local wire stack
-        run: docker compose -f docker-compose.local.yml up -d --build postgres redis bifromq server-biz server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-derp server-wire-derp-b
+        run: docker compose -f docker-compose.local.yml up -d --build postgres redis emqx server-biz server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-derp server-wire-derp-b
 
       - name: Run wire control-plane checks
         run: make wire-control-plane-check

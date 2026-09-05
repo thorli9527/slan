@@ -220,7 +220,7 @@ func decodePathHealthReportRequest(r *http.Request) (pathHealthReportRequest, er
 func (r authRequest) input() servicepkg.MQTTAuthInput {
 	reader := newValueReader(r.Values)
 	return servicepkg.MQTTAuthInput{
-		ClientID: reader.nestedString("clientId", "clientId"),
+		ClientID: reader.nestedString("clientId", "clientId", "clientid"),
 		Username: reader.nestedString("username", "username"),
 		Password: reader.nestedString("password", "password"),
 		IsV5:     authRequestIsV5(r.Values),
@@ -232,7 +232,7 @@ func (r checkRequest) input(httpReq *http.Request) servicepkg.MQTTCheckInput {
 	principal := reader.nestedString("principal", "principal")
 	deviceID := reader.nestedString("deviceId", "deviceId", "deviceID")
 	identityID := reader.nestedString("userId", "userId", "userID")
-	clientID := reader.nestedString("clientId", "clientId", "clientID")
+	clientID := reader.nestedString("clientId", "clientId", "clientID", "clientid")
 	username := reader.nestedString("username", "username", "userName")
 	if identityID == "" {
 		identityID = headerValue(httpReq, "userId", "userID", "user_id", "User_id")

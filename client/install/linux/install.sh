@@ -242,7 +242,6 @@ fi
 
 umask 077
 cat > "$config_dir/$SLAN_LINUX_INSTALL_ENV_NAME" <<EOF
-SLAN_CLIENT_V2_INSTALL_ROOT=$install_root
 SLAN_LINUX_TRAY_MODE=$tray_mode
 EOF
 

@@ -14,7 +14,7 @@
 不属于外部业务 API 的接口：
 
 - `/internal/wire/*`：wire/relay/derp 内部服务调用。
-- `/mqtt/bifromq/*`：BifroMQ broker 鉴权/ACL 回调。
+- `/mqtt/emqx/*`、`/mqtt/bifromq/*`：MQTT broker（EMQX）鉴权/ACL 回调。
 - `server-wire`、`server-wire-relay`、`server-wire-derp` 的管理 HTTP：数据面或运维面接口，默认不作为 App/Web 业务 API。
 - `server-wire-punch` 的 `/v1/*`：打洞服务控制面，业务入口由 `service-biz` 代理。
 
@@ -181,9 +181,11 @@ DNS 管理能力只挂在 Opt 下。
 
 ## MQTT Broker Webhooks
 
-所有 `/mqtt/*` 回调在配置 `SLAN_MQTT_WEBHOOK_TOKEN` 后都必须携带 `X-Slan-MQTT-Webhook-Token`。生产环境强制配置至少 32 字符的独立随机 token，BifroMQ Auth Provider 必须在鉴权、ACL 和运行态回调中统一发送该 Header。未配置 token 的兼容行为仅用于本地开发。
+所有 `/mqtt/*` 回调在配置 `SLAN_MQTT_WEBHOOK_TOKEN` 后都必须携带 `X-Slan-MQTT-Webhook-Token`。生产环境强制配置至少 32 字符的独立随机 token，EMQX 必须在鉴权、ACL 回调中统一发送该 Header（`deploy/local/emqx/emqx.conf`）。未配置 token 的兼容行为仅用于本地开发。
 
-`POST /mqtt/bifromq/auth` 对同一 `clientId + username` 的失败鉴权限制为每分钟 10 次，对同一 Broker 来源的聚合失败限制为每分钟 1000 次。成功鉴权清除该客户端身份的失败记录，不清除 Broker 来源聚合记录。限流键仅保存 SHA-256 摘要，不保存 MQTT 密码。超限返回 `429 Too Many Requests`。
+`POST /mqtt/emqx/auth`（兼容保留 `/mqtt/bifromq/auth`）对同一 `clientId + username` 的失败鉴权限制为每分钟 10 次，对同一 Broker 来源的聚合失败限制为每分钟 1000 次。成功鉴权清除该客户端身份的失败记录，不清除 Broker 来源聚合记录。限流键仅保存 SHA-256 摘要，不保存 MQTT 密码。超限返回 `429 Too Many Requests`。
+
+EMQX 适配响应格式：鉴权允许返回 `200 {"result":"allow"}`（server 主体附带 `"is_superuser":true`），拒绝返回 `403 {"result":"deny"}`；ACL 检查同格式（`/mqtt/emqx/check`）。
 
 当前限流状态为单进程有界内存数据；多实例 Broker webhook 需在网关或共享存储实现集群级失败计数。
 

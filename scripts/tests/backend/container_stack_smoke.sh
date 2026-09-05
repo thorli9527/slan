@@ -7,7 +7,7 @@ BIZ_NAME="${PROJECT}-biz"
 OPS_NAME="${PROJECT}-ops"
 POSTGRES_NAME="${PROJECT}-postgres"
 REDIS_NAME="${PROJECT}-redis"
-BIFROMQ_NAME="${PROJECT}-bifromq"
+EMQX_NAME="${PROJECT}-emqx"
 MAIN_NAME="${PROJECT}-main"
 CLIENT_IMAGE="${SLAN_CONTAINER_SMOKE_CLIENT_IMAGE:-alpine:3.20}"
 BIZ_PORT="${SLAN_BIZ_CONTAINER_SMOKE_PORT:-39381}"
@@ -16,7 +16,7 @@ WIRE_TOKEN="${SLAN_INTERNAL_WIRE_TOKEN:-wire-token}"
 POSTGRES_PASSWORD="${SLAN_CONTAINER_SMOKE_DB_PASSWORD:-slan}"
 
 cleanup() {
-  docker rm -f "${BIZ_NAME}" "${OPS_NAME}" "${POSTGRES_NAME}" "${REDIS_NAME}" "${BIFROMQ_NAME}" "${MAIN_NAME}" >/dev/null 2>&1 || true
+  docker rm -f "${BIZ_NAME}" "${OPS_NAME}" "${POSTGRES_NAME}" "${REDIS_NAME}" "${EMQX_NAME}" "${MAIN_NAME}" >/dev/null 2>&1 || true
   docker network rm "${NETWORK}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -29,7 +29,16 @@ smoke_wget() {
 }
 
 docker run -d --name "${REDIS_NAME}" --network "${NETWORK}" redis:7-alpine >/dev/null
-docker run -d --platform linux/amd64 --name "${BIFROMQ_NAME}" --network "${NETWORK}" apache/bifromq:4.0.0-incubating >/dev/null
+docker run -d --platform linux/amd64 --name "${EMQX_NAME}" --network "${NETWORK}" \
+  -e EMQX_AUTHENTICATION__1__MECHANISM=password_based \
+  -e EMQX_AUTHENTICATION__1__BACKEND=http \
+  -e EMQX_AUTHENTICATION__1__METHOD=post \
+  -e EMQX_AUTHENTICATION__1__URL="http://${BIZ_NAME}:8080/mqtt/emqx/auth" \
+  -e EMQX_AUTHORIZATION__NO_MATCH=deny \
+  -e EMQX_AUTHORIZATION__SOURCES__1__TYPE=http \
+  -e EMQX_AUTHORIZATION__SOURCES__1__METHOD=post \
+  -e EMQX_AUTHORIZATION__SOURCES__1__URL="http://${BIZ_NAME}:8080/mqtt/emqx/check" \
+  emqx/emqx:5.8.9 >/dev/null
 docker run -d --name "${POSTGRES_NAME}" --network "${NETWORK}" \
   -e POSTGRES_DB=slan \
   -e POSTGRES_USER=slan \
@@ -45,6 +54,15 @@ done
 
 docker exec "${POSTGRES_NAME}" pg_isready -U slan -d slan >/dev/null
 
+for _ in {1..60}; do
+  if docker exec "${EMQX_NAME}" emqx ping >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+
+docker exec "${EMQX_NAME}" emqx ping >/dev/null
+
 docker run -d --name "${BIZ_NAME}" --network "${NETWORK}" --network-alias server-biz \
   -p "127.0.0.1:${BIZ_PORT}:8080" \
   -e SLAN_BIZ_ADDR=:8080 \
@@ -57,7 +75,7 @@ docker run -d --name "${BIZ_NAME}" --network "${NETWORK}" --network-alias server
   -e SLAN_SERVICE_BIZ_DB_SSLMODE=disable \
   -e SLAN_BIZ_REDIS_ADDR="${REDIS_NAME}:6379" \
   -e SLAN_MQTT_ENABLED=true \
-  -e SLAN_MQTT_BROKER_URL="mqtt://${BIFROMQ_NAME}:1883" \
+  -e SLAN_MQTT_BROKER_URL="mqtt://${EMQX_NAME}:1883" \
   -e SLAN_MQTT_PUBLIC_BROKER_URL="mqtt://127.0.0.1:1883" \
   -e SLAN_MQTT_PASSWORD_SECRET=container-smoke-mqtt-secret \
   -e SLAN_INTERNAL_WIRE_TOKEN="${WIRE_TOKEN}" \
@@ -74,7 +92,7 @@ docker run -d --name "${OPS_NAME}" --network "${NETWORK}" --network-alias server
   -e SLAN_SERVICE_BIZ_DB_SSLMODE=disable \
   -e SLAN_BIZ_REDIS_ADDR="${REDIS_NAME}:6379" \
   -e SLAN_MQTT_ENABLED=true \
-  -e SLAN_MQTT_BROKER_URL="mqtt://${BIFROMQ_NAME}:1883" \
+  -e SLAN_MQTT_BROKER_URL="mqtt://${EMQX_NAME}:1883" \
   -e SLAN_MQTT_PUBLIC_BROKER_URL="mqtt://127.0.0.1:1883" \
   -e SLAN_MQTT_PASSWORD_SECRET=container-smoke-mqtt-secret \
   -e SLAN_INTERNAL_WIRE_TOKEN="${WIRE_TOKEN}" \

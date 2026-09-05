@@ -22,7 +22,7 @@ APP_IMAGES=(
 INFRA_IMAGES=(
   postgres:16-alpine
   redis:7-alpine
-  apache/bifromq:4.0.0-incubating
+  emqx/emqx:5.8.9
   caddy:2-alpine
 )
 
